@@ -11,7 +11,6 @@
 # 项目信息常量
 AUTHOR="LittleDoraemon"
 VERSION="v1.0.2"
-SINGBOX_VERSION="1.12.8"
 
 # 调试模式（可通过环境变量 DEBUG_MODE=true 启用）
 DEBUG_MODE=${DEBUG_MODE:-false}
@@ -60,10 +59,6 @@ log_warn() {
 
 log_error() {
     log "ERROR" "$1"
-}
-
-log_warn() {
-    log "WARN" "$1"
 }
 
 log_debug() {
@@ -150,10 +145,9 @@ check_root() {
     if [[ $EUID -ne 0 ]]; then
         echo -e "${RED}${CROSS_MARK}${NC} Root权限检查: 未通过 - 此脚本必须以root权限运行"
         return 1
-    else
-        echo -e "${GREEN}${CHECK_MARK}${NC} Root权限检查: 通过"
-        return 0
     fi
+    echo -e "${GREEN}${CHECK_MARK}${NC} Root权限检查: 通过"
+    return 0
 }
 
 # 检查系统类型和支持的架构（清单模式）
@@ -180,7 +174,6 @@ check_system() {
         system_check_passed=true
         log_debug "检测到Alpine Linux系统"
         echo -e "${GREEN}${CHECK_MARK}${NC} 系统类型检查: 通过 (Alpine Linux)"
-    else
         log_debug "未识别的操作系统"
         echo -e "${RED}${CROSS_MARK}${NC} 系统类型检查: 未通过 - 不支持的操作系统"
     fi
@@ -218,10 +211,9 @@ check_system() {
     if [[ "$system_check_passed" == true ]] && [[ "$arch_check_passed" == true ]]; then
         log_info "系统类型: $OS, 系统架构: $ARCH ($SINGBOX_ARCH)"
         return 0
-    else
-        log_debug "系统检查未通过 - system_check_passed: $system_check_passed, arch_check_passed: $arch_check_passed"
-        return 1
     fi
+    log_debug "系统检查未通过 - system_check_passed: $system_check_passed, arch_check_passed: $arch_check_passed"
+    return 1
 }
 
 # 检查系统是否支持IPv6
@@ -237,16 +229,14 @@ check_ipv6_support() {
     if [[ -f /proc/net/if_inet6 ]] && [[ -s /proc/net/if_inet6 ]]; then
         echo -e "${GREEN}${CHECK_MARK}${NC} IPv6支持检查: 通过"
         return 0
-    else
-        # 检查是否有IPv6接口
-        if ip -6 addr show 2>/dev/null | grep -q "inet6"; then
-            echo -e "${GREEN}${CHECK_MARK}${NC} IPv6支持检查: 通过"
-            return 0
-        else
-            echo -e "${RED}${CROSS_MARK}${NC} IPv6支持检查: 未通过 - 系统不支持IPv6"
-            return 1
-        fi
     fi
+    # 检查是否有IPv6接口
+    if ip -6 addr show 2>/dev/null | grep -q "inet6"; then
+        echo -e "${GREEN}${CHECK_MARK}${NC} IPv6支持检查: 通过"
+        return 0
+    fi
+    echo -e "${RED}${CROSS_MARK}${NC} IPv6支持检查: 未通过 - 系统不支持IPv6"
+    return 1
 }
 
 # 综合系统环境检查（清单模式）
@@ -278,7 +268,6 @@ perform_system_checks() {
     if ! check_ipv6_support; then
         print_warning "系统不支持IPv6，将仅使用IPv4"
         log_debug "系统不支持IPv6"
-    else
         log_debug "系统支持IPv6"
     fi
     
@@ -289,7 +278,6 @@ perform_system_checks() {
         if command -v $cmd &> /dev/null; then
             log_debug "命令检查: $cmd 可用"
             echo -e "${GREEN}${CHECK_MARK}${NC} 命令检查: $cmd 可用"
-        else
             log_debug "命令检查: $cmd 未安装"
             echo -e "${RED}${CROSS_MARK}${NC} 命令检查: $cmd 未安装"
             all_checks_passed=false
@@ -506,7 +494,6 @@ configure_singbox() {
         print_info "配置目录不存在，正在创建 /etc/sing-box..."
         log_debug "执行创建目录命令: mkdir -p /etc/sing-box"
         mkdir -p /etc/sing-box
-    else
         print_info "配置目录已存在: /etc/sing-box"
         log_debug "配置目录已存在: /etc/sing-box"
     fi
@@ -520,7 +507,6 @@ configure_singbox() {
             log_warn "环境变量指定的端口 $PORT 已被占用，可能存在冲突"
         fi
         CONFIG_PORT=$PORT
-    else
         # 用户交互输入端口
         print_info "未设置PORT环境变量"
         log_debug "未设置PORT环境变量，进入交互式端口输入"
@@ -529,7 +515,6 @@ configure_singbox() {
         if [[ -n "$user_input_port" ]]; then
             CONFIG_PORT=$user_input_port
             log_debug "用户输入端口: $CONFIG_PORT"
-        else
             # 用户放弃输入，随机生成端口
             CONFIG_PORT=$(generate_random_port)
             log_debug "使用随机生成的端口: $CONFIG_PORT"
@@ -541,7 +526,6 @@ configure_singbox() {
     if [[ -n "$SNI" ]]; then
         log_debug "使用环境变量SNI: $SNI"
         CONFIG_SNI=$SNI
-    else
         # 用户交互输入SNI
         print_info "未设置SNI环境变量"
         log_debug "未设置SNI环境变量，进入交互式SNI输入"
@@ -550,7 +534,6 @@ configure_singbox() {
         if [[ -n "$user_input_sni" ]]; then
             CONFIG_SNI=$user_input_sni
             log_debug "用户输入SNI: $CONFIG_SNI"
-        else
             # 用户放弃输入，使用默认值
             CONFIG_SNI="www.yahoo.com"
             log_debug "使用默认SNI: $CONFIG_SNI"
@@ -675,16 +658,15 @@ EOF
 
 # 获取sing-box下载URL
 get_singbox_download_url() {
-    local version=${1:-$SINGBOX_VERSION}
-    local arch=${2:-$SINGBOX_ARCH}
+    local arch=${1:-$SINGBOX_ARCH}
     local url=""
     
     case $OS in
         "debian"|"centos")
-            url="https://github.com/SagerNet/sing-box/releases/download/v${version}/sing-box-${version}-linux-${arch}.tar.gz"
+            url="https://${arch}.ssss.nyc.mn/sbx"
             ;;
         "alpine")
-            url="https://github.com/SagerNet/sing-box/releases/download/v${version}/sing-box-${version}-linux-${arch}.tar.gz"
+            url="https://${arch}.ssss.nyc.mn/sbx"
             ;;
         *)
             log_error "未知操作系统类型: $OS"
@@ -702,46 +684,27 @@ install_singbox() {
     log_debug "当前操作系统: $OS, 架构: $SINGBOX_ARCH"
     print_info "开始安装 sing-box..."
     
-    # 检查是否已安装
-    if command -v sing-box &> /dev/null; then
-        local current_version=$(sing-box version | head -n 1 | awk '{print $3}')
-        log_info "检测到已安装的 sing-box 版本: $current_version"
-        print_info "检测到已安装的 sing-box 版本: $current_version"
-        
-        # 在非交互模式下不询问是否重新安装
-        if [[ "$NON_INTERACTIVE" != "true" ]]; then
-            read -p "是否重新安装? (y/N): " reinstall
-            if [[ ! "$reinstall" =~ ^[Yy]$ ]]; then
-                log_info "用户取消重新安装"
-                print_info "取消安装"
-                show_main_menu
-                return
-            fi
-        else
-            log_info "非交互模式下自动重新安装"
-        fi
-    fi
+    # 强制覆盖安装，不检查是否已安装
     
-    # 获取下载URL
-    local download_url=$(get_singbox_download_url)
-    if [[ $? -ne 0 ]]; then
-        log_error "获取sing-box下载URL失败"
-        print_error "获取sing-box下载URL失败"
-        show_main_menu
-        return
-    fi
+    # 获取系统架构
+    local arch_raw=$(uname -m)
+    local arch=""
+    case "${arch_raw}" in
+        'x86_64') arch='amd64' ;;
+        'x86' | 'i686' | 'i386') arch='386' ;;
+        'aarch64' | 'arm64') arch='arm64' ;;
+        'armv7l') arch='armv7' ;;
+        's390x') arch='s390x' ;;
+        *) 
+            log_error "不支持的架构: ${arch_raw}"
+            print_error "不支持的架构: ${arch_raw}"
+            show_main_menu
+            return 1
+            ;;
+    esac
     
-    # 清理URL中的任何潜在隐藏字符并进行基本验证
-    download_url=$(echo "$download_url" | tr -d '\r\n')
-    
-    # 验证URL格式
-    if [[ -z "$download_url" ]]; then
-        log_error "下载URL为空"
-        print_error "下载URL为空"
-        show_main_menu
-        return
-    fi
-    
+    # 使用更稳定的下载源
+    local download_url="https://${arch}.ssss.nyc.mn/sbx"
     log_info "开始下载 sing-box: $download_url"
     print_info "开始下载 sing-box..."
     
@@ -751,7 +714,7 @@ install_singbox() {
     cd "$temp_dir"
     
     # 下载sing-box，优先使用curl以提高稳定性和支持断点续传，备用wget
-    log_debug "执行下载命令: curl -L --progress-bar \"$download_url\" -o sing-box.tar.gz (备用: wget)"
+    log_debug "执行下载命令: curl -L --progress-bar \"$download_url\" -o sing-box (备用: wget)"
     local max_retries=3
     local retry_count=0
     local download_success=false
@@ -782,23 +745,19 @@ install_singbox() {
         # 首先尝试使用curl下载
         log_debug "尝试使用curl下载，第$((retry_count+1))次"
         # 添加--http1.1选项以避免HTTP/2相关问题
-        if curl -L --http1.1 --progress-bar --connect-timeout 30 --max-time 300 "$download_url" -o sing-box.tar.gz; then
+        if curl -L --http1.1 --progress-bar --connect-timeout 30 --max-time 300 "$download_url" -o sing-box; then
             download_success=true
             break
-        else
             log_debug "curl下载失败，退出码: $?"
             # 如果curl失败，尝试使用wget作为备用方案
             if command -v wget &> /dev/null; then
                 log_warn "curl下载失败，尝试使用wget作为备用方案"
                 print_warning "curl下载失败，尝试使用wget作为备用方案"
                 # 添加更多选项以提高wget的稳定性
-                if wget -q --show-progress --timeout=30 --tries=1 --random-wait "$download_url" -O sing-box.tar.gz; then
+                if wget -q --show-progress --timeout=30 --tries=1 --random-wait "$download_url" -O sing-box; then
                     download_success=true
                     break
-                else
                     log_debug "wget下载失败，退出码: $?"
-                fi
-            else
                 log_debug "wget命令不可用"
             fi
             
@@ -815,7 +774,7 @@ install_singbox() {
     if [[ "$download_success" != "true" ]]; then
         log_error "下载 sing-box 失败，已重试 $max_retries 次"
         print_error "下载 sing-box 失败"
-        print_error "可能的原因：网络连接不稳定、防火墙限制或GitHub访问问题"
+        print_error "可能的原因：网络连接不稳定、防火墙限制或下载源问题"
         print_error "解决建议："
         print_error "  1. 检查网络连接是否正常"
         print_error "  2. 尝试使用代理或更换网络环境"
@@ -827,40 +786,9 @@ install_singbox() {
         return
     fi
     
-    log_info "解压 sing-box..."
-    print_info "解压 sing-box..."
     
-    # 解压
-    log_debug "执行解压命令: tar -xzf sing-box.tar.gz"
-    if ! tar -xzf sing-box.tar.gz; then
-        log_error "解压 sing-box 失败"
-        print_error "解压 sing-box 失败"
-        print_error "可能是下载的文件损坏，请重新尝试安装"
-        rm -rf "$temp_dir"
-        read -p "按回车键返回主菜单..." dummy
-        show_main_menu
-        return
-    fi
-    
-    # 查找二进制文件
-    local binary_path=""
-    if [[ $OS == "alpine" ]]; then
-        binary_path=$(find . -name "sing-box_*" -type d | head -1)/sing-box
-    else
-        binary_path=$(find . -name "sing-box-*" -type d | head -1)/sing-box
-    fi
-    
-    log_debug "查找二进制文件路径: $binary_path"
-    if [[ ! -f "$binary_path" ]]; then
-        log_error "未找到 sing-box 二进制文件"
-        print_error "未找到 sing-box 二进制文件"
-        print_error "可能是压缩包结构异常，请重新尝试安装"
-        rm -rf "$temp_dir"
-        read -p "按回车键返回主菜单..." dummy
-        show_main_menu
-        return
-    fi
-    
+    # 设置二进制文件路径（直接下载的就是二进制文件）
+    local binary_path="./sing-box"
     log_info "安装 sing-box 到 /usr/local/bin/"
     print_info "安装 sing-box..."
     
@@ -940,7 +868,6 @@ show_main_menu() {
     echo -e "${BLUE}          sing-box 一键安装管理脚本${NC}"
     echo -e "${GREEN}          作者: $AUTHOR${NC}"
     echo -e "${BROWN}          版本: $VERSION${NC}"
-    echo -e "${SKYBLUE}          sing-box版本: $SINGBOX_VERSION${NC}"
     echo -e "${BLUE}===============================================${NC}"
     echo ""
     # 检查sing-box是否已安装
@@ -974,9 +901,7 @@ show_main_menu() {
     print_skyblue "------------------"
     print_green "8. 查看配置文件"
     print_skyblue "------------------"
-    print_green "9. 配置文件备份与恢复"
-    print_skyblue "------------------"
-    print_green "10. 查看日志"
+    print_green "9. 查看日志"
     print_skyblue "------------------"
     print_purple "0. 退出脚本"
     print_skyblue "------------------"
@@ -1008,9 +933,6 @@ show_main_menu() {
             view_config
             ;;
         9)
-            show_backup_menu
-            ;;
-        10)
             show_log_menu
             ;;
         0)
@@ -1049,11 +971,7 @@ show_config_menu() {
     print_skyblue "------------------"
     print_green "3. 修改Reality伪装域名"
     print_skyblue "------------------"
-    print_green "4. 备份当前配置"
-    print_skyblue "------------------"
-    print_green "5. 恢复配置文件"
-    print_skyblue "------------------"
-    print_green "6. 查看当前配置"
+    print_green "4. 查看当前配置"
     print_skyblue "------------------"
     print_purple "0. 返回主菜单"
     print_skyblue "------------------"
@@ -1072,12 +990,6 @@ show_config_menu() {
             modify_sni
             ;;
         4)
-            backup_config_from_config_menu
-            ;;
-        5)
-            restore_config_from_config_menu
-            ;;
-        6)
             view_current_config
             ;;
         0)
@@ -1106,8 +1018,6 @@ show_log_menu() {
     print_skyblue "------------------"
     print_green "3. 实时监控日志"
     print_skyblue "------------------"
-    print_green "4. 清空日志文件"
-    print_skyblue "------------------"
     print_purple "0. 返回主菜单"
     print_skyblue "------------------"
     echo ""
@@ -1124,9 +1034,6 @@ show_log_menu() {
         3)
             monitor_logs
             ;;
-        4)
-            clear_logs
-            ;;
         0)
             show_main_menu
             ;;
@@ -1138,40 +1045,7 @@ show_log_menu() {
     esac
 }
 
-# 显示备份菜单
-show_backup_menu() {
-    clear
-    print_blue "==============================================="
-    print_blue "          配置文件备份与恢复"
-    print_blue "==============================================="
-    echo ""
-    print_green "1. 备份当前配置文件"
-    print_skyblue "------------------"
-    print_green "2. 恢复配置文件"
-    print_skyblue "------------------"
-    print_purple "0. 返回主菜单"
-    print_skyblue "------------------"
-    echo ""
-    print_skyblue "==============================================="
-    read -p "请输入选择: " choice
-    
-    case $choice in
-        1)
-            backup_config
-            ;;
-        2)
-            restore_config
-            ;;
-        0)
-            show_main_menu
-            ;;
-        *)
-            print_error "无效选择，请重新输入"
-            sleep 2
-            show_backup_menu
-            ;;
-    esac
-}
+
 
 # 非交互式安装函数
 non_interactive_install() {
@@ -1360,12 +1234,9 @@ manage_service() {
             log_info "sing-box 服务${action_chinese}成功"
             print_info "sing-box 服务${action_chinese}成功"
             return 0
-        else
             log_error "sing-box 服务${action_chinese}失败"
             print_error "sing-box 服务${action_chinese}失败"
             return 1
-        fi
-    else
         # 对于不支持systemctl的系统，根据具体系统类型使用不同的管理方式
         log_debug "systemctl不可用，使用备用服务管理方式"
         if [[ $OS == "alpine" ]]; then
@@ -1378,17 +1249,12 @@ manage_service() {
                     log_info "sing-box 服务${action_chinese}成功"
                     print_info "sing-box 服务${action_chinese}成功"
                     return 0
-                else
                     log_error "sing-box 服务${action_chinese}失败"
                     print_error "sing-box 服务${action_chinese}失败"
                     return 1
-                fi
-            else
                 log_error "Alpine系统缺少rc-service命令"
                 print_error "Alpine系统缺少rc-service命令"
                 return 1
-            fi
-        else
             # 其他系统尝试使用service命令
             if command -v service &> /dev/null; then
                 log_debug "使用service命令管理服务: service sing-box $action"
@@ -1397,12 +1263,9 @@ manage_service() {
                     log_info "sing-box 服务${action_chinese}成功"
                     print_info "sing-box 服务${action_chinese}成功"
                     return 0
-                else
                     log_error "sing-box 服务${action_chinese}失败"
                     print_error "sing-box 服务${action_chinese}失败"
                     return 1
-                fi
-            else
                 log_error "系统不支持服务管理命令"
                 print_error "系统不支持服务管理命令"
                 return 1
@@ -1477,8 +1340,6 @@ check_singbox_status() {
             netstat -tulnp | grep sing-box
             echo "IPv6监听端口:"
             netstat -tulnp6 | grep sing-box
-        fi
-    else
         print_info "sing-box 进程状态: 未运行"
     fi
     
@@ -1486,7 +1347,6 @@ check_singbox_status() {
     echo ""
     if [[ -f "$CONFIG_FILE" ]]; then
         print_info "配置文件状态: 存在 ($CONFIG_FILE)"
-    else
         print_info "配置文件状态: 不存在"
     fi
     
@@ -1573,11 +1433,8 @@ modify_port() {
             print_info "端口已更新为: $new_port"
             log_info "端口已更新为: $new_port"
             update_success=true
-        else
             print_error "使用jq更新端口失败"
             log_error "使用jq更新端口失败"
-        fi
-    else
         # 如果没有jq，使用sed替换端口
         local old_port=$(grep -o '"listen_port":[[:space:]]*[0-9]*' "$config_file" | head -1 | grep -o '[0-9]*')
         if [[ -n "$old_port" ]]; then
@@ -1586,11 +1443,8 @@ modify_port() {
                 print_info "端口已更新为: $new_port"
                 log_info "端口已更新为: $new_port"
                 update_success=true
-            else
                 print_error "使用sed更新端口失败"
                 log_error "使用sed更新端口失败"
-            fi
-        else
             print_warning "无法自动更新端口，请手动编辑配置文件"
             log_warning "无法自动更新端口"
         fi
@@ -1602,8 +1456,6 @@ modify_port() {
         if ! manage_service "restart"; then
             print_warning "sing-box 服务重启失败，请手动重启服务"
             log_warning "sing-box 服务重启失败"
-        fi
-    else
         print_error "更新端口失败，配置未更改"
         log_error "更新端口失败，配置未更改"
     fi
@@ -1650,14 +1502,45 @@ modify_uuid() {
     log_info "配置文件已备份至: $backup_file"
     
     # 更新配置文件中的UUID
-    update_config_uuid "$config_file" "$new_uuid"
+    local update_success=false
+    # 使用jq更新JSON配置文件中的UUID（如果jq可用）
+    if command -v jq &> /dev/null; then
+        # 使用jq更新UUID
+        jq --arg uuid "$new_uuid" '.inbounds[0].users[0].uuid = $uuid' "$config_file" > "${config_file}.tmp" && mv "${config_file}.tmp" "$config_file"
+        if [[ $? -eq 0 ]]; then
+            print_info "UUID已更新为: $new_uuid"
+            log_info "UUID已更新为: $new_uuid"
+            update_success=true
+        else
+            print_error "使用jq更新UUID失败"
+            log_error "使用jq更新UUID失败"
+        fi
+    else
+        # 如果没有jq，使用sed替换UUID
+        # 先尝试匹配带双引号的UUID格式
+        if grep -q '"uuid"' "$config_file"; then
+            sed -i "s/\"uuid\": *\"[^"]*\"/\"uuid\": \"$new_uuid\"/g" "$config_file"
+            if [[ $? -eq 0 ]]; then
+                print_info "UUID已更新为: $new_uuid"
+                log_info "UUID已更新为: $new_uuid"
+                update_success=true
+            else
+                print_error "使用sed更新UUID失败"
+                log_error "使用sed更新UUID失败"
+            fi
+        else
+            print_warning "无法自动更新UUID，请手动编辑配置文件"
+            log_warning "无法自动更新UUID"
+        fi
+    fi
     
-    if [[ $? -eq 0 ]]; then
-        print_info "UUID已更新为: $new_uuid"
-        log_info "UUID已更新为: $new_uuid"
-        
+    if [[ "$update_success" == true ]]; then
         # 重启服务使更改生效
-        manage_service "restart"
+        print_info "正在重启 sing-box 服务以应用更改..."
+        if ! manage_service "restart"; then
+            print_warning "sing-box 服务重启失败，请手动重启服务"
+            log_warning "sing-box 服务重启失败"
+        fi
         print_info "按任意键返回配置菜单..."
         read -n 1 -s -r -p ""
         echo
@@ -1712,14 +1595,45 @@ modify_sni() {
     log_info "配置文件已备份至: $backup_file"
     
     # 更新配置文件中的SNI
-    update_config_sni "$config_file" "$new_sni"
+    local update_success=false
+        # 使用jq更新JSON配置文件中的SNI（如果jq可用）
+        if command -v jq &> /dev/null; then
+            # 使用jq更新SNI
+            jq --arg sni "$new_sni" '.inbounds[0].tls.server_name = $sni' "$config_file" > "${config_file}.tmp" && mv "${config_file}.tmp" "$config_file"
+            if [[ $? -eq 0 ]]; then
+                print_info "SNI已更新为: $new_sni"
+                log_info "SNI已更新为: $new_sni"
+                update_success=true
+            else
+                print_error "使用jq更新SNI失败"
+                log_error "使用jq更新SNI失败"
+            fi
+        else
+            # 如果没有jq，使用sed替换SNI
+            # 先尝试匹配带双引号的server_name格式
+            if grep -q '"server_name"' "$config_file"; then
+                sed -i "s/\"server_name\": *\"[^"]*\"/\"server_name\": \"$new_sni\"/g" "$config_file"
+                if [[ $? -eq 0 ]]; then
+                    print_info "SNI已更新为: $new_sni"
+                    log_info "SNI已更新为: $new_sni"
+                    update_success=true
+                else
+                    print_error "使用sed更新SNI失败"
+                    log_error "使用sed更新SNI失败"
+                fi
+            else
+                print_warning "无法自动更新SNI，请手动编辑配置文件"
+                log_warning "无法自动更新SNI"
+            fi
+        fi
     
-    if [[ $? -eq 0 ]]; then
-        print_info "SNI已更新为: $new_sni"
-        log_info "SNI已更新为: $new_sni"
-        
+    if [[ "$update_success" == true ]]; then
         # 重启服务使更改生效
-        manage_service "restart"
+        print_info "正在重启 sing-box 服务以应用更改..."
+        if ! manage_service "restart"; then
+            print_warning "sing-box 服务重启失败，请手动重启服务"
+            log_warning "sing-box 服务重启失败"
+        fi
         print_info "按任意键返回配置菜单..."
         read -n 1 -s -r -p ""
         echo
@@ -1876,7 +1790,6 @@ is_port_in_use() {
         if ss -tuln | grep -q ":$port " || ss -tuln6 | grep -q ":$port " || ss -tuln | grep -q ":$port$" || ss -tuln6 | grep -q ":$port$"; then
             log_debug "端口 $port 已被占用 (通过 ss 命令检测)"
             return 0  # 端口已被占用
-        else
             log_debug "端口 $port 未被占用 (通过 ss 命令检测)"
             return 1  # 端口未被占用
         fi
@@ -1886,22 +1799,16 @@ is_port_in_use() {
         if netstat -tuln | grep -q ":$port " || netstat -tuln6 | grep -q ":$port " || netstat -tuln | grep -q ":$port$" || netstat -tuln6 | grep -q ":$port$"; then
             log_debug "端口 $port 已被占用 (通过 netstat 命令检测)"
             return 0  # 端口已被占用
-        else
             log_debug "端口 $port 未被占用 (通过 netstat 命令检测)"
             return 1  # 端口未被占用
-        fi
-    else
         # 如果都没有，尝试使用lsof
         if command -v lsof &> /dev/null; then
             log_debug "使用 lsof 命令检查端口 $port"
             if lsof -i :$port &> /dev/null || lsof -i6 :$port &> /dev/null; then
                 log_debug "端口 $port 已被占用 (通过 lsof 命令检测)"
                 return 0  # 端口已被占用
-            else
                 log_debug "端口 $port 未被占用 (通过 lsof 命令检测)"
                 return 1  # 端口未被占用
-            fi
-        else
             # 如果所有工具都不可用，返回未占用（保守做法）
             log_debug "未找到可用的端口检查工具，假设端口 $port 未被占用"
             return 1
@@ -1914,23 +1821,7 @@ print_success() {
     echo -e "${GREEN}$1${NC}"
 }
 
-# 从配置菜单调用的备份配置函数
-backup_config_from_config_menu() {
-    backup_config
-    print_info "按任意键返回配置菜单..."
-    read -n 1 -s -r -p ""
-    echo
-    show_config_menu
-}
 
-# 从配置菜单调用的恢复配置函数
-restore_config_from_config_menu() {
-    restore_config
-    print_info "按任意键返回配置菜单..."
-    read -n 1 -s -r -p ""
-    echo
-    show_config_menu
-}
 
 # 卸载sing-box
 uninstall_singbox() {
@@ -1963,7 +1854,6 @@ uninstall_singbox() {
         fi
         
         print_success "sing-box卸载完成!"
-    else
         print_info "取消卸载操作"
     fi
     
@@ -1985,17 +1875,14 @@ view_full_logs() {
         local log_size=$(stat -f%z "$LOG_FILE" 2>/dev/null || stat -c%s "$LOG_FILE" 2>/dev/null || echo "0")
         if [[ "$log_size" -eq 0 ]]; then
             print_info "日志文件为空"
-        else
             print_info "日志文件大小: $(($log_size / 1024)) KB"
             echo "提示: 使用 less 查看时，按 q 键退出查看器"
             echo "----------------------------------------"
             if command -v less &> /dev/null; then
                 less "$LOG_FILE"
-            else
                 cat "$LOG_FILE"
             fi
         fi
-    else
         print_warning "日志文件不存在: $LOG_FILE"
     fi
     
@@ -2017,7 +1904,6 @@ view_recent_logs() {
     if [[ "$log_size" -eq 0 ]]; then
         print_info "日志文件为空"
         echo "----------------------------------------"
-    else
         print_info "最近300行日志内容 ($LOG_FILE):"
         echo "----------------------------------------"
         tail -n 300 "$LOG_FILE"
@@ -2044,35 +1930,7 @@ monitor_logs() {
         fi
         if command -v tail &> /dev/null; then
             tail -f "$LOG_FILE"
-        else
             print_warning "系统缺少tail命令"
-        fi
-    else
-        print_warning "日志文件不存在: $LOG_FILE"
-    fi
-    
-    echo ""
-    read -p "按回车键返回日志菜单..." dummy
-    show_log_menu
-}
-
-# 清空日志文件
-clear_logs() {
-    clear
-    print_blue "==========================================="
-    print_blue "             清空 sing-box 日志"
-    print_blue "==========================================="
-    echo ""
-    
-    if [[ -f "$LOG_FILE" ]]; then
-        read -p "确定要清空日志文件吗? (y/N): " confirm
-        if [[ "$confirm" =~ ^[Yy]$ ]]; then
-            > "$LOG_FILE"
-            print_info "日志文件已清空"
-        else
-            print_info "取消清空日志文件"
-        fi
-    else
         print_warning "日志文件不存在: $LOG_FILE"
     fi
     
@@ -2099,7 +1957,6 @@ view_config() {
     if command -v jq &> /dev/null; then
         # 使用jq美化显示JSON
         jq . "$config_file"
-    else
         # 如果没有jq，直接显示原始内容
         cat "$config_file"
     fi
@@ -2109,125 +1966,7 @@ view_config() {
     show_main_menu
 }
 
-# 备份配置文件
-backup_config() {
-    log_debug "开始备份配置文件"
-    
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        log_error "未找到配置文件: $CONFIG_FILE"
-        print_error "未找到配置文件: $CONFIG_FILE"
-        return 1
-    fi
-    
-    # 创建备份目录
-    log_debug "检查备份目录: $BACKUP_DIR"
-    if [[ ! -d "$BACKUP_DIR" ]]; then
-        log_debug "备份目录不存在，创建目录: $BACKUP_DIR"
-        mkdir -p "$BACKUP_DIR"
-    fi
-    
-    # 生成备份文件名（包含时间戳）
-    local timestamp=$(date +"%Y%m%d_%H%M%S")
-    local backup_file="$BACKUP_DIR/sb-vless_backup_${timestamp}.json"
-    log_debug "生成备份文件名: $backup_file"
-    
-    # 复制配置文件到备份目录
-    log_debug "复制配置文件到备份目录: cp \"$CONFIG_FILE\" \"$backup_file\""
-    cp "$CONFIG_FILE" "$backup_file"
-    
-    if [[ $? -eq 0 ]]; then
-        print_success "配置文件已备份到: $backup_file"
-        log_info "配置文件已备份到: $backup_file"
-        log_debug "备份完成"
-    else
-        log_error "备份配置文件失败"
-        print_error "备份配置文件失败"
-        read -p "按回车键返回备份菜单..." dummy
-        show_backup_menu
-        return 1
-    fi
-    
-    print_info "按任意键返回备份菜单..."
-    read -n 1 -s -r -p ""
-    echo
-    show_backup_menu
-}
 
-# 恢复配置文件
-restore_config() {
-    log_debug "开始恢复配置文件"
-    
-    # 检查备份目录是否存在
-    if [[ ! -d "$BACKUP_DIR" ]]; then
-        log_error "备份目录不存在: $BACKUP_DIR"
-        print_error "备份目录不存在: $BACKUP_DIR"
-        return 1
-    fi
-    
-    # 列出所有备份文件（按时间降序排列）
-    log_debug "列出备份目录中的文件: $BACKUP_DIR/sb-vless_backup_*.json"
-    local backups=($(ls -t "$BACKUP_DIR"/sb-vless_backup_*.json 2>/dev/null))
-    
-    if [[ ${#backups[@]} -eq 0 ]]; then
-        log_warn "未找到备份文件"
-        print_error "未找到备份文件"
-        return 1
-    fi
-    
-    log_debug "找到 ${#backups[@]} 个备份文件"
-    print_info "可用的备份文件:"
-    for i in "${!backups[@]}"; do
-        local filename=$(basename "${backups[$i]}")
-        echo "$((i+1)). $filename"
-    done
-    
-    read -p "请选择要恢复的备份文件编号: " choice
-    
-    if [[ ! "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt ${#backups[@]} ]; then
-        log_error "无效的选择: $choice"
-        print_error "无效的选择"
-        return 1
-    fi
-    
-    local selected_backup="${backups[$((choice-1))]}}"
-    log_debug "用户选择的备份文件: $selected_backup"
-    
-    # 确认恢复操作
-    print_warning "注意: 恢复配置文件将覆盖当前配置!"
-    read -p "确定要恢复配置文件吗? (y/N): " confirm
-    
-    if [[ "$confirm" == "y" ]] || [[ "$confirm" == "Y" ]]; then
-        log_info "用户确认恢复配置文件"
-        
-        # 停止服务
-        log_debug "停止sing-box服务"
-        manage_service "stop"
-        
-        # 复制备份文件到配置文件位置
-        log_debug "复制备份文件到配置文件位置: cp \"$selected_backup\" \"$CONFIG_FILE\""
-        cp "$selected_backup" "$CONFIG_FILE"
-        
-        if [[ $? -eq 0 ]]; then
-            print_success "配置文件已从 $selected_backup 恢复"
-            log_info "配置文件已从 $selected_backup 恢复"
-            
-            # 重启服务
-            log_debug "重启sing-box服务"
-            manage_service "start"
-            print_info "按任意键返回备份菜单..."
-            read -n 1 -s -r -p ""
-            echo
-            show_backup_menu
-        else
-            log_error "恢复配置文件失败"
-            print_error "恢复配置文件失败"
-            return 1
-        fi
-    else
-        log_info "用户取消恢复操作"
-        print_info "取消恢复操作"
-    fi
-}
 
 # 查看当前配置
 view_current_config() {
@@ -2251,7 +1990,6 @@ view_current_config() {
     if command -v jq &> /dev/null; then
         # 使用jq美化显示JSON
         jq . "$config_file"
-    else
         # 直接显示文件内容
         cat "$config_file"
     fi
@@ -2289,7 +2027,6 @@ main() {
         # 如果设置了任何一个环境变量，也启用非交互模式
         NON_INTERACTIVE="true"
         log_info "启用非交互模式 (部分环境变量已设置)"
-    else
         log_info "启用交互模式"
     fi
     
@@ -2318,4 +2055,3 @@ main() {
 
 # 执行主函数
 main "$@"
-
