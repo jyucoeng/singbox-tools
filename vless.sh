@@ -731,8 +731,16 @@ install_singbox() {
         return
     fi
     
-    # 清理URL中的任何潜在隐藏字符
+    # 清理URL中的任何潜在隐藏字符并进行基本验证
     download_url=$(echo "$download_url" | tr -d '\r\n')
+    
+    # 验证URL格式
+    if [[ -z "$download_url" ]]; then
+        log_error "下载URL为空"
+        print_error "下载URL为空"
+        show_main_menu
+        return
+    fi
     
     log_info "开始下载 sing-box: $download_url"
     print_info "开始下载 sing-box..."
@@ -748,20 +756,20 @@ install_singbox() {
     local retry_count=0
     local download_success=false
     
-    # 验证URL格式
+    # 验证清理后的URL
     if [[ -z "$download_url" ]]; then
-        log_error "下载URL为空"
-        print_error "下载URL为空"
+        log_error "清理后的下载URL为空"
+        print_error "清理后的下载URL为空"
         rm -rf "$temp_dir"
         read -p "按回车键返回主菜单..." dummy
         show_main_menu
         return
     fi
     
-    # 检查URL是否包含非法字符
-    if [[ "$download_url" =~ [\r\n] ]]; then
-        log_error "下载URL包含非法字符"
-        print_error "下载URL包含非法字符"
+    # 检查URL是否以http开头
+    if [[ ! "$download_url" =~ ^https?:// ]]; then
+        log_error "下载URL格式不正确: $download_url"
+        print_error "下载URL格式不正确"
         rm -rf "$temp_dir"
         read -p "按回车键返回主菜单..." dummy
         show_main_menu
