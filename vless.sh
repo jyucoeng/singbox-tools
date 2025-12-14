@@ -677,10 +677,10 @@ get_singbox_download_url() {
     
     case $OS in
         "debian"|"centos")
-            url="https://github.com/SagerNet/sing-box/releases/download/v${version}/sing-box_${version}_linux_${arch}.tar.gz"
+            url="https://github.com/SagerNet/sing-box/releases/download/v${version}/sing-box-${version}-linux-${arch}.tar.gz"
             ;;
         "alpine")
-            url="https://github.com/SagerNet/sing-box/releases/download/v${version}/sing-box_${version}_linux_${arch}.tar.gz"
+            url="https://github.com/SagerNet/sing-box/releases/download/v${version}/sing-box-${version}-linux-${arch}.tar.gz"
             ;;
         *)
             log_error "未知操作系统类型: $OS"
@@ -740,7 +740,9 @@ install_singbox() {
     if ! wget -q --show-progress "$download_url" -O sing-box.tar.gz; then
         log_error "下载 sing-box 失败"
         print_error "下载 sing-box 失败"
+        print_error "请检查网络连接或稍后重试"
         rm -rf "$temp_dir"
+        read -p "按回车键返回主菜单..." dummy
         show_main_menu
         return
     fi
@@ -753,7 +755,9 @@ install_singbox() {
     if ! tar -xzf sing-box.tar.gz; then
         log_error "解压 sing-box 失败"
         print_error "解压 sing-box 失败"
+        print_error "可能是下载的文件损坏，请重新尝试安装"
         rm -rf "$temp_dir"
+        read -p "按回车键返回主菜单..." dummy
         show_main_menu
         return
     fi
@@ -770,7 +774,9 @@ install_singbox() {
     if [[ ! -f "$binary_path" ]]; then
         log_error "未找到 sing-box 二进制文件"
         print_error "未找到 sing-box 二进制文件"
+        print_error "可能是压缩包结构异常，请重新尝试安装"
         rm -rf "$temp_dir"
+        read -p "按回车键返回主菜单..." dummy
         show_main_menu
         return
     fi
@@ -783,7 +789,9 @@ install_singbox() {
     if ! install -m 755 "$binary_path" /usr/local/bin/sing-box; then
         log_error "安装 sing-box 失败"
         print_error "安装 sing-box 失败"
+        print_error "请检查系统权限或磁盘空间"
         rm -rf "$temp_dir"
+        read -p "按回车键返回主菜单..." dummy
         show_main_menu
         return
     fi
@@ -799,6 +807,8 @@ install_singbox() {
         if ! mkdir -p /etc/sing-box; then
             log_error "创建配置目录失败"
             print_error "创建配置目录失败"
+            print_error "请检查系统权限"
+            read -p "按回车键返回主菜单..." dummy
             show_main_menu
             return
         fi
