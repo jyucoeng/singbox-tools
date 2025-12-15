@@ -890,11 +890,6 @@ EOF
     
     log_info "sing-box 下载并安装完成"
     print_success "sing-box 下载并安装完成"
-    
-    print_info "按任意键返回主菜单..."
-    read -n 1 -s -r -p ""
-    echo
-    show_main_menu
 }
 
 # 显示主菜单
