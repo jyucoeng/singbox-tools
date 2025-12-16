@@ -47,46 +47,55 @@ fi
 [[ $EUID -ne 0 ]] && red "请在root用户下运行脚本" && exit 1
 
 # 检查命令是否存在函数
-command_exists() {
-    command -v "$1" >/dev/null 2>&1
-}
+command_exists() { command -v "$1" >/dev/null 2>&1; }
 
-# 检查服务状态通用函数
+# 检查服务状态通用函数（输出不变）
 check_service() {
     local service_name=$1
     local service_file=$2
     
-    [[ ! -f "${service_file}" ]] && { red "not installed"; return 2; }
-        
+    # 未安装
+    [[ ! -f "${service_file}" ]] && { yellow "not installed"; return 2; }
+
+    # Alpine / OpenRC
     if command_exists apk; then
-        rc-service "${service_name}" status | grep -q "started" && green "running" || yellow "not running"
+        rc-service "${service_name}" status >/dev/null 2>&1
+        if [ $? -eq 0 ]; then
+            green "running"
+            return 0
+        else
+            yellow "not running"
+            return 1
+        fi
+
+    # systemd
     else
-        systemctl is-active "${service_name}" | grep -q "^active$" && green "running" || yellow "not running"
-    reading "请输入新的订阅端口(1-65535):" sub_port
-    [[ -z $sub_port ]] && sub_port=$(shuf -i 1-65535 -n 1)
-fi
-    check_service "sing-box" "${work_dir}/${server_name}"
+        if systemctl is-active --quiet "${service_name}"; then
+            green "running"
+            return 0
+        else
+            yellow "not running"
+            return 1
+        fi
+    fi
 }
 
 
 # 检查nginx状态
 check_nginx() {
-    # 检查 nginx 是否已安装
-    if ! command -v nginx >/dev/null 2>&1; then
-        echo "nginx 未安装"
-        return 1
-    fi
-
-    # 使用 systemctl 检查是否运行（不会卡死）
-    if systemctl is-active --quiet nginx; then
-        echo "nginx 运行中"
-        return 0
-    else
-        echo "nginx 未在运行"
-        return 1
-    fi
+    command_exists nginx || { yellow "not installed"; return 2; }
+    check_service "nginx" "$(command -v nginx)"
 }
 
+check_singbox() {
+    # Sing-box service file 可能在不同位置，因此只检查 systemctl 是否存在
+    if systemctl list-unit-files | grep -q "^sing-box"; then
+        check_service "sing-box" "$(command -v sing-box)"
+    else
+        yellow "not installed"
+        return 2
+    fi
+}
 #根据系统类型安装、卸载依赖
 manage_packages() {
     if [ $# -lt 2 ]; then
@@ -263,13 +272,11 @@ install_singbox() {
     chmod +x "${work_dir}/sing-box"
 
     chown root:root ${work_dir} && chmod +x ${work_dir}/${server_name} ${work_dir}/qrencode
-    
     # 检查是否通过环境变量提供了参数
     local use_env_vars=false
     if [ -n "$PORT" ] || [ -n "$UUID" ] || [ -n "$RANGE_PORTS" ]; then
         use_env_vars=true
     fi
-    
     # 获取端口
     if [ -n "$PORT" ]; then
         hy2_port=$PORT
