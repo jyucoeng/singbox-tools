@@ -239,11 +239,11 @@ install_singbox() {
     fi
 
     # 获取端口
-    if [ "$use_env_vars" = true ] && [ -n "$PORT" ]; then
+    if [ -n "$PORT" ]; then
         vless_port=$PORT
     else
         # 非交互式模式下直接生成随机端口
-        if [ "$use_env_vars" = false ]; then
+        if [ "$use_env_vars" = true ]; then
             vless_port=$(shuf -i 1-65535 -n 1)
         else
             vless_port=$(get_user_port)
@@ -254,11 +254,11 @@ install_singbox() {
     nginx_port=$(($vless_port + 1)) 
     
     # 获取UUID
-    if [ "$use_env_vars" = true ] && [ -n "$UUID" ]; then
+    if [ -n "$UUID" ]; then
         uuid=$UUID
     else
         # 非交互式模式下直接生成随机UUID
-        if [ "$use_env_vars" = false ]; then
+        if [ "$use_env_vars" = true ]; then
             uuid=$(cat /proc/sys/kernel/random/uuid)
         else
             uuid=$(get_user_uuid)
@@ -266,11 +266,11 @@ install_singbox() {
     fi
     
     # 获取SNI
-    if [ "$use_env_vars" = true ] && [ -n "$SNI" ]; then
+    if [ -n "$SNI" ]; then
         sni_value=$SNI
     else
         # 非交互式模式下直接使用默认值
-        if [ "$use_env_vars" = false ]; then
+        if [ "$use_env_vars" = true ]; then
             sni_value="$SNI_DEFAULT"
         else
             sni_value=$(get_user_sni)
