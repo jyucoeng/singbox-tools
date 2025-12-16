@@ -10,7 +10,7 @@ export LANG=en_US.UTF-8
 
 # 项目信息常量
 AUTHOR="LittleDoraemon"
-VERSION="v1.0.3"
+VERSION="v1.0.4"
 
 # 定义颜色
 re="\033[0m"
