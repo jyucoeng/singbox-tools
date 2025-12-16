@@ -71,8 +71,20 @@ fi
 
 # 检查nginx状态
 check_nginx() {
-    command_exists nginx || { red "not installed"; return 2; }
-    check_service "nginx" "$(command -v nginx)"
+    # 检查 nginx 是否已安装
+    if ! command -v nginx >/dev/null 2>&1; then
+        echo "nginx 未安装"
+        return 1
+    fi
+
+    # 使用 systemctl 检查是否运行（不会卡死）
+    if systemctl is-active --quiet nginx; then
+        echo "nginx 运行中"
+        return 0
+    else
+        echo "nginx 未在运行"
+        return 1
+    fi
 }
 
 #根据系统类型安装、卸载依赖
