@@ -295,14 +295,17 @@ install_singbox() {
     # 进入正确目录
     cd "sing-box-${SINGBOX_VERSION}-linux-${ARCH}"
 
-    # 安装执行文件
+ 
+   # 下载完成并解压后，假设当前目录有 ./sing-box
     chmod +x sing-box
-    mv sing-box /usr/local/bin/sing-box
 
-    # 创建配置目录
-    mkdir -p /etc/sing-box
+    # 将可执行文件移动到你定义的 work_dir
+    mv sing-box "${work_dir}/${server_name}"
 
-    echo "Sing-box v${SINGBOX_VERSION} installed successfully!"
+    echo "可执行文件已安装到：${work_dir}/${server_name}"
+
+    # 创建工作目录
+    mkdir -p "${work_dir}"
 
     # 检查是否通过环境变量提供了参数
     local use_env_vars=false
