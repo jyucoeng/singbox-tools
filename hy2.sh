@@ -309,9 +309,11 @@ install_singbox() {
         hy2_port=$PORT
     else
         # 非交互式模式下直接生成随机端口
+        echo "Entering random port"
         if [ "$use_env_vars" = true ]; then
             hy2_port=$(shuf -i 1-65535 -n 1)
         else
+             echo "Entering  get_user_port"
             hy2_port=$(get_user_port)
         fi
     fi
