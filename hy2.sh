@@ -259,6 +259,7 @@ allow_port() {
 
 # 下载并安装 sing-box
 install_singbox() {
+    echo "开始调用 install_singbox 函数"
     clear
     purple "正在准备sing-box中，请稍后..."
 
@@ -310,10 +311,13 @@ install_singbox() {
         # 非交互式模式下直接生成随机端口
         echo "Entering random port"
         if [ "$use_env_vars" = true ]; then
+            echo "使用非交互式模式，生成随机端口"
             hy2_port=$(shuf -i 1-65535 -n 1)
+            echo "生成的随机端口: $hy2_port"
         else
-            echo "Entering  get_user_port"
+            echo "使用交互式模式，调用 get_user_port 函数"
             hy2_port=$(get_user_port)
+            echo "从 get_user_port 函数获取的端口: $hy2_port"
         fi
     fi
 
@@ -322,13 +326,18 @@ install_singbox() {
 
     # 获取UUID
     if [ -n "$UUID" ]; then
+        echo "使用环境变量提供的UUID: $UUID"
         uuid=$UUID
     else
         # 非交互式模式下直接生成随机UUID
         if [ "$use_env_vars" = true ]; then
+            echo "使用非交互式模式，生成随机UUID"
             uuid=$(cat /proc/sys/kernel/random/uuid)
+            echo "生成的随机UUID: $uuid"
         else
+            echo "使用交互式模式，调用 get_user_uuid 函数"
             uuid=$(get_user_uuid)
+            echo "从 get_user_uuid 函数获取的UUID: $uuid"
         fi
     fi
 
@@ -1216,14 +1225,19 @@ reading_input() {
 get_user_port() {
     local user_port
     
+    echo "开始调用 get_user_port 函数"
+    
     while true; do
-        reading_input "请输入端口号 (1-65535)，或按回车跳过使用随机端口: " user_port
+        # 提示用户输入端口
+        echo -n "请输入端口号 (1-65535)，或按回车跳过使用随机端口: "
+        read user_port
         
         # 如果用户直接按回车，使用随机端口
         if [ -z "$user_port" ]; then
+            echo "用户选择使用随机端口"
             user_port=$(shuf -i 1-65535 -n 1)
-            echo "$user_port"
-            return
+            echo "生成的随机端口: $user_port"
+            return $user_port
         fi
         
         # 去除用户输入中的空格
@@ -1231,6 +1245,7 @@ get_user_port() {
         
         # 验证端口范围
         if ! [[ "$user_port" =~ ^[0-9]+$ ]] || [ "$user_port" -lt 1 ] || [ "$user_port" -gt 65535 ]; then
+            echo "端口范围验证失败: $user_port"
             red "端口号必须是1-65535之间的整数"
             echo "请重新输入"
             continue
@@ -1238,45 +1253,48 @@ get_user_port() {
         
         # 检查端口是否已被占用
         if ss -tuln | grep -q ":$user_port "; then
+            echo "端口已被占用: $user_port"
             red "端口 $user_port 已被占用，请选择其他端口"
             echo "请重新输入"
             continue
         fi
         
         # 端口有效且未被占用
-        echo "$user_port"
-        return
+        echo "用户输入的有效端口: $user_port"
+        return $user_port
     done
 }
-
-
 # 获取用户输入的UUID
 get_user_uuid() {
     local user_uuid
     
+    echo "开始调用 get_user_uuid 函数"
+    
     while true; do
-        # 获取用户输入的UUID
-        reading_input "请输入UUID，或按回车跳过使用随机UUID: " user_uuid
+        # 提示用户输入UUID
+        echo -n "请输入UUID，或按回车跳过使用随机UUID: "
+        read user_uuid
 
         # 如果用户直接按回车，生成随机UUID
         if [ -z "$user_uuid" ]; then
+            echo "用户选择使用随机UUID"
             user_uuid=$(cat /proc/sys/kernel/random/uuid)
-            break
+            echo "生成的随机UUID: $user_uuid"
+            return $user_uuid
         else
-            # 可选: 验证UUID格式是否正确
+            # 验证UUID格式是否正确
             if ! [[ "$user_uuid" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$ ]]; then
+                echo "UUID格式验证失败: $user_uuid"
                 red "无效的UUID格式，请重新输入或按回车跳过"
                 echo "请重新输入UUID"
                 continue
             else
-                break
+                echo "用户输入的有效UUID: $user_uuid"
+                return $user_uuid
             fi
         fi
     done
-
-    echo "$user_uuid"
 }
-
 # 处理RANGE_PORTS环境变量
 handle_range_ports() {
     # 如果提供了RANGE_PORTS环境变量，则自动配置端口跳跃
