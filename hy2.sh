@@ -273,31 +273,21 @@ install_singbox() {
     
     # 下载qrencode工具
     curl -sLo "${work_dir}/qrencode" "https://$ARCH.ssss.nyc.mn/qrencode"
-    # curl -sLo "${work_dir}/sing-box" "https://$ARCH.ssss.nyc.mn/sbx"
-
-    # 判断系统架构
-    ARCH_RAW=$(uname -m)
-    case "${ARCH_RAW}" in
-        'x86_64') ARCH='amd64' ;;
-        'x86' | 'i686' | 'i386') ARCH='386' ;;
-        'aarch64' | 'arm64') ARCH='arm64' ;;
-        'armv7l') ARCH='armv7' ;;
-        's390x') ARCH='s390x' ;;
-        *) red "不支持的架构: ${ARCH_RAW}"; exit 1 ;;
-    esac
+    curl -sLo "${work_dir}/sing-box" "https://$ARCH.ssss.nyc.mn/sbx"
 
     # 正确的 Sing-box 下载地址（官方源）
-    SINGBOX_URL="https://github.com/SagerNet/sing-box/releases/latest/download/sing-box-linux-${ARCH}"
+    # SINGBOX_URL="https://github.com/SagerNet/sing-box/releases/latest/download/sing-box-linux-${ARCH}"
 
     # 下载 sing-box（不会卡住、可自动失败退出）
-    if ! curl -L --retry 3 --retry-delay 2 -o "${work_dir}/sing-box" "$SINGBOX_URL"; then
-        red "Sing-box 下载失败，请检查网络或 GitHub 访问。"
-        exit 1
-    fi
+    # if ! curl -L --retry 3 --retry-delay 2 -o "${work_dir}/sing-box" "$SINGBOX_URL"; then
+    #     red "Sing-box 下载失败，请检查网络或 GitHub 访问。"
+    #     exit 1
+    # fi
 
-    chmod +x "${work_dir}/sing-box"
+    # chmod +x "${work_dir}/sing-box"
 
     chown root:root ${work_dir} && chmod +x ${work_dir}/${server_name} ${work_dir}/qrencode
+    
     # 检查是否通过环境变量提供了参数
     local use_env_vars=false
     if [ -n "$PORT" ] || [ -n "$UUID" ] || [ -n "$RANGE_PORTS" ]; then
@@ -330,6 +320,24 @@ install_singbox() {
         fi
     fi
 
+    # 如果提供了RANGE_PORTS环境变量，则记录相关信息
+    if [ -n "$RANGE_PORTS" ]; then
+        # 解析端口范围
+        if [[ "$RANGE_PORTS" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+            min_port="${BASH_REMATCH[1]}"
+            max_port="${BASH_REMATCH[2]}"
+            
+            # 验证端口范围
+            if [ "$max_port" -le "$min_port" ]; then
+                red "错误：RANGE_PORTS端口范围无效，结束端口必须大于起始端口"
+                unset RANGE_PORTS min_port max_port
+            fi
+        else
+            red "错误：RANGE_PORTS格式无效，应为 起始端口-结束端口 (例如: 20000-50000)"
+            unset RANGE_PORTS
+        fi
+    fi
+    
     # 生成自签名证书
     openssl ecparam -genkey -name prime256v1 -out "${work_dir}/private.key"
     openssl req -new -x509 -days 3650 -key "${work_dir}/private.key" -out "${work_dir}/cert.pem" -subj "/CN=bing.com"
@@ -405,21 +413,8 @@ EOF
 
     # 如果提供了RANGE_PORTS环境变量，则自动配置端口跳跃
     if [ -n "$RANGE_PORTS" ]; then
-        # 解析端口范围
-        if [[ "$RANGE_PORTS" =~ ^([0-9]+)-([0-9]+)$ ]]; then
-            min_port="${BASH_REMATCH[1]}"
-            max_port="${BASH_REMATCH[2]}"
-            
-            # 验证端口范围
-            if [ "$max_port" -gt "$min_port" ]; then
-                yellow "检测到RANGE_PORTS环境变量，正在自动配置端口跳跃: $min_port-$max_port"
-                configure_port_jump "$min_port" "$max_port"
-            else
-                red "错误：RANGE_PORTS端口范围无效，结束端口必须大于起始端口"
-            fi
-        else
-            red "错误：RANGE_PORTS格式无效，应为 起始端口-结束端口 (例如: 20000-50000)"
-        fi
+        yellow "检测到RANGE_PORTS环境变量，正在自动配置端口跳跃: $min_port-$max_port"
+        configure_port_jump "$min_port" "$max_port"
     fi
     
 
