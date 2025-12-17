@@ -14,7 +14,7 @@ SINGBOX_VERSION="1.12.13"
 
 # 项目信息常量
 AUTHOR="LittleDoraemon"
-VERSION="v1.0.1"
+VERSION="v1.0.2"
 
 # 定义颜色
 re="\033[0m"
