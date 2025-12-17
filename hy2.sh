@@ -304,8 +304,11 @@ install_singbox() {
     else
         echo "当前运行模式: 交互式模式"
     fi
+
+    echo "PORT: '$PORT'"
     # 获取端口
     if [ -n "$PORT" ]; then
+        echo "Entering if branch"
         hy2_port=$PORT
     else
         # 非交互式模式下直接生成随机端口
