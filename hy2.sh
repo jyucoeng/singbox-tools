@@ -300,7 +300,7 @@ install_singbox() {
     tar -xzf "$FILENAME"
 
     # 自动匹配解压目录，例如：sing-box-1.12.12-linux-amd64
-    extracted_dir=$(find . -maxdepth 1 -type d -name "sing-box-*")
+   extracted_dir=$(find . -maxdepth 1 -type d -name "sing-box-*" | tr -d '\r\n')
 
     if [ -z "$extracted_dir" ]; then
         echo "❌ 解压失败：未找到解压目录 sing-box-*"
