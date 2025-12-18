@@ -487,7 +487,7 @@ get_info() {
   fi
 
   # 检查是否配置了端口跳跃
-  if [ -n "$RANGE_PORTS" ] && [[ "$RANGE_PORTS" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+  if [ -n "$RANGE_PORTS" ] && is_valid_range_ports_format "$RANGE_PORTS"; then
       min_port="${BASH_REMATCH[1]}"
       max_port="${BASH_REMATCH[2]}"
       hysteria2_url="hysteria2://${uuid}@${server_ip}:${hy2_port}/?insecure=1&alpn=h3&obfs=none&mport=${hy2_port},${min_port}-${max_port}#${node_name}"
@@ -1183,7 +1183,7 @@ handle_range_ports() {
     # 如果提供了RANGE_PORTS环境变量，则自动配置端口跳跃
     if [ -n "$RANGE_PORTS" ]; then
         # 解析端口范围
-        if [[ "$RANGE_PORTS" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+        if is_valid_range_ports_format "$RANGE_PORTS"; then
             local min_port="${BASH_REMATCH[1]}"
             local max_port="${BASH_REMATCH[2]}"
             
@@ -1282,7 +1282,7 @@ function is_port_in_use() {
 function is_valid_range_ports() {
   local range=$1
   echo "检查RANGE_PORTS格式..."
-  if [[ "$range" =~ ^([0-9]{1,5})-([0-9]{1,5})$ ]]; then
+  if is_valid_range_ports_format "$range"; then
     start_port=${BASH_REMATCH[1]}
     end_port=${BASH_REMATCH[2]}
     # 检查端口范围是否合法
@@ -1295,6 +1295,16 @@ function is_valid_range_ports() {
     fi
   else
     echo "RANGE_PORTS格式无效，应该是 start_port-end_port 的形式"
+    return 1
+  fi
+}
+
+# 验证RANGE_PORTS格式
+function is_valid_range_ports_format() {
+  local range=$1
+  if [[ "$range" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+    return 0
+  else
     return 1
   fi
 }
