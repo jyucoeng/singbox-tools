@@ -1301,9 +1301,6 @@ function is_port_occupied() {
 function is_valid_range_ports() {
   local range=$1
 
-  echo "检查RANGE_PORTS格式..."
-  echo  "range_ports=$range"
-
   is_valid_range_ports_format "$range"
 
   if [ $? -eq 1 ]; then
@@ -1316,14 +1313,11 @@ function is_valid_range_ports() {
     end_port_valid=$?
     
     if [ "$start_port_valid" -eq 1 ] && [ "$end_port_valid" -eq 1 ] && [ "$start_port" -le "$end_port" ]; then
-      echo "RANGE_PORTS格式正确: $start_port 到 $end_port"
       return 1
     else
-      echo "RANGE_PORTS端口范围不合法"
       return 0
     fi
   else
-    echo "RANGE_PORTS格式无效，应该是 start_port-end_port 的形式"
     return 0
   fi
 }
