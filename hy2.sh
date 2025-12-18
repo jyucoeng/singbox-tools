@@ -1303,18 +1303,22 @@ function is_port_occupied() {
 function is_valid_range_ports() {
   local range="$1"
 
+  # 第一步：格式检查
   is_valid_range_ports_format "$range"
-  if [ $? -ne 0 ]; then return 1; fi
+  if [ $? -ne 0 ]; then
+      return 1   # ❌ 格式不正确
+  fi
 
+  # 解析端口
   local start_port="${BASH_REMATCH[1]}"
   local end_port="${BASH_REMATCH[2]}"
 
+  # 第二步：端口范围检查
   is_valid_port "$start_port" || return 1
-  is_valid_port "$end_port" || return 1
-
+  is_valid_port "$end_port"  || return 1
   [ "$start_port" -le "$end_port" ] || return 1
 
-  return 0
+  return 0   # ✔ 端口范围合法
 }
 
 
