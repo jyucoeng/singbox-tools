@@ -318,8 +318,16 @@ install_singbox() {
     echo "获取到的uuid：$UUID"
     RANGE_PORTS=$(get_range_ports "$RANGE_PORTS")
     
+
+    # ------------------------------
+    # 自动设置订阅服务器端口 (PORT + 1)
+    nginx_port=$((PORT + 1))
+    export nginx_port
+    echo "订阅端口（nginx_port）：$nginx_port"
+    # ------------------------------
+
     # 定义hy2_port变量
-    hy2_port=$PORT    
+    # hy2_port=$PORT    
 
     # 确保工作目录存在
     [ ! -d "${work_dir}" ] && mkdir -p "${work_dir}"
