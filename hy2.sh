@@ -133,11 +133,7 @@ is_valid_port() {
 }
 
 # 端口占用检测
-is_port_occupied() {
-    local p="$1"
-    lsof -i :"$p" &>/dev/null
-}
-
+is_port_occupied
 # ======================================================================
 # UUID 匹配函数（无输出污染）
 # ======================================================================
@@ -184,21 +180,32 @@ get_port() {
     local p="$1"
     local interactive="$2"
 
-    # 优先使用环境变量
+    # 如果用户传入端口
     if [[ -n "$p" ]]; then
-        is_valid_port "$p" || { _red "端口无效"; exit 1; }
-        is_port_occupied "$p" && { _red "端口已被占用"; exit 1; }
+        if ! is_valid_port "$p"; then
+            _err "❌ 端口 $p 无效（必须为 1-65535）"
+            exit 1
+        fi
+        if is_port_occupied "$p"; then
+            _err "❌ 端口 $p 已被占用，请换一个端口"
+            exit 1
+        fi
         echo "$p"
         return
     fi
 
-    # 随机端口（自动模式）
+    # 自动生成端口
     while true; do
-        local rp
-        rp=$(shuf -i 20000-60000 -n 1)
-        is_port_occupied "$rp" || { echo "$rp"; return; }
+        local rp=$(shuf -i 20000-60000 -n 1)
+        if ! is_port_occupied "$rp"; then
+            echo "$rp"
+            return
+        else
+            _err "⚠️ 自动生成的端口 $rp 已被占用，重试中..."
+        fi
     done
 }
+
 
 # ======================================================================
 # 获取 UUID
@@ -223,17 +230,19 @@ get_uuid() {
 get_range_ports() {
     local r="$1"
 
-    # 无则为空
-    [[ -z "$r" ]] && { echo ""; return; }
+    if [[ -z "$r" ]]; then
+        echo ""
+        return
+    fi
 
-    # 有则必须合法
-    is_valid_range_ports "$r" || {
-        _red "RANGE_PORTS 格式错误，必须是 10000-20000 且范围合法"
+    if ! is_valid_range_ports "$r"; then
+        _err "❌ RANGE_PORTS='$r' 格式无效，应为 10000-20000 且范围合法"
         exit 1
-    }
+    fi
 
     echo "$r"
 }
+
 
 # ======================================================================
 # 防火墙开放端口
@@ -511,25 +520,25 @@ stop_singbox() {
 # ======================================================================
 
 handle_range_ports() {
-    [[ -z "$RANGE_PORTS" ]] && return
+    if [[ -z "$RANGE_PORTS" ]]; then return; fi
 
-    _yellow "处理跳跃端口 RANGE_PORTS=$RANGE_PORTS"
-
-    is_valid_range_ports_format "$RANGE_PORTS"
-    if [[ $? -eq 0 ]]; then
-        local min="${BASH_REMATCH[1]}"
-        local max="${BASH_REMATCH[2]}"
-
-        if [[ "$max" -gt "$min" ]]; then
-            _green "配置跳跃端口：$min-$max"
-            configure_port_jump "$min" "$max"
-        else
-            _red "跳跃端口范围无效：结束端口必须大于起始端口"
-        fi
-    else
-        _red "RANGE_PORTS 格式无效，应为 10000-20000 形式"
+    if ! is_valid_range_ports_format "$RANGE_PORTS"; then
+        _err "❌ RANGE_PORTS 格式无效，应为 10000-20000"
+        return
     fi
+
+    local min="${BASH_REMATCH[1]}"
+    local max="${BASH_REMATCH[2]}"
+
+    if [[ "$min" -ge "$max" ]]; then
+        _err "❌ 跳跃端口无效：结束端口必须大于起始端口"
+        return
+    fi
+
+    _purple "配置跳跃端口：$min-$max"
+    configure_port_jump "$min" "$max"
 }
+
 
 
 # ======================================================================
