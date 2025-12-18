@@ -964,38 +964,48 @@ quick_install() {
 # ======================================================================
 menu() {
     clear
-    _blue  "===================================================="
-    _blue  "        Sing-box Hysteria2 管理脚本"
-    _blue  "                作者：$AUTHOR"
-    _yellow "                版本：$VERSION"
-    _blue  "===================================================="
+    _blue "===================================================="
+    _blue "        Sing-box Hysteria2 管理脚本"
+    _blue "        作者：$AUTHOR"
+    _blue "        版本：$VERSION"
+    _blue "===================================================="
     echo ""
 
-    # 服务状态
-    sb_status=$(systemctl is-active sing-box >/dev/null 2>&1 && echo "${_green}运行中${re}" || echo "${_red}未运行${re}")
-    ng_status=$(systemctl is-active nginx >/dev/null 2>&1 && echo "${_green}运行中${re}" || echo "${_red}未运行${re}")
+    # 服务状态（彩色显示）
+    if systemctl is-active sing-box >/dev/null 2>&1; then
+        sb_status="$(_green '运行中')"
+    else
+        sb_status="$(_red '未运行')"
+    fi
 
-    echo -e " Sing-box 状态：$sb_status"
-    echo -e " Nginx 状态：   $ng_status"
+    if systemctl is-active nginx >/dev/null 2>&1; then
+        ng_status="$(_green '运行中')"
+    else
+        ng_status="$(_red '未运行')"
+    fi
+
+    _yellow " Sing-box 状态：$sb_status"
+    _yellow " Nginx 状态：   $ng_status"
     echo ""
 
-    echo -e " ${_green}1.${re} 安装 Sing-box (HY2)"
-    echo -e " ${_red}2.${re} 卸载 Sing-box"
-    echo "----------------------------------------"
-    echo -e " ${_green}3.${re} 管理 Sing-box 服务"
-    echo -e " ${_green}4.${re} 查看节点信息"
-    echo "----------------------------------------"
-    echo -e " ${_green}5.${re} 修改节点配置"
-    echo -e " ${_green}6.${re} 管理订阅服务"
-    echo "----------------------------------------"
-    echo -e " ${_purple}7.${re} 内置 SSH 工具箱"
-    echo "----------------------------------------"
-    echo -e " ${_red}0.${re} 退出脚本"
-    echo "----------------------------------------"
+    _green  " 1. 安装 Sing-box (HY2)"
+    _red    " 2. 卸载 Sing-box"
+    _yellow "----------------------------------------"
+    _green  " 3. 管理 Sing-box 服务"
+    _green  " 4. 查看节点信息"
+    _yellow "----------------------------------------"
+    _green  " 5. 修改节点配置"
+    _green  " 6. 管理订阅服务"
+    _yellow "----------------------------------------"
+    _purple " 7. 内置 SSH 工具箱"
+    _yellow "----------------------------------------"
+    _red    " 0. 退出脚本"
+    _yellow "----------------------------------------"
     echo ""
 
     read -rp "请输入选项(0-7): " choice
 }
+
 
 # ======================================================================
 # 主循环
