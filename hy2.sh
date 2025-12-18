@@ -314,13 +314,17 @@ install_singbox() {
     fi
 
     # 获取参数值
+    echo "开始获取参数值..."
     PORT=$(get_port "$PORT")
+    echo "获取到的PORT: $PORT"
     UUID=$(get_uuid "$UUID")
+    echo "获取到的UUID: $UUID"
     RANGE_PORTS=$(get_range_ports "$RANGE_PORTS")
-    
+    echo "获取到的RANGE_PORTS: $RANGE_PORTS"
+        
     # 定义hy2_port变量
-    hy2_port=$PORT    
-
+    hy2_port=$PORT
+    echo "定义hy2_port变量: $hy2_port"
     # 确保工作目录存在
     [ ! -d "${work_dir}" ] && mkdir -p "${work_dir}"
 
@@ -1180,12 +1184,15 @@ main_loop() {
 
 # 处理RANGE_PORTS环境变量
 handle_range_ports() {
+    echo "开始调用 handle_range_ports 函数"
     # 如果提供了RANGE_PORTS环境变量，则自动配置端口跳跃
     if [ -n "$RANGE_PORTS" ]; then
+        echo "检测到RANGE_PORTS环境变量: $RANGE_PORTS"
         # 解析端口范围
         if [[ "$RANGE_PORTS" =~ ^([0-9]+)-([0-9]+)$ ]]; then
             local min_port="${BASH_REMATCH[1]}"
             local max_port="${BASH_REMATCH[2]}"
+            echo "解析出起始端口: $min_port, 结束端口: $max_port"
             
             # 验证端口范围
             if [ "$max_port" -gt "$min_port" ]; then
@@ -1197,6 +1204,8 @@ handle_range_ports() {
         else
             red "错误：RANGE_PORTS格式无效，应为 起始端口-结束端口 (例如: 1-65535)"
         fi
+    else
+        echo "未检测到RANGE_PORTS环境变量"
     fi
 }
 
@@ -1260,23 +1269,31 @@ EOF
 # 验证端口号是否有效
 function is_valid_port() {
   local port=$1
+  echo "验证端口是否有效: $port"
+  local result=$([[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ])
+  echo "端口验证结果: $result"
   [[ "$port" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ]
 }
 
 # 验证RANGE_PORTS格式是否正确
 function is_valid_range_ports() {
   local range=$1
+  echo "验证RANGE_PORTS格式是否正确: $range"
   # RANGE_PORTS必须符合 start_port-end_port 的格式
   if [[ "$range" =~ ^([0-9]{1,5})-([0-9]{1,5})$ ]]; then
     start_port=${BASH_REMATCH[1]}
     end_port=${BASH_REMATCH[2]}
+    echo "解析出起始端口: $start_port, 结束端口: $end_port"
     # 检查端口范围是否合法
     if is_valid_port "$start_port" && is_valid_port "$end_port" && [ "$start_port" -le "$end_port" ]; then
+      echo "RANGE_PORTS格式验证通过"
       return 0
     else
+      echo "RANGE_PORTS格式验证失败：端口范围不合法"
       return 1
     fi
   else
+    echo "RANGE_PORTS格式验证失败：不符合 start_port-end_port 格式"
     return 1
   fi
 }
@@ -1284,49 +1301,71 @@ function is_valid_range_ports() {
 # 获取端口号
 function get_port() {
   local port=$1
+  echo "开始调用 get_port 函数，传入参数: $port"
+  
   if [[ -z "$port" ]]; then
+    echo "端口参数为空，需要用户输入或自动生成"
     red "请输入端口号 (1-65535)，如果留空将自动生成一个未占用的端口:"
     
     read user_port
+    echo "用户输入的端口: $user_port"
+    
     if [[ -n "$user_port" ]]; then
+      echo "验证用户输入的端口: $user_port"
       if is_valid_port "$user_port"; then
+        echo "端口验证通过，返回端口: $user_port"
         echo "$user_port"
       else
+        echo "端口验证失败: $user_port"
         red "输入的端口号无效，请输入一个有效的端口号 (1-65535)!" >&2
         exit 1
       fi
     else
+      echo "用户未输入端口，将自动生成随机端口"
       # 随机生成端口并检查是否被占用
       while : ; do
         local random_port=$(shuf -i 1-65535 -n 1)  # 生成1-65535范围内的随机端口
+        echo "生成随机端口: $random_port"
         if ! lsof -i :$random_port &>/dev/null; then
+          echo "随机端口未被占用，返回端口: $random_port"
           echo "$random_port"
           break
+        else
+          echo "随机端口 $random_port 已被占用，重新生成"
         fi
       done
     fi
   else
+    echo "端口参数不为空，直接返回: $port"
     echo "$port"
   fi
-}
-
-# 获取UUID
+}# 获取UUID
 function get_uuid() {
   local uuid=$1
+  echo "开始调用 get_uuid 函数，传入参数: $uuid"
+  
   if [[ -z "$uuid" ]]; then
+    echo "UUID参数为空，需要用户输入或使用默认值"
     red "请输入UUID，留空将自动生成:"
     read user_uuid
+    echo "用户输入的UUID: $user_uuid"
+    
     if [[ -n "$user_uuid" ]]; then
+      echo "验证用户输入的UUID: $user_uuid"
       if is_valid_uuid "$user_uuid"; then
+        echo "UUID验证通过，返回UUID: $user_uuid"
         echo "$user_uuid"
       else
+        echo "UUID验证失败: $user_uuid"
         red "输入的UUID格式无效，请输入正确的UUID格式!" >&2
         exit 1
       fi
     else
+      echo "用户未输入UUID，使用默认UUID: $DEFAULT_UUID"
       echo "$DEFAULT_UUID"
     fi
   else
+    echo "UUID参数不为空，直接返回: $uuid"
     echo "$uuid"
   fi
 }
@@ -1334,19 +1373,28 @@ function get_uuid() {
 # 验证UUID的格式
 function is_valid_uuid() {
   local uuid=$1
+  echo "验证UUID格式是否正确: $uuid"
+  local result=$([[ "$uuid" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$ ]])
+  echo "UUID格式验证结果: $result"
   [[ "$uuid" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$ ]]
 }
 
 # 获取RANGE_PORTS
 function get_range_ports() {
   local range=$1
+  echo "开始调用 get_range_ports 函数，传入参数: $range"
+  
   if [[ -n "$range" ]]; then
+    echo "RANGE_PORTS参数不为空，验证格式: $range"
     if ! is_valid_range_ports "$range"; then
+      echo "RANGE_PORTS格式验证失败: $range"
       red "RANGE_PORTS的格式无效，应该是 start_port-end_port 的形式，且端口号必须在1-65535之间，且 start_port <= end_port!" >&2
       exit 1
     fi
+    echo "RANGE_PORTS格式验证通过，返回: $range"
     echo "$range"
   else
+    echo "RANGE_PORTS参数为空，使用默认值: $DEFAULT_RANGE_PORTS"
     echo "$DEFAULT_RANGE_PORTS"
   fi
 }
