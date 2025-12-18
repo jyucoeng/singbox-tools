@@ -1191,7 +1191,7 @@ handle_range_ports() {
     if [ -n "$RANGE_PORTS" ]; then
 
         echo "处理handle_range_ports函数,发现RANGE_PORTS不为空"
-
+        echo "处理handle_range_ports函数,发现RANGE_PORTS为 $RANGE_PORTS"
         # 解析端口范围
         is_valid_range_ports_format "$RANGE_PORTS"
         local return_value=$?
