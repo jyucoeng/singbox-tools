@@ -291,18 +291,18 @@ install_singbox() {
     # 调用singbox安装函数
     install_sing_box_then_clear "$URL" "$FILENAME" "$work_dir" "$server_name"
 
-    local use_env_flag=0
+    local not_use_env_flag=0
     # 检查是否通过环境变量提供了参数
     is_interactive_mode
     # 转换返回值逻辑：0表示交互式模式，1表示非交互式模式
     if [ $? -eq 0 ]; then
-       use_env_flag=0
+       not_use_env_flag=0
     else
-       use_env_flag=1
+       not_use_env_flag=1
     fi
 
     # 打印是否是交互式模式
-    if [ $use_env_flag = 0 ]; then
+    if [ $not_use_env_flag = 1 ]; then
         echo "当前运行模式: 非交互式模式"
     else
         echo "当前运行模式: 交互式模式"
@@ -310,10 +310,10 @@ install_singbox() {
 
     # 获取参数值
 
-    PORT=$(get_port "$PORT"  $use_env_flag)
+    PORT=$(get_port "$PORT"  $not_use_env_flag)
 
     echo "获取到的port：$PORT"
-    UUID=$(get_uuid "$UUID"  $use_env_flag)
+    UUID=$(get_uuid "$UUID"  $not_use_env_flag)
 
     echo "获取到的uuid：$UUID"
     RANGE_PORTS=$(get_range_ports "$RANGE_PORTS")
@@ -1304,7 +1304,7 @@ function get_port() {
   local interactive_mode=$2  # 将交互模式作为参数传入
   while : ; do
     if [[ -z "$port" ]]; then  # 环境变量 PORT 为空时，接受用户输入
-      if [[ "$interactive_mode" -eq 1 ]]; then
+      if [[ "$interactive_mode" -eq 0 ]]; then
         echo "请输入端口号 (1-65535)，如果留空将自动生成一个未占用的端口:"
         read user_port
         if [[ -n "$user_port" ]]; then
@@ -1365,7 +1365,7 @@ function get_uuid() {
   local interactive_mode=$2  # 将交互模式作为参数传入
   while : ; do
     if [[ -z "$uuid" ]]; then  # 环境变量 UUID 为空时，接受用户输入
-      if [[ "$interactive_mode" -eq 1 ]]; then
+      if [[ "$interactive_mode" -eq 0 ]]; then
         echo "请输入UUID，留空将自动生成:"
         read user_uuid
         if [[ -n "$user_uuid" ]]; then
