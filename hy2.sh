@@ -1594,5 +1594,21 @@ main() {
     fi
 }
 
+# --- 自动读取调用命令前设置的环境变量（支持 PORT=xxx bash hy2.sh） ---
+load_env_vars() {
+    # 通过 env -0 强制读取父 shell 注入的变量
+    eval "$(env | grep -E '^(PORT|UUID|RANGE_PORTS|NODE_NAME)=' | sed 's/^/export /')"
+
+    # 确保脚本内部变量正常继承
+    [ -n "$PORT" ] && export PORT
+    [ -n "$UUID" ] && export UUID
+    [ -n "$RANGE_PORTS" ] && export RANGE_PORTS
+    [ -n "$NODE_NAME" ] && export NODE_NAME
+}
+
+# 调用环境变量加载器
+load_env_vars
+# ----------------------------------------------------------
+
 # 调用主函数
 main
