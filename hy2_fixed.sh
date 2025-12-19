@@ -430,6 +430,37 @@ print_delete_jump_success() {
 }
 
 
+# ======================================================================
+# 添加跳跃端口 NAT 规则（增强修复版）
+# 功能：
+#   - 将 udp 的 min-max 跳跃端口区间转发到 HY2 主端口 listen_port
+#   - 添加 IPv4 与 IPv6 NAT 规则
+#   - 规则使用 comment 标记为 hy2_jump，便于删除
+# ======================================================================
+
+add_jump_rule() {
+    local min="$1"
+    local max="$2"
+    local listen_port="$3"
+
+    # ===============================
+    # IPv4 NAT 转发规则
+    # ===============================
+    iptables -t nat -A PREROUTING \
+        -p udp --dport ${min}:${max} \
+        -m comment --comment "hy2_jump" \
+        -j DNAT --to-destination :${listen_port}
+
+    # ===============================
+    # IPv6 NAT 转发规则
+    # ===============================
+    ip6tables -t nat -A PREROUTING \
+        -p udp --dport ${min}:${max} \
+        -m comment --comment "hy2_jump" \
+        -j DNAT --to-destination :${listen_port}
+
+    green "已添加跳跃端口 NAT 转发：${min}-${max} → ${listen_port}"
+}
 
 # ======================================================================
 # 删除 NAT 跳跃端口规则
@@ -659,6 +690,8 @@ EOF
     green "订阅文件已同步更新为跳跃端口模式：${min}-${max}"
 
 }
+
+
 # ======================================================================
 # 修改 HY2 主端口（增强版 + 完整注释）
 # 功能说明：
