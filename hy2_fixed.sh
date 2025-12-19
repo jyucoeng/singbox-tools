@@ -23,23 +23,14 @@ load_env_vars() {
 }
 load_env_vars
 
-# ======================================================================
-# 判断是否为非交互模式（PORT / UUID / RANGE_PORTS 任意存在即自动安装）
-# ======================================================================
-is_interactive_mode() {
-    if [[ -n "$PORT" || -n "$UUID" || -n "$RANGE_PORTS" || -n "$NODE_NAME" ]]; then
-        return 1
-    else
-        return 0
-    fi
-}
+
 
 # ======================================================================
 # 常量
 # ======================================================================
 SINGBOX_VERSION="1.12.13"
 AUTHOR="LittleDoraemon"
-VERSION="v2.0-final"
+VERSION="v1.0-final"
 
 work_dir="/etc/sing-box"
 config_dir="${work_dir}/config.json"
@@ -197,6 +188,18 @@ get_range_ports() {
     [[ -z "$r" ]] && { echo ""; return; }
     is_valid_range "$r" || { _err "RANGE_PORTS 格式错误，应为 10000-20000"; exit 1; }
     echo "$r"
+}
+
+
+# ======================================================================
+# 判断是否为非交互模式（PORT / UUID / RANGE_PORTS 任意存在即自动安装）
+# ======================================================================
+is_interactive_mode() {
+    if [[ -n "$PORT" || -n "$UUID" || -n "$RANGE_PORTS" || -n "$NODE_NAME" ]]; then
+        return 1
+    else
+        return 0
+    fi
 }
 
 # ======================================================================
