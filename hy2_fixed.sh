@@ -587,108 +587,115 @@ configure_port_jump() {
     local min="$1"
     local max="$2"
 
-    # 获取主端口
+    # 获取 HY2 主端口
     local listen_port
     listen_port=$(jq -r '.inbounds[0].listen_port' "$config_dir")
     [[ -z "$listen_port" ]] && { err "无法读取 HY2 主端口"; return 1; }
 
-    # ===============================
-    # 1. INPUT 放行跳跃端口区间（IPv4 + IPv6）
-    # ===============================
-    iptables -C INPUT -p udp -m multiport --dports ${min}:${max} -j ACCEPT &>/dev/null ||
-        iptables -I INPUT -p udp -m multiport --dports ${min}:${max} -j ACCEPT
+    echo ""
+    green "开始应用跳跃端口：${min}-${max}"
+    echo ""
 
-    ip6tables -C INPUT -p udp -m multiport --dports ${min}:${max} -j ACCEPT &>/dev/null ||
-        ip6tables -I INPUT -p udp -m multiport --dports ${min}:${max} -j ACCEPT
+    # =====================================================
+    # 1. 放行 INPUT（IPv4 + IPv6）
+    # =====================================================
+    iptables -C INPUT -p udp --dport ${min}:${max} -j ACCEPT &>/dev/null || \
+        iptables -I INPUT -p udp --dport ${min}:${max} -j ACCEPT
+
+    ip6tables -C INPUT -p udp --dport ${min}:${max} -j ACCEPT &>/dev/null || \
+        ip6tables -I INPUT -p udp --dport ${min}:${max} -j ACCEPT
+
+    green "已放行 UDP 端口区间：${min}-${max}"
 
 
-    # ===============================
-    # 2. 删除旧跳跃端口 → 添加新 NAT 规则
-    # ===============================
-    delete_jump_rule    # 清除旧 NAT / URL / 订阅中的 mport
+    # =====================================================
+    # 2. 清理旧 NAT 规则（但不删除 URL/订阅）
+    # =====================================================
+    while iptables -t nat -C PREROUTING -m comment --comment "hy2_jump" &>/dev/null; do
+        iptables -t nat -D PREROUTING -m comment --comment "hy2_jump"
+    done
+
+    while ip6tables -t nat -C PREROUTING -m comment --comment "hy2_jump" &>/dev/null; do
+        ip6tables -t nat -D PREROUTING -m comment --comment "hy2_jump"
+    done
+
+    yellow "旧跳跃 NAT 规则已清理"
+
+
+    # =====================================================
+    # 3. 添加新的 NAT 规则（IPv4 / IPv6）
+    # =====================================================
     add_jump_rule "$min" "$max" "$listen_port"
 
 
-    # ===============================
-    # 3. 重启 sing-box 服务
-    # ===============================
-    restart_singbox
-    green "跳跃端口 ${min}-${max} 已应用到主端口 ${listen_port}"
-
-
-    # ===============================
-    # 4. 更新 url.txt 的 mport 字段
-    # ===============================
+    # =====================================================
+    # 4. 更新 URL (url.txt) — 只更新 mport，不动其它参数
+    # =====================================================
     ensure_url_file
-
     if [[ -f "$client_dir" ]]; then
         old_url=$(cat "$client_dir")
-        node_tag="${old_url#*#}"     # 节点名称
-        url_body="${old_url%%#*}"    # URL 主体（含 query 参数）
 
-        # 分离查询参数
-        query_part="${url_body#*\?}"
+        url_body="${old_url%%#*}"
+        node_tag="${old_url#*#}"
+
         host_part="${url_body%%\?*}"
+        query_part="${url_body#*\?}"
 
-        # Case A: 没有 ? 参数
+        # Case A：没有 query 参数
         if [[ "$url_body" == "$host_part" ]]; then
             new_url="${host_part}?mport=${listen_port},${min}-${max}#${node_tag}"
-
         else
-            # Case B: 有其它 query 参数
+            # 如果已有 mport → 替换
             if echo "$query_part" | grep -q "mport="; then
-                # 替换旧的 mport
                 new_query=$(echo "$query_part" | sed "s/mport=[^&]*/mport=${listen_port},${min}-${max}/")
             else
-                # 追加 mport
                 new_query="${query_part}&mport=${listen_port},${min}-${max}"
             fi
-
             new_url="${host_part}?${new_query}#${node_tag}"
         fi
 
-        # 写回 url.txt
         echo "$new_url" > "$client_dir"
-        green "url.txt 已同步写入新的跳跃端口范围 ${min}-${max}"
-    else
-        yellow "未找到 url.txt，跳跃端口不会写入 URL"
+        green "url.txt 已更新 mport=${listen_port},${min}-${max}"
     fi
 
 
-    # ===============================
-    # 5. 同步更新订阅文件（sub.txt / base64 / json）
-    #    ⚠ 保持 sub.port 不被改变
-    # ===============================
-    local server_ip uuid sub_url
-
+    # =====================================================
+    # 5. 更新订阅（sub.txt / base64 / json）
+    #     格式： http://IP:min-max/uuid
+    # =====================================================
     uuid=$(jq -r '.inbounds[0].users[0].password' "$config_dir")
 
     ipv4=$(curl -4 -s https://api.ipify.org)
     ipv6=$(curl -6 -s https://api64.ipify.org)
     [[ -n "$ipv4" ]] && server_ip="$ipv4" || server_ip="[$ipv6]"
 
-    # 跳跃端口订阅 URL 格式：
-    #   http://IP:10000-20000/UUID
     sub_url="http://${server_ip}:${min}-${max}/${uuid}"
 
-# 写 sub.txt
 cat > "$sub_file" <<EOF
-# HY2 主订阅（跳跃端口已启用）
+# HY2 主订阅（跳跃端口）
 $sub_url
 EOF
 
-    # 写 base64
     base64 -w0 "$sub_file" > "${work_dir}/sub_base64.txt"
 
-    # 写 json
 cat > "${work_dir}/sub.json" <<EOF
 {
   "hy2": "$sub_url"
 }
 EOF
 
-    green "订阅文件已同步更新为跳跃端口模式：${min}-${max}"
+    green "订阅文件已切换为跳跃端口模式：${min}-${max}"
 
+
+    # =====================================================
+    # 6. 重启服务
+    # =====================================================
+    restart_singbox
+    green "跳跃端口已成功启用 → 生效端口：${min}-${max}"
+
+    echo ""
+    yellow "提示：sub.port 未修改（遵从你的规则）"
+    echo ""
 }
 
 
