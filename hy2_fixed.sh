@@ -39,7 +39,7 @@ is_interactive_mode() {
 # ======================================================================
 SINGBOX_VERSION="1.12.13"
 AUTHOR="littleDoraemon"
-VERSION="v3.0"
+VERSION="v1.0.1"
 
 work_dir="/etc/sing-box"
 client_dir="${work_dir}/url.txt"
