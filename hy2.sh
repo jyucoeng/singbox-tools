@@ -541,7 +541,8 @@ restore_sub_files_default() {
     # -------------------------
     ipv4=$(curl -4 -s https://api.ipify.org)
     ipv6=$(curl -6 -s https://api64.ipify.org)
-    [[ -n "$ipv4" ]] && server_ip="$ipv4" || server_ip="[$ipv6]"
+    [[ -n "$ipv4" ]] && server_ip="$ipv4" || { server_ip="[$ipv6]"; }
+    
 
     uuid=$(jq -r '.inbounds[0].users[0].password' "$config_dir")
 
@@ -678,7 +679,7 @@ configure_port_jump() {
 
     ipv4=$(curl -4 -s https://api.ipify.org)
     ipv6=$(curl -6 -s https://api64.ipify.org)
-    [[ -n "$ipv4" ]] && server_ip="$ipv4" || server_ip="[$ipv6]"
+   [[ -n "$ipv4" ]] && server_ip="$ipv4" || { server_ip="[$ipv6]"; }
 
     # ❗关键：订阅永远使用 sub_port，而不是 min-max
     sub_url="http://${server_ip}:${sub_port}/${uuid}"
@@ -801,7 +802,7 @@ change_hy2_port() {
     # 获取服务器 IP
     ipv4=$(curl -4 -s https://api.ipify.org)
     ipv6=$(curl -6 -s https://api64.ipify.org)
-    [[ -n "$ipv4" ]] && server_ip="$ipv4" || server_ip="[$ipv6]"
+    [[ -n "$ipv4" ]] && server_ip="$ipv4" || { server_ip="[$ipv6]"; }
 
     # 生成新的订阅 URL（不使用跳跃端口）
     sub_link="http://${server_ip}:${sub_port}/${uuid}"
@@ -911,7 +912,7 @@ change_uuid() {
     # 获取服务器 IP
     ipv4=$(curl -4 -s https://api.ipify.org)
     ipv6=$(curl -6 -s https://api64.ipify.org)
-    [[ -n "$ipv4" ]] && server_ip="$ipv4" || server_ip="[$ipv6]"
+   [[ -n "$ipv4" ]] && server_ip="$ipv4" || { server_ip="[$ipv6]"; }
 
     # 检查是否为跳跃端口模式
     RANGE_PORTS=$(parse_range_ports_from_url)
@@ -1000,7 +1001,7 @@ change_node_name() {
     # 获取服务器公网 IP
     ipv4=$(curl -4 -s https://api.ipify.org)
     ipv6=$(curl -6 -s https://api64.ipify.org)
-    [[ -n "$ipv4" ]] && server_ip="$ipv4" || server_ip="[$ipv6]"
+    [[ -n "$ipv4" ]] && server_ip="$ipv4" || { server_ip="[$ipv6]"; }
 
     # 订阅端口不应自动修改
     if [[ -f "$sub_port_file" ]]; then
@@ -1055,14 +1056,14 @@ EOF
 #   - 输出各类格式（V2rayN、Clash、Singbox、Surge 等）
 # ======================================================================
 print_node_info_custom() {
-    local server_ip="$1"
+    local server_ip="$1"      # 来自 generate_subscription_info()
     local hy2_port="$2"
     local uuid="$3"
     local sub_port="$4"
     local range_ports="$5"
 
     # ======================================================
-    # 1. 根据跳跃端口生成 mport 参数
+    # 1. 生成 mport 参数
     # ======================================================
     if [[ -n "$range_ports" ]]; then
         local minp="${range_ports%-*}"
@@ -1072,71 +1073,105 @@ print_node_info_custom() {
         mport_param="${hy2_port}"
     fi
 
-    # 对节点名称进行 URL encode
+    # ======================================================
+    # 2. 获取 IPv4 / IPv6
+    # ======================================================
+    ipv4=$(curl -4 -s https://api.ipify.org)
+    ipv6=$(curl -6 -s https://api64.ipify.org)
+
+    local ip4_ok=false
+    local ip6_ok=false
+
+    [[ -n "$ipv4" ]] && ip4_ok=true
+    [[ -n "$ipv6" ]] && ip6_ok=true
+
+    ipv6_fmt="[$ipv6]"   # IPv6 URL 必须加 []
+
+    # ======================================================
+    # 3. 节点名称编码
+    # ======================================================
     encoded_name=$(urlencode "$NODE_NAME")
-
-    # 构造 Hy2 原始 URL
-    hy2_url="hysteria2://${uuid}@${server_ip}:${hy2_port}/?insecure=1&alpn=h3&obfs=none&mport=${mport_param}#${encoded_name}"
-
-    # ------------------------------------------------------
-    # 写入 url.txt（保持节点信息输出一致性）
-    # ------------------------------------------------------
-    ensure_url_file
-    echo "$hy2_url" > "$client_dir"
-
-    # 友好显示中文名
     decoded_name=$(urldecode "$encoded_name")
-    decoded_url="hysteria2://${uuid}@${server_ip}:${hy2_port}/?insecure=1&alpn=h3&obfs=none&mport=${mport_param}#${decoded_name}"
-
-    purple "\nHY2 原始链接（显示为中文名称）："
-    green "$decoded_url"
-    yellow "==============================================================================="
-
 
     # ======================================================
-    # 2. 生成订阅 URL
+    # 4. 构造 HY2 URL（双模式）
     # ======================================================
-    base_url="http://${server_ip}:${sub_port}/${uuid}"
+    hy2_url_ipv4=""
+    hy2_url_ipv6=""
 
-    yellow '\n提示：需打开V2rayN或其他软件里的 “跳过证书验证” 或将节点的Insecure或TLS=true\n'
+    if $ip4_ok; then
+        hy2_url_ipv4="hysteria2://${uuid}@${ipv4}:${hy2_port}/?insecure=1&alpn=h3&obfs=none&mport=${mport_param}#${encoded_name}"
+    fi
+
+    if $ip6_ok; then
+        hy2_url_ipv6="hysteria2://${uuid}@${ipv6_fmt}:${hy2_port}/?insecure=1&alpn=h3&obfs=none&mport=${mport_param}#${encoded_name}"
+    fi
 
     # ======================================================
-    # 通用订阅格式
+    # 5. 写入 url.txt（仍使用 IPv4，保持脚本兼容性）
     # ======================================================
-    purple "V2rayN / Shadowrocket / Loon / Nekobox / Karing 订阅链接："
+    if $ip4_ok; then
+        echo "$hy2_url_ipv4" > "$client_dir"
+    else
+        echo "$hy2_url_ipv6" > "$client_dir"
+    fi
+
+    # ======================================================
+    # 6. 输出完整节点信息（包括双 HY2 URL）
+    # ======================================================
+    purple "\nHY2 原始链接（节点名称：$decoded_name）"
+
+    if $ip4_ok; then
+        yellow "===== IPv4 HY2（推荐） ====="
+        green "$hy2_url_ipv4"
+        generate_qr "$hy2_url_ipv4"
+        echo ""
+    fi
+
+    if $ip6_ok; then
+        yellow "===== IPv6 HY2（备用） ====="
+        green "$hy2_url_ipv6"
+        generate_qr "$hy2_url_ipv6"
+        echo ""
+    fi
+
+    yellow "====================================================================="
+
+    # ======================================================
+    # 7. 生成订阅 URL（仍然优先用 IPv4）
+    # ======================================================
+    if $ip4_ok; then
+        base_url="http://${ipv4}:${sub_port}/${uuid}"
+    else
+        base_url="http://${ipv6_fmt}:${sub_port}/${uuid}"
+    fi
+
+    purple "订阅链接（V2rayN / Loon / Shadowrocket 等可直接扫描）："
     green "$base_url"
     generate_qr "$base_url"
-    yellow "==============================================================================="
-
+    yellow "====================================================================="
 
     # ======================================================
-    # Clash / Mihomo 格式（自动转换）
+    # 8. Clash / Mihomo / Sing-box / Surge 订阅
     # ======================================================
     clash_url="https://sublink.eooce.com/clash?config=${base_url}"
-    purple "\nClash / Mihomo 订阅链接："
+    singbox_url="https://sublink.eooce.com/singbox?config=${base_url}"
+    surge_url="https://sublink.eooce.com/surge?config=${base_url}"
+
+    purple "\nClash / Mihomo 订阅："
     green "$clash_url"
     generate_qr "$clash_url"
-    yellow "==============================================================================="
+    yellow "====================================================================="
 
-
-    # ======================================================
-    # Sing-box 订阅格式
-    # ======================================================
-    singbox_url="https://sublink.eooce.com/singbox?config=${base_url}"
-    purple "\nSing-box 订阅链接："
+    purple "Sing-box 订阅："
     green "$singbox_url"
     generate_qr "$singbox_url"
-    yellow "==============================================================================="
+    yellow "====================================================================="
 
-
-    # ======================================================
-    # Surge 格式
-    # ======================================================
-    surge_url="https://sublink.eooce.com/surge?config=${base_url}"
-    purple "\nSurge 订阅链接："
+    purple "Surge 订阅："
     green "$surge_url"
     generate_qr "$surge_url"
-    yellow "===============================================================================\n"
+    yellow "=====================================================================\n"
 }
 
 
@@ -1183,7 +1218,7 @@ generate_subscription_info() {
     # ------------------------
     ipv4=$(curl -4 -s https://api.ipify.org || true)
     ipv6=$(curl -6 -s https://api64.ipify.org || true)
-    [[ -n "$ipv4" ]] && server_ip="$ipv4" || server_ip="[$ipv6]"
+    [[ -n "$ipv4" ]] && server_ip="$ipv4" || { server_ip="[$ipv6]"; }
 
     # 获取配置中的主端口与 UUID
     hy2_port=$(jq -r '.inbounds[0].listen_port' "$config_dir")
@@ -1323,7 +1358,7 @@ change_subscribe_port() {
 
     ipv4=$(curl -4 -s https://api.ipify.org)
     ipv6=$(curl -6 -s https://api64.ipify.org)
-    [[ -n "$ipv4" ]] && server_ip="$ipv4" || server_ip="[$ipv6]"
+   [[ -n "$ipv4" ]] && server_ip="$ipv4" || { server_ip="[$ipv6]"; }
 
     # 5. 生成新的订阅 URL（注意：不受跳跃端口影响）
     sub_url="http://${server_ip}:${new_port}/${uuid}"
@@ -1554,7 +1589,7 @@ check_nodes() {
     # 获取服务器 IP
     ipv4=$(curl -4 -s https://api.ipify.org)
     ipv6=$(curl -6 -s https://api64.ipify.org)
-    [[ -n "$ipv4" ]] && server_ip="$ipv4" || server_ip="[$ipv6]"
+    [[ -n "$ipv4" ]] && server_ip="$ipv4" || { server_ip="[$ipv6]"; }
 
     # 是否启用跳跃端口？
     RANGE_PORTS=$(parse_range_ports_from_url)
