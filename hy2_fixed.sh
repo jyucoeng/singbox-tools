@@ -525,6 +525,113 @@ EOF
     _green "Sing-box 服务已成功启动！"
 }
 
+# ======================================================================
+# 增强版订阅服务管理（Nginx 控制 + 端口修改 + 自动修复）
+# ======================================================================
+disable_open_sub() {
+    clear
+    _blue  "===================================================="
+    _green "                订阅服务管理（增强版）"
+    _blue  "===================================================="
+    echo ""
+
+    _green  " 1. 关闭订阅服务（停止 Nginx）"
+    _green  " 2. 启用订阅服务（启动 Nginx）"
+    _green  " 3. 修改订阅端口（自动检测冲突）"
+    _green  " 4. 修复订阅配置（自动重建 singbox_sub.conf）"
+    _purple " 0. 返回主菜单"
+    _yellow "----------------------------------------------------"
+    echo ""
+
+    read -rp "请输入选项(0-4): " s
+
+    case "$s" in
+
+        # -------------------------------
+        # 停止订阅服务
+        # -------------------------------
+        1)
+            systemctl stop nginx 2>/dev/null
+            _green "订阅服务已关闭。"
+            ;;
+
+        # -------------------------------
+        # 启动订阅服务
+        # -------------------------------
+        2)
+            systemctl start nginx 2>/dev/null
+            if systemctl is-active nginx >/dev/null 2>&1; then
+                _green "订阅服务已成功启动。"
+            else
+                _red "订阅服务启动失败，请检查 nginx 配置。"
+            fi
+            ;;
+
+        # -------------------------------
+        # 修改订阅端口（增强逻辑）
+        # -------------------------------
+        3)
+            read -rp "请输入新的订阅端口：" new_sub_port
+
+            if ! is_valid_port "$new_sub_port"; then
+                _red "端口无效，请输入 1-65535 之间的端口。"
+                return
+            fi
+
+            if is_port_occupied "$new_sub_port"; then
+                _red "该端口已被占用，请换一个端口。"
+                return
+            fi
+
+            # 确保配置文件存在
+            if [[ ! -f /etc/nginx/conf.d/singbox_sub.conf ]]; then
+                _yellow "订阅配置缺失，正在自动修复..."
+                add_nginx_conf
+            fi
+
+            # 修改 IPv4/IPv6 端口
+            sed -i "s/listen [0-9]\+;/listen $new_sub_port;/" /etc/nginx/conf.d/singbox_sub.conf
+            sed -i "s/listen \[::\]:[0-9]\+;/listen [::]:$new_sub_port;/" /etc/nginx/conf.d/singbox_sub.conf
+
+            echo "$new_sub_port" > /etc/sing-box/sub.port
+
+            # 校验 nginx 配置
+            if ! nginx -t >/dev/null 2>&1; then
+                _red "修改失败：Nginx 配置语法错误！恢复旧配置…"
+                add_nginx_conf
+                return
+            fi
+
+            # 重启 nginx
+            systemctl restart nginx
+            _green "订阅端口已修改为：$new_sub_port"
+            ;;
+
+        # -------------------------------
+        # 自动修复订阅服务
+        # -------------------------------
+        4)
+            _yellow "正在自动修复订阅服务配置..."
+            add_nginx_conf
+            systemctl restart nginx
+            _green "修复完成，并已重启 nginx。"
+            ;;
+
+        # -------------------------------
+        # 退出
+        # -------------------------------
+        0)
+            return
+            ;;
+
+        *)
+            _red "无效选项，请重试。"
+            ;;
+    esac
+
+    echo ""
+    read -n 1 -s -r -p $'\033[1;92m按任意键返回菜单...\033[0m'
+}
 
 # ======================================================================
 # URL encode，用于生成二维码链接（关键工具函数）
