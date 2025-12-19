@@ -1440,6 +1440,7 @@ quick_install() {
     start_service_after_finish_sb
 
     green "自动安装完成！"
+    sleep 10
     check_nodes
     green "节点信息已全部显示。"
 }
