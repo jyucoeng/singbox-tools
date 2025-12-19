@@ -88,25 +88,39 @@ command_exists() { command -v "$1" >/dev/null 2>&1; }
 # 依赖安装（优化 curl 稳定性 & 避免重复更新）
 # ======================================================================
 install_common_packages() {
-    local pkgs="tar nginx jq openssl lsof coreutils curl ss netstat"
+    local pkgs="tar nginx jq openssl lsof coreutils curl"
     local need_update=1
 
     for p in $pkgs; do
         if ! command_exists "$p"; then
-            if [[ $need_update -eq 1 && ( command_exists apt || command_exists dnf || command_exists yum ) ]]; then
-                if command_exists apt; then apt update -y; fi
+
+            # 仅在第一次缺包时执行更新（避免重复 update）
+            if [[ $need_update -eq 1 ]]; then
+                if command_exists apt; then
+                    apt update -y
+                elif command_exists yum; then
+                    yum makecache -y
+                elif command_exists dnf; then
+                    dnf makecache -y
+                fi
                 need_update=0
             fi
 
             _yellow "安装依赖：$p"
-            if command_exists apt; then apt install -y $p
-            elif command_exists yum; then yum install -y $p
-            elif command_exists dnf; then dnf install -y $p
-            elif command_exists apk; then apk add $p
+
+            if command_exists apt; then
+                apt install -y "$p"
+            elif command_exists yum; then
+                yum install -y "$p"
+            elif command_exists dnf; then
+                dnf install -y "$p"
+            elif command_exists apk; then
+                apk add "$p"
             fi
         fi
     done
 }
+
 
 # ======================================================================
 # 获取公网 IP（加入多重兜底）
