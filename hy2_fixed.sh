@@ -789,58 +789,63 @@ EOF
 #   - 兼容跳跃端口模式
 #   - ⚠ 完全不修改 sub.port（遵从你的规则）
 # ======================================================================
+# ======================================================================
+# 修改 UUID（增强版：支持回车自动生成新的 UUID）
+# ======================================================================
 change_uuid() {
 
-    read -rp "请输入新的 UUID（密码）：" new_uuid
+    echo ""
+    yellow "提示：按回车将自动生成新的 UUID"
+    read -rp "请输入新的 UUID：" new_uuid
 
-    # ------------------------------
-    # 1. 校验 UUID 格式
-    # ------------------------------
-    if ! is_valid_uuid "$new_uuid"; then
-        red "UUID 格式不正确，请重新输入"
-        return
+    # ---------------------------------------------------------------
+    # 若用户直接回车 → 自动生成新的 UUID（与你安装逻辑保持一致）
+    # ---------------------------------------------------------------
+    if [[ -z "$new_uuid" ]]; then
+        new_uuid=$(cat /proc/sys/kernel/random/uuid)
+        green "已自动生成新的 UUID：$new_uuid"
+    else
+        # 用户输入 UUID → 校验格式
+        if ! is_valid_uuid "$new_uuid"; then
+            red "UUID 格式不正确，请重新输入"
+            return
+        fi
     fi
-
-    ensure_url_file
 
     local old_uuid
     old_uuid=$(jq -r '.inbounds[0].users[0].password' "$config_dir")
 
-    # ------------------------------
-    # 2. 更新 config.json 中的 UUID
-    # ------------------------------
+    # ---------------------------------------------------------------
+    # 1. 修改 config.json
+    # ---------------------------------------------------------------
     sed -i "s/\"password\": \"${old_uuid}\"/\"password\": \"${new_uuid}\"/" "$config_dir"
-    green "已更新 config.json 中的 UUID"
+    green "config.json 中的 UUID 已更新"
 
-    # ------------------------------
-    # 3. 更新 url.txt（若存在）
-    # ------------------------------
+    # ---------------------------------------------------------------
+    # 2. 同步更新 url.txt
+    # ---------------------------------------------------------------
     if [[ -f "$client_dir" ]]; then
         local old_url=$(cat "$client_dir")
+        local node_tag="${old_url#*#}"
+        local url_body="${old_url%%#*}"
 
-        local node_tag="${old_url#*#}"       # # 后面的节点名称
-        local url_body="${old_url%%#*}"      # # 前面的完整 URL 主体部分
+        # 替换 uuid@
+        local new_url_body
+        new_url_body=$(echo "$url_body" | sed "s://${old_uuid}@:${new_uuid}@:")
 
-        # 替换前缀 uuid@
-        local updated_url=$(echo "$url_body" | sed "s://${old_uuid}@::${new_uuid}@:")
-
-        echo "${updated_url}#${node_tag}" > "$client_dir"
-        green "url.txt 已同步新的 UUID"
-    else
-        yellow "未找到 url.txt，跳过 URL 更新"
+        echo "${new_url_body}#${node_tag}" > "$client_dir"
+        green "url.txt 已同步更新 UUID"
     fi
 
-
-    # ------------------------------
-    # 4. 同步更新订阅文件（sub.txt / base64 / json）
-    # ------------------------------
+    # ---------------------------------------------------------------
+    # 3. 同步更新订阅文件（sub.txt / base64 / json）
+    # ---------------------------------------------------------------
     local hy2_port sub_port server_ip RANGE_PORTS sub_link
 
-    # 获取订阅端口（不自动修改）
+    # 订阅端口不自动修改（遵守你的规则）
     if [[ -f "$sub_port_file" ]]; then
         sub_port=$(cat "$sub_port_file")
     else
-        # fallback（极少情况出现）
         hy2_port=$(jq -r '.inbounds[0].listen_port' "$config_dir")
         sub_port=$((hy2_port + 1))
     fi
@@ -850,17 +855,13 @@ change_uuid() {
     ipv6=$(curl -6 -s https://api64.ipify.org)
     [[ -n "$ipv4" ]] && server_ip="$ipv4" || server_ip="[$ipv6]"
 
-    # 检查跳跃端口是否启用
     RANGE_PORTS=$(parse_range_ports_from_url)
 
     if [[ -n "$RANGE_PORTS" ]]; then
-        # 跳跃端口订阅 URL
         sub_link="http://${server_ip}:${RANGE_PORTS}/${new_uuid}"
     else
-        # 普通订阅 URL
         sub_link="http://${server_ip}:${sub_port}/${new_uuid}"
     fi
-
 
 # 写入 sub.txt
 cat > "$sub_file" <<EOF
@@ -868,26 +869,23 @@ cat > "$sub_file" <<EOF
 $sub_link
 EOF
 
-    # 写 base64
     base64 -w0 "$sub_file" > "${work_dir}/sub_base64.txt"
 
-    # 写 json
+# 写入 JSON
 cat > "${work_dir}/sub.json" <<EOF
 {
   "hy2": "$sub_link"
 }
 EOF
 
-    green "订阅文件（sub.txt/base64/json）已同步更新 UUID"
-
-    # ------------------------------
-    # 5. 重启 Sing-box 服务，使 UUID 生效
-    # ------------------------------
+    # ---------------------------------------------------------------
+    # 4. 重启 Sing-box 服务
+    # ---------------------------------------------------------------
     restart_singbox
 
     green "UUID 修改成功：${old_uuid} → ${new_uuid}"
-    yellow "注意：订阅端口 sub.port 未被修改（遵照你的规则）"
 }
+
 
 # ======================================================================
 # 修改节点名称（增强版 + 完整注释）
