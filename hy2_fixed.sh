@@ -858,11 +858,27 @@ change_config() {
 
         3)
             read -rp "请输入新的节点名称：" new_name
+
+            # ========== A. 更新订阅文件 ==========
             echo "#$new_name" > "$sub_file"
             base64 -w0 "$sub_file" > "${work_dir}/sub_base64.txt"
-            green "节点名称已更新"
-            ;;
 
+            # ========== B. 更新 hy2 原串（url.txt） ==========
+            if [[ -f "$client_dir" ]]; then
+                sed -i "s/#.*/#$new_name/" "$client_dir"
+            fi
+
+            # ========== C. 更新 config.json 中的 tag/name 字段（预留） ==========
+            if grep -q '"tag":' "$config_dir"; then
+                sed -i "s/\"tag\": \".*\"/\"tag\": \"$new_name\"/" "$config_dir"
+            fi
+            if grep -q '"name":' "$config_dir"; then
+                sed -i "s/\"name\": \".*\"/\"name\": \"$new_name\"/" "$config_dir"
+            fi
+
+            restart_singbox
+            green "节点名称已更新并同步到所有配置"
+            ;;
         4)
             read -rp "跳跃起始端口：" jmin
             read -rp "跳跃结束端口：" jmax
