@@ -2,19 +2,18 @@
 export LANG=en_US.UTF-8
 
 # ======================================================================
-# Sing-box Hysteria2 一键安装脚本（带跳跃端口、订阅服务、自动安装、交互安装）
+# Sing-box Hy2 一键脚本（整合版）
+# 作者：littleDoraemon
+# 版本：v3.0
 # ======================================================================
 
 # ======================================================================
-# 自动加载环境变量
-# - 自动模式依据环境变量是否“存在且非空”
-# - load_env_vars 只会 export 非空合法值，避免误触发自动模式
+# 环境变量加载（自动模式依据环境变量是否非空）
 # ======================================================================
 load_env_vars() {
     while IFS='=' read -r key value; do
         case "$key" in
             PORT|UUID|RANGE_PORTS|NODE_NAME)
-                # 只在 value 非空且合法时导出（关键！）
                 if [[ -n "$value" && "$value" =~ ^[a-zA-Z0-9\.\-\:_/]+$ ]]; then
                     export "$key=$value"
                 fi
@@ -25,9 +24,7 @@ load_env_vars() {
 load_env_vars
 
 # ======================================================================
-# 自动模式判断
-# - 只要四个变量任意一个“非空” → 自动模式
-# - 四个变量均为空或未设置 → 交互模式
+# 判断自动/交互模式
 # ======================================================================
 is_interactive_mode() {
     if [[ -n "$PORT" || -n "$UUID" || -n "$RANGE_PORTS" || -n "$NODE_NAME" ]]; then
@@ -37,81 +34,59 @@ is_interactive_mode() {
     fi
 }
 
-
 # ======================================================================
-# 清空自动模式环境变量（用于强制进入交互模式）
-# ======================================================================
-clear_env_vars() {
-    unset PORT
-    unset UUID
-    unset RANGE_PORTS
-    unset NODE_NAME
-}
-
-# ======================================================================
-# 常量 / 目录
+# 常量定义
 # ======================================================================
 SINGBOX_VERSION="1.12.13"
-AUTHOR="LittleDoraemon"
-VERSION="v2.0-final"
+AUTHOR="littleDoraemon"
+VERSION="v3.0"
 
 work_dir="/etc/sing-box"
 config_dir="${work_dir}/config.json"
 sub_file="${work_dir}/sub.txt"
 sub_port_file="/etc/sing-box/sub.port"
-
-# 默认 UUID（仅在交互模式中使用）
 DEFAULT_UUID=$(cat /proc/sys/kernel/random/uuid)
 
 # ======================================================================
-# 颜色输出函数（UI 样式）
+# UI 颜色
 # ======================================================================
 re="\033[0m"
-_white() { echo -e "\033[1;37m$1\033[0m"; }
-_red() { echo -e "\e[1;91m$1\033[0m"; }
-_green() { echo -e "\e[1;32m$1\033[0m"; }
-_yellow() { echo -e "\e[1;33m$1\033[0m"; }
-_purple() { echo -e "\e[1;35m$1\033[0m"; }
-_skyblue() { echo -e "\e[1;36m$1\033[0m"; }
-_blue() { echo -e "\e[1;34m$1\033[0m"; }
-_brown() { echo -e "\033[0;33m$1\033[0m"; }
+white()  { echo -e "\033[1;37m$1\033[0m"; }
+red()    { echo -e "\e[1;91m$1\033[0m"; }
+green()  { echo -e "\e[1;32m$1\033[0m"; }
+yellow() { echo -e "\e[1;33m$1\033[0m"; }
+purple() { echo -e "\e[1;35m$1\033[0m"; }
+blue()   { echo -e "\e[1;34m$1\033[0m"; }
 
-# 彩虹标题
-_gradient() {
+gradient() {
     local text="$1"
     local colors=(196 202 208 214 220 190 82 46 51 39 33 99 129 163)
     local i=0
-    local len=${#colors[@]}
-
     for (( n=0; n<${#text}; n++ )); do
         printf "\033[38;5;${colors[i]}m%s\033[0m" "${text:n:1}"
-        i=$(( (i+1) % len ))
+        i=$(( (i+1) % ${#colors[@]} ))
     done
     echo
 }
 
-_err() { _red "[错误] $1" >&2; }
+err() { red "[错误] $1" >&2; }
 
 # ======================================================================
-# Root 校验
+# Root 检查
 # ======================================================================
-[[ $EUID -ne 0 ]] && { _err "请使用 root 执行脚本！"; exit 1; }
+[[ $EUID -ne 0 ]] && { err "请使用 root 权限运行脚本"; exit 1; }
 
 command_exists() { command -v "$1" >/dev/null 2>&1; }
 
 # ======================================================================
-# 依赖安装（关键注释）
-# - 避免重复执行 apt update / yum makecache
-# - 保证 curl/jq/lsof 可用
+# 依赖安装
 # ======================================================================
 install_common_packages() {
-    local pkgs="tar nginx jq openssl lsof coreutils curl"
+    local pkgs="tar jq openssl lsof curl coreutils qrencode nginx"
     local need_update=1
 
     for p in $pkgs; do
         if ! command_exists "$p"; then
-
-            # 第一次缺包 → 执行 update（避免重复 update）
             if [[ $need_update -eq 1 ]]; then
                 if command_exists apt; then
                     apt update -y
@@ -123,76 +98,57 @@ install_common_packages() {
                 need_update=0
             fi
 
-            _yellow "安装依赖：$p"
-
-            if command_exists apt; then
-                apt install -y "$p"
-            elif command_exists yum; then
-                yum install -y "$p"
-            elif command_exists dnf; then
-                dnf install -y "$p"
-            elif command_exists apk; then
-                apk add "$p"
+            yellow "安装依赖：$p"
+            if command_exists apt; then apt install -y "$p"
+            elif command_exists yum; then yum install -y "$p"
+            elif command_exists dnf; then dnf install -y "$p"
+            elif command_exists apk; then apk add "$p"
             fi
         fi
     done
 }
 
 # ======================================================================
-# 获取公网 IP（多重兜底）
+# 获取公网 IP（优先IPv4）
 # ======================================================================
 get_realip() {
-    local ip4 ip6
-
-    ip4=$(curl -4 -s --retry 3 --connect-timeout 3 https://api.ipify.org)
-    [[ -z "$ip4" ]] && ip4=$(curl -4 -s --retry 3 --connect-timeout 3 https://ipv4.icanhazip.com)
-
-    ip6=$(curl -6 -s --retry 3 --connect-timeout 3 https://api64.ipify.org)
-    [[ -z "$ip6" ]] && ip6=$(curl -6 -s --retry 3 --connect-timeout 3 https://ipv6.icanhazip.com)
+    ip4=$(curl -4 -s https://api.ipify.org)
+    ip6=$(curl -6 -s https://api64.ipify.org)
 
     [[ -n "$ip4" ]] && echo "$ip4" && return
     [[ -n "$ip6" ]] && echo "[$ip6]" && return
-
     echo "0.0.0.0"
 }
 
 # ======================================================================
-# 端口校验（关键逻辑）
-# - is_port_occupied 使用 lsof + ss + netstat 三重检测
-# - get_port 自动随机端口（交互模式）
+# 端口检测
 # ======================================================================
-is_valid_port() {
-    [[ "$1" =~ ^[0-9]+$ && "$1" -ge 1 && "$1" -le 65535 ]]
-}
+is_valid_port() { [[ "$1" =~ ^[0-9]+$ && "$1" -ge 1 && "$1" -le 65535 ]]; }
 
 is_port_occupied() {
     ss -tuln | grep -q ":$1 " && return 0
-    netstat -tuln 2>/dev/null | grep -q ":$1 " && return 0
     lsof -i :"$1" &>/dev/null && return 0
+    netstat -tuln 2>/dev/null | grep -q ":$1 " && return 0
     return 1
 }
 
 get_port() {
     local p="$1"
-
-    # 自动模式传入端口，需校验合法性
     if [[ -n "$p" ]]; then
-        is_valid_port "$p" || { _err "端口无效"; exit 1; }
-        ! is_port_occupied "$p" || { _err "端口已占用"; exit 1; }
+        is_valid_port "$p" || { err "端口无效"; exit 1; }
+        is_port_occupied "$p" && { err "端口已被占用"; exit 1; }
         echo "$p"
         return
     fi
 
-    # 交互模式 → 自动生成不重复端口
     while true; do
-        local rp
         rp=$(shuf -i 20000-60000 -n 1)
         ! is_port_occupied "$rp" && { echo "$rp"; return; }
     done
 }
 
 # ======================================================================
-# UUID 处理（关键注释）
+# UUID
 # ======================================================================
 is_valid_uuid() {
     [[ "$1" =~ ^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$ ]]
@@ -200,7 +156,7 @@ is_valid_uuid() {
 
 get_uuid() {
     if [[ -n "$1" ]]; then
-        is_valid_uuid "$1" || { _err "UUID 格式错误"; exit 1; }
+        is_valid_uuid "$1" || { err "UUID 格式错误"; exit 1; }
         echo "$1"
     else
         echo "$DEFAULT_UUID"
@@ -208,202 +164,180 @@ get_uuid() {
 }
 
 # ======================================================================
-# 跳跃端口区间校验（用于 NAT 多端口映射）
+# 跳跃端口格式校验
 # ======================================================================
 is_valid_range() {
     [[ "$1" =~ ^([0-9]+)-([0-9]+)$ ]] || return 1
-    local min="${BASH_REMATCH[1]}"
-    local max="${BASH_REMATCH[2]}"
+    min="${BASH_REMATCH[1]}"
+    max="${BASH_REMATCH[2]}"
     is_valid_port "$min" && is_valid_port "$max" && [[ $min -lt $max ]]
 }
 
 get_range_ports() {
     local r="$1"
     [[ -z "$r" ]] && { echo ""; return; }
-    is_valid_range "$r" || { _err "RANGE_PORTS 格式错误，应为 10000-20000"; exit 1; }
+    is_valid_range "$r" || { err "跳跃端口格式错误（例如 10000-20000）"; exit 1; }
     echo "$r"
 }
+
 # ======================================================================
-# 防火墙放行（避免重复添加规则）
-# - allow_port 会同时处理 IPv4 / IPv6
-# - 自动模式和交互模式均会调用
+# 防火墙放行
 # ======================================================================
 allow_port() {
     local port="$1"
-    local proto="$2"
 
-    # 若 firewalld 存在，则优先放行
     if command_exists firewall-cmd; then
-        firewall-cmd --permanent --add-port=${port}/${proto} &>/dev/null
+        firewall-cmd --permanent --add-port=${port}/udp &>/dev/null
         firewall-cmd --reload &>/dev/null
     fi
 
-    # iptables 放行（只在不存在时添加）
-    iptables -C INPUT -p ${proto} --dport ${port} -j ACCEPT &>/dev/null ||
-        iptables -I INPUT -p ${proto} --dport ${port} -j ACCEPT &>/dev/null
+    iptables  -C INPUT -p udp --dport "$port" -j ACCEPT &>/dev/null ||
+        iptables  -I INPUT -p udp --dport "$port" -j ACCEPT
 
-    # ip6tables 放行（同逻辑）
-    ip6tables -C INPUT -p ${proto} --dport ${port} -j ACCEPT &>/dev/null ||
-        ip6tables -I INPUT -p ${proto} --dport ${port} -j ACCEPT &>/dev/null
+    ip6tables -C INPUT -p udp --dport "$port" -j ACCEPT &>/dev/null ||
+        ip6tables -I INPUT -p udp --dport "$port" -j ACCEPT
 }
 
 # ======================================================================
-# 跳跃端口 NAT 规则（Hy2 使用多端口映射）
-# - add_jump_rule：为区间端口 → 主端口 创建 DNAT
-# - delete_jump_rule：仅删除带 hy2_jump 注释的 NAT 规则
+# NAT 跳跃端口
 # ======================================================================
 add_jump_rule() {
     local min="$1"
     local max="$2"
     local listen_port="$3"
 
-    # IPv4
     iptables -t nat -A PREROUTING -p udp --dport ${min}:${max} \
         -m comment --comment "hy2_jump" \
         -j DNAT --to-destination :${listen_port}
 
-    # IPv6
     ip6tables -t nat -A PREROUTING -p udp --dport ${min}:${max} \
         -m comment --comment "hy2_jump" \
         -j DNAT --to-destination :${listen_port}
 }
 
 delete_jump_rule() {
-    # 删除 IPv4 NAT
+
     while iptables -t nat -C PREROUTING -m comment --comment "hy2_jump" &>/dev/null; do
         iptables -t nat -D PREROUTING -m comment --comment "hy2_jump"
     done
 
-    # 删除 IPv6 NAT
     while ip6tables -t nat -C PREROUTING -m comment --comment "hy2_jump" &>/dev/null; do
         ip6tables -t nat -D PREROUTING -m comment --comment "hy2_jump"
     done
 }
 
 # ======================================================================
-# 应用跳跃端口区间：
-# - 自动打开 INPUT 防火墙
-# - 清理旧 NAT → 添加新 NAT
-# - 重启 sing-box 服务使生效
+# 应用跳跃端口区间 NAT
 # ======================================================================
 configure_port_jump() {
     local min="$1"
     local max="$2"
-
-    # 从 config.json 读取 HY2 主端口
     local listen_port
     listen_port=$(jq -r '.inbounds[0].listen_port' "$config_dir")
 
-    [[ -z "$listen_port" ]] && { _err "HY2 主端口解析失败"; return 1; }
+    [[ -z "$listen_port" ]] && { err "无法读取 HY2 主端口"; return 1; }
 
-    _green "正在应用跳跃端口区间：${min}-${max}"
-
-    # 放行区间端口（multiport）
+    # 放行跳跃端口区间
     iptables -C INPUT -p udp -m multiport --dports ${min}:${max} -j ACCEPT &>/dev/null ||
-        iptables -I INPUT -p udp -m multiport --dports ${min}:${max} -j ACCEP
+        iptables -I INPUT -p udp -m multiport --dports ${min}:${max} -j ACCEPT
 
     ip6tables -C INPUT -p udp -m multiport --dports ${min}:${max} -j ACCEPT &>/dev/null ||
         ip6tables -I INPUT -p udp -m multiport --dports ${min}:${max} -j ACCEPT
 
-    # 清理旧规则 → 添加新规则
+    # 清除旧规则 → 添加新规则
     delete_jump_rule
     add_jump_rule "$min" "$max" "$listen_port"
 
     restart_singbox
-    _green "跳跃端口规则已更新完成"
+    green "跳跃端口区间 ${min}-${max} 已应用"
 }
 
-# ======================================================================
-# RANGE_PORTS 入口处理（交互/自动模式通用）
-# ======================================================================
 handle_range_ports() {
-    if [[ -z "$RANGE_PORTS" ]]; then return; fi
+    [[ -z "$RANGE_PORTS" ]] && return
 
-    is_valid_range "$RANGE_PORTS" || {
-        _err "RANGE_PORTS 格式错误，应为 10000-20000"
-        return
-    }
+    is_valid_range "$RANGE_PORTS" || { err "跳跃端口格式错误"; return; }
 
     local min="${RANGE_PORTS%-*}"
     local max="${RANGE_PORTS#*-}"
 
-    _purple "正在设置跳跃端口：${min}-${max}"
     configure_port_jump "$min" "$max"
 }
 
 # ======================================================================
-# 安装 Sing-box 主流程（关键模块，带交互/自动分支）
-# ======================================================================
-# ======================================================================
-# 安装 Sing-box（自动/交互 + 配置生成 + systemd 注册 完整版）
+# install_singbox（自动模式 + 交互模式）
 # ======================================================================
 install_singbox() {
     clear
-    _purple "正在准备 Sing-box，请稍候..."
+    purple "准备下载并安装 Sing-box..."
 
     mkdir -p "$work_dir"
 
-    # ---------------------- 检测 CPU 架构 ----------------------
+    # -------------------- CPU 架构 --------------------
     ARCH=$(uname -m)
     case "$ARCH" in
-        x86_64)   ARCH="amd64" ;;
-        aarch64)  ARCH="arm64" ;;
-        armv7l)   ARCH="armv7" ;;
-        i386|i686)ARCH="i386" ;;
-        riscv64)  ARCH="riscv64" ;;
+        x86_64) ARCH="amd64" ;;
+        aarch64) ARCH="arm64" ;;
+        armv7l)  ARCH="armv7" ;;
+        i386|i686) ARCH="i386" ;;
+        riscv64) ARCH="riscv64" ;;
         mips64el) ARCH="mips64le" ;;
-        *) _err "不支持的架构: $ARCH" ;;
+        *) err "不支持的架构: $ARCH" ;;
     esac
 
     FILE="sing-box-${SINGBOX_VERSION}-linux-${ARCH}.tar.gz"
     URL="https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/${FILE}"
 
-    _yellow "正在下载 Sing-box：$URL"
+    yellow "下载 Sing-box：$URL"
+    curl -fSL --retry 3 --retry-delay 2 --connect-timeout 10 -o "$FILE" "$URL" \
+        || { err "下载失败"; exit 1; }
 
-    curl -fSL --retry 3 --retry-delay 2 --connect-timeout 10 \
-        -o "$FILE" "$URL" || { _err "下载失败"; exit 1; }
-
-    _yellow "解压中..."
-    tar -xzf "$FILE" || { _err "解压失败"; exit 1; }
+    yellow "解压中..."
+    tar -xzf "$FILE" || { err "解压失败"; exit 1; }
     rm -f "$FILE"
 
     extracted=$(find . -maxdepth 1 -type d -name "sing-box-*")
-    extracted=$(echo "$extracted" | head -n 1)
+    extracted=$(echo "$extracted" | head -1)
 
     mv "$extracted/sing-box" "$work_dir/sing-box"
     chmod +x "$work_dir/sing-box"
     rm -rf "$extracted"
 
-    _green "Sing-box 已成功安装"
+    green "Sing-box 已成功安装"
 
-    # ---------------------- 判断自动 / 交互模式 ----------------------
+    # -------------------- 判断是否为自动模式 --------------------
     is_interactive_mode
     if [[ $? -eq 1 ]]; then
         not_interactive=1
-        _white "当前模式：自动模式（由环境变量激活）"
+        white "当前模式：自动模式（由环境变量触发）"
     else
         not_interactive=0
-        _white "当前模式：交互模式（需要用户输入）"
+        white "当前模式：交互模式（用户手动输入）"
     fi
 
-    # ---------------------- 自动模式 ----------------------
+    # ==================================================================
+    # 自动模式
+    # ==================================================================
     if [[ $not_interactive -eq 1 ]]; then
         PORT=$(get_port "$PORT")
         UUID=$(get_uuid "$UUID")
         HY2_PASSWORD="$UUID"
 
-    # ---------------------- 交互模式：真正让用户输入 ----------------------
+    # ==================================================================
+    # 手动模式：要求用户输入
+    # ==================================================================
     else
+        # ---------- 输入主端口 ----------
         while true; do
-            read -rp "请输入 HY2 主端口（1-65535）：" USER_PORT
+            read -rp "请输入 HY2 主端口：" USER_PORT
             if is_valid_port "$USER_PORT" && ! is_port_occupied "$USER_PORT"; then
                 PORT="$USER_PORT"
                 break
             else
-                _red "端口无效或已占用，请重新输入。"
+                red "端口无效或已被占用，请重新输入"
             fi
         done
 
+        # ---------- 输入 UUID ----------
         while true; do
             read -rp "请输入 UUID（留空自动生成）：" USER_UUID
             if [[ -z "$USER_UUID" ]]; then
@@ -413,27 +347,33 @@ install_singbox() {
                 UUID="$USER_UUID"
                 break
             else
-                _red "UUID 格式不正确，请重新输入。"
+                red "UUID 格式不正确，请重新输入"
             fi
         done
 
         HY2_PASSWORD="$UUID"
     fi
 
-    _white "最终 HY2 端口：$PORT"
-    _white "最终 UUID：$UUID"
+    white "最终 HY2 主端口：$PORT"
+    white "最终 UUID：$UUID"
 
     RANGE_PORTS=$(get_range_ports "$RANGE_PORTS")
-    [[ -n "$RANGE_PORTS" ]] && _green "启用跳跃端口 RANGE_PORTS：$RANGE_PORTS"
+
+    if [[ -n "$RANGE_PORTS" ]]; then
+        green "启用跳跃端口范围：$RANGE_PORTS"
+    fi
 
     nginx_port=$((PORT + 1))
     hy2_port="$PORT"
     allow_port "$PORT" udp
 
-    # ---------------------- DNS 自动探测 ----------------------
+    # ==================================================================
+    # DNS 自动探测
+    # ==================================================================
     ipv4_ok=false
     ipv6_ok=false
-    ping -4 -c1 -W1 8.8.8.8  >/dev/null 2>&1 && ipv4_ok=true
+
+    ping -4 -c1 -W1 8.8.8.8   >/dev/null 2>&1 && ipv4_ok=true
     ping -6 -c1 -W1 2001:4860:4860::8888 >/dev/null 2>&1 && ipv6_ok=true
 
     dns_servers=()
@@ -449,7 +389,9 @@ install_singbox() {
         dns_strategy="prefer_ipv6"
     fi
 
-    # ---------------------- 生成 TLS 自签证书 ----------------------
+    # ==================================================================
+    # 生成 TLS 自签证书
+    # ==================================================================
     openssl ecparam -genkey -name prime256v1 -out "${work_dir}/private.key"
     openssl req -x509 -new -nodes \
         -key "${work_dir}/private.key" \
@@ -458,51 +400,49 @@ install_singbox() {
         -out "${work_dir}/cert.pem"
 
     # ==================================================================
-    # 生成 config.json（完整保留 Hy2 功能，与你脚本完全兼容）
+    # 生成 config.json
     # ==================================================================
 cat > "$config_dir" <<EOF
 {
-  "log": {
-    "level": "error",
-    "output": "$work_dir/sb.log"
-  },
+  "log": { "level": "error", "output": "$work_dir/sb.log" },
+
   "dns": {
-    "servers": [
-      $(IFS=,; echo "${dns_servers[*]}")
-    ],
+    "servers": [ $(IFS=,; echo "${dns_servers[*]}") ],
     "strategy": "$dns_strategy"
   },
+
   "inbounds": [
     {
       "type": "hysteria2",
       "tag": "hy2",
       "listen": "::",
       "listen_port": $hy2_port,
+
       "users": [
         { "password": "$HY2_PASSWORD" }
       ],
-      "ignore_client_bandwidth": false,
+
       "masquerade": "https://bing.com",
+
       "tls": {
         "enabled": true,
-        "alpn": [ "h3" ],
-        "min_version": "1.3",
-        "max_version": "1.3",
+        "alpn": ["h3"],
         "certificate_path": "$work_dir/cert.pem",
         "key_path": "$work_dir/private.key"
       }
     }
   ],
+
   "outbounds": [
     { "type": "direct" }
   ]
 }
 EOF
 
-    _green "配置文件已生成 → $config_dir"
+    green "配置文件已生成：$config_dir"
 
     # ==================================================================
-    # 写入 systemd 服务文件
+    # 注册 systemd 服务
     # ==================================================================
 cat > /etc/systemd/system/sing-box.service <<EOF
 [Unit]
@@ -511,7 +451,7 @@ After=network.target
 
 [Service]
 ExecStart=$work_dir/sing-box run -c $config_dir
-Restart=on-failure
+Restart=always
 LimitNOFILE=1048576
 
 [Install]
@@ -522,150 +462,99 @@ EOF
     systemctl enable sing-box
     systemctl restart sing-box
 
-    _green "Sing-box 服务已成功启动！"
+    green "Sing-box 服务已成功启动！"
 }
 
 # ======================================================================
-# 增强版订阅服务管理（Nginx 控制 + 端口修改 + 自动修复）
+# 在线二维码输出（使用你指定的 URL 方式）
 # ======================================================================
-disable_open_sub() {
-    clear
-    _blue  "===================================================="
-    _green "                订阅服务管理（增强版）"
-    _blue  "===================================================="
-    echo ""
-
-    _green  " 1. 关闭订阅服务（停止 Nginx）"
-    _green  " 2. 启用订阅服务（启动 Nginx）"
-    _green  " 3. 修改订阅端口（自动检测冲突）"
-    _green  " 4. 修复订阅配置（自动重建 singbox_sub.conf）"
-    _purple " 0. 返回主菜单"
-    _yellow "----------------------------------------------------"
-    echo ""
-
-    read -rp "请输入选项(0-4): " s
-
-    case "$s" in
-
-        # -------------------------------
-        # 停止订阅服务
-        # -------------------------------
-        1)
-            systemctl stop nginx 2>/dev/null
-            _green "订阅服务已关闭。"
-            ;;
-
-        # -------------------------------
-        # 启动订阅服务
-        # -------------------------------
-        2)
-            systemctl start nginx 2>/dev/null
-            if systemctl is-active nginx >/dev/null 2>&1; then
-                _green "订阅服务已成功启动。"
-            else
-                _red "订阅服务启动失败，请检查 nginx 配置。"
-            fi
-            ;;
-
-        # -------------------------------
-        # 修改订阅端口（增强逻辑）
-        # -------------------------------
-        3)
-            read -rp "请输入新的订阅端口：" new_sub_port
-
-            if ! is_valid_port "$new_sub_port"; then
-                _red "端口无效，请输入 1-65535 之间的端口。"
-                return
-            fi
-
-            if is_port_occupied "$new_sub_port"; then
-                _red "该端口已被占用，请换一个端口。"
-                return
-            fi
-
-            # 确保配置文件存在
-            if [[ ! -f /etc/nginx/conf.d/singbox_sub.conf ]]; then
-                _yellow "订阅配置缺失，正在自动修复..."
-                add_nginx_conf
-            fi
-
-            # 修改 IPv4/IPv6 端口
-            sed -i "s/listen [0-9]\+;/listen $new_sub_port;/" /etc/nginx/conf.d/singbox_sub.conf
-            sed -i "s/listen \[::\]:[0-9]\+;/listen [::]:$new_sub_port;/" /etc/nginx/conf.d/singbox_sub.conf
-
-            echo "$new_sub_port" > /etc/sing-box/sub.port
-
-            # 校验 nginx 配置
-            if ! nginx -t >/dev/null 2>&1; then
-                _red "修改失败：Nginx 配置语法错误！恢复旧配置…"
-                add_nginx_conf
-                return
-            fi
-
-            # 重启 nginx
-            systemctl restart nginx
-            _green "订阅端口已修改为：$new_sub_port"
-            ;;
-
-        # -------------------------------
-        # 自动修复订阅服务
-        # -------------------------------
-        4)
-            _yellow "正在自动修复订阅服务配置..."
-            add_nginx_conf
-            systemctl restart nginx
-            _green "修复完成，并已重启 nginx。"
-            ;;
-
-        # -------------------------------
-        # 退出
-        # -------------------------------
-        0)
-            return
-            ;;
-
-        *)
-            _red "无效选项，请重试。"
-            ;;
-    esac
-
-    echo ""
-    read -n 1 -s -r -p $'\033[1;92m按任意键返回菜单...\033[0m'
-}
-
-# ======================================================================
-# URL encode，用于生成二维码链接（关键工具函数）
-# ======================================================================
-urlencode() {
-    local LANG=C
-    local length="${#1}"
-    for (( i = 0; i < length; i++ )); do
-        local c="${1:i:1}"
-        case $c in
-            [a-zA-Z0-9.~_-]) printf "%s" "$c" ;;
-            *)
-                printf '%%%02X' "'$c"
-                ;;
-        esac
-    done
-}
-
-display_qr_link() {
+generate_qr() {
     local TEXT="$1"
-    local encoded
-    encoded=$(urlencode "$TEXT")
-    local QR_URL="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=$encoded"
 
-    _yellow "📱 扫码链接："
+    echo ""
+    echo "========================================"
+    echo "📱 请手机扫码以下二维码链接（全球可用）："
+
+    encoded=$(python3 - <<EOF
+import urllib.parse,sys
+print(urllib.parse.quote(sys.argv[1]))
+EOF
+"$TEXT")
+
+    QR_URL="https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=$encoded"
+
     echo "$QR_URL"
+    echo "========================================"
+    echo ""
+    echo "🔧 若终端无法识别二维码，可手动复制以下链接："
+    echo "$TEXT"
     echo ""
 }
 
 # ======================================================================
-# 生成订阅文件（三格式：TXT / Base64 / JSON）
+# 统一的节点输出函数（Hy2 + 订阅 + 全平台链接 + 二维码）
+# ======================================================================
+print_node_info_custom() {
+    local server_ip="$1"
+    local hy2_port="$2"
+    local uuid="$3"
+    local sub_port="$4"
+    local range_ports="$5"
+
+    # ---------- Hy2 协议 ----------
+    if [[ -n "$range_ports" ]]; then
+        minp="${range_ports%-*}"
+        maxp="${range_ports#*-}"
+        mport_param="${hy2_port},${minp}-${maxp}"
+    else
+        mport_param="${hy2_port}"
+    fi
+
+    hy2_url="hysteria2://${uuid}@${server_ip}:${hy2_port}/?insecure=1&alpn=h3&obfs=none&mport=${mport_param}"
+
+    # ---------- 通用订阅 ----------
+    if [[ -n "$range_ports" ]]; then
+        base_url="http://${server_ip}:${range_ports}/${uuid}"
+    else
+        base_url="http://${server_ip}:${sub_port}/${uuid}"
+    fi
+
+    yellow "\n温馨提醒：请在客户端启用“跳过证书验证 (insecure)” 以确保连接成功\n"
+
+    # ---------------- 通用订阅 ----------------
+    green "V2rayN / Shadowrocket / Nekobox / Loon / Karing / Sterisand 订阅链接："
+    green "$base_url"
+    generate_qr "$base_url"
+    yellow "=========================================================================================="
+
+    # ---------------- Clash / Mihomo ----------------
+    clash_url="https://sublink.eooce.com/clash?config=${base_url}"
+    green "\nClash / Mihomo 订阅链接："
+    green "$clash_url"
+    generate_qr "$clash_url"
+    yellow "=========================================================================================="
+
+    # ---------------- Sing-box ----------------
+    singbox_url="https://sublink.eooce.com/singbox?config=${base_url}"
+    green "\nSing-box 订阅链接："
+    green "$singbox_url"
+    generate_qr "$singbox_url"
+    yellow "=========================================================================================="
+
+    # ---------------- Surge ----------------
+    surge_url="https://sublink.eooce.com/surge?config=${base_url}"
+    green "\nSurge 订阅链接："
+    green "$surge_url"
+    generate_qr "$surge_url"
+    yellow "==========================================================================================\n"
+}
+
+# ======================================================================
+# 本地订阅文件生成（sub.txt / base64 / json）
 # ======================================================================
 generate_all_subscription_files() {
     local base_url="$1"
+
     mkdir -p "$work_dir"
 
 cat > "$sub_file" <<EOF
@@ -683,161 +572,73 @@ EOF
 }
 
 # ======================================================================
-# 输出订阅信息 & 生成客户端可用格式（核心可视化逻辑）
+# 安装完成后的节点展示（使用统一格式）
 # ======================================================================
 generate_subscription_info() {
 
-    # 获取 IPv4 / IPv6
     ipv4=$(curl -4 -s https://api.ipify.org || true)
     ipv6=$(curl -6 -s https://api64.ipify.org || true)
 
-    if [[ -n "$ipv4" ]]; then
-        server_ip="$ipv4"
+    [[ -n "$ipv4" ]] && server_ip="$ipv4" || server_ip="[$ipv6]"
+
+    hy2_port=$(jq -r '.inbounds[0].listen_port' "$config_dir")
+    uuid=$(jq -r '.inbounds[0].users[0].password' "$config_dir")
+
+    if [[ -f "$sub_port_file" ]]; then
+        sub_port=$(cat "$sub_port_file")
     else
-        server_ip="[$ipv6]"
+        sub_port=$((hy2_port + 1))
     fi
 
-    # 若启用跳跃端口，则订阅 URL 使用范围端口
     if [[ -n "$RANGE_PORTS" ]]; then
-        port_display="端口跳跃区间：$RANGE_PORTS"
-        base_url="http://${server_ip}:${RANGE_PORTS}/${HY2_PASSWORD}"
+        base_url="http://${server_ip}:${RANGE_PORTS}/${uuid}"
     else
-        port_display="单端口模式：${nginx_port}"
-        base_url="http://${server_ip}:${nginx_port}/${HY2_PASSWORD}"
+        base_url="http://${server_ip}:${sub_port}/${uuid}"
     fi
 
     generate_all_subscription_files "$base_url"
 
     clear
-    _blue  "============================================================"
-    _blue  "                  Hy2 节点订阅信息"
-    _blue  "============================================================"
-    _yellow "服务器 IPv4：${ipv4:-无}"
-    _yellow "服务器 IPv6：${ipv6:-无}"
-    _yellow "$port_display"
-    _yellow "节点密码（UUID）：$HY2_PASSWORD"
-    _blue  "============================================================"
-    echo ""
+    blue "============================================================"
+    blue "                Sing-box Hy2 节点安装完成"
+    blue "============================================================"
 
-    _skyblue "⚠ 若客户端报 TLS 证书错误，请开启『跳过证书验证』"
-    echo ""
-
-    # 节点名称
-    node_name="${NODE_NAME:-HY2-Node}"
-
-    # 构建 Hy2 原生协议字符串（带跳跃端口兼容）
-    if [[ -n "$RANGE_PORTS" ]]; then
-        min_port="${RANGE_PORTS%-*}"
-        max_port="${RANGE_PORTS#*-}"
-        mport_param="${hy2_port},${min_port}-${max_port}"
-    else
-        mport_param="${hy2_port}"
-    fi
-
-    hy2_raw="hysteria2://${HY2_PASSWORD}@${server_ip}:${hy2_port}/?insecure=1&alpn=h3&obfs=none&mport=${mport_param}#${node_name}"
-
-    # ===========================
-    # 输出：Hy2 协议
-    # ===========================
-    _green "⓪ Hy2 原生协议（所有 Hy2 客户端支持）"
-    _green "$hy2_raw"
-    display_qr_link "$hy2_raw"
-    _yellow "------------------------------------------------------------"
-
-    # ===========================
-    # 输出：通用订阅
-    # ===========================
-    _green "① 通用订阅（V2RayN / Shadowrocket / Nekobox）"
-    _green "$base_url"
-    display_qr_link "$base_url"
-    _yellow "------------------------------------------------------------"
-
-    # ===========================
-    # Clash / Mihomo
-    # ===========================
-    clash_sub="https://sublink.eooce.com/clash?config=$base_url"
-    _green "② Clash / Clash Verge / Mihomo"
-    _green "$clash_sub"
-    display_qr_link "$clash_sub"
-    _yellow "------------------------------------------------------------"
-
-    # ===========================
-    # Sing-box
-    # ===========================
-    singbox_sub="https://sublink.eooce.com/singbox?config=$base_url"
-    _green "③ Sing-box SFA / SFI / SFM"
-    _green "$singbox_sub"
-    display_qr_link "$singbox_sub"
-    _yellow "------------------------------------------------------------"
-
-    # ===========================
-    # Surge
-    # ===========================
-    surge_sub="https://sublink.eooce.com/surge?config=$base_url"
-    _green "④ Surge"
-    _green "$surge_sub"
-    display_qr_link "$surge_sub"
-    _yellow "------------------------------------------------------------"
-
-    # ===========================
-    # Quantumult X
-    # ===========================
-    qx_sub="https://sublink.eooce.com/qx?config=$base_url"
-    _green "⑤ Quantumult X"
-    _green "$qx_sub"
-    display_qr_link "$qx_sub"
-    _yellow "------------------------------------------------------------"
-
-    _blue "============================================================"
-    _blue "   订阅信息生成完成，如遇不兼容请手动导入"
-    _blue "============================================================"
+    print_node_info_custom "$server_ip" "$hy2_port" "$uuid" "$sub_port" "$RANGE_PORTS"
 }
 
 # ======================================================================
-# Nginx 订阅服务（自动检测端口冲突 & 自动修复 include）
+# Nginx 订阅服务（自动修复、端口检测、配置生成）
 # ======================================================================
 add_nginx_conf() {
 
     if ! command_exists nginx; then
-        _red "未安装 Nginx，跳过订阅服务配置"
+        red "未安装 Nginx，跳过订阅服务配置"
         return
     fi
 
     mkdir -p /etc/nginx/conf.d
 
-    # 持久化订阅端口：若存在则复用
-    sub_port_file="/etc/sing-box/sub.port"
-
+    # ------------------- 获取订阅端口 -------------------
     if [[ -f "$sub_port_file" ]]; then
         nginx_port=$(cat "$sub_port_file")
-        _green "订阅端口从记录加载：$nginx_port"
     else
-        # 第一次安装 → 检查端口是否冲突
-        desired_port="$nginx_port"
-        actual_port="$desired_port"
+        nginx_port=$((hy2_port + 1))
 
-        if is_port_occupied "$desired_port"; then
-            _yellow "订阅端口 $desired_port 被占用，自动查找可用端口..."
-
-            for p in $(seq $((desired_port+1)) 65000); do
+        # 若被占用则寻找下一个端口
+        if is_port_occupied "$nginx_port"; then
+            for p in $(seq $((nginx_port+1)) 65000); do
                 if ! is_port_occupied "$p"; then
-                    actual_port="$p"
+                    nginx_port="$p"
                     break
                 fi
             done
         fi
 
-        nginx_port="$actual_port"
         echo "$nginx_port" > "$sub_port_file"
-        _green "订阅端口已写入：$nginx_port"
     fi
 
-    # 删除旧配置
     rm -f /etc/nginx/conf.d/singbox_sub.conf
 
-    # ==================================================================
-    # 写入新的订阅 server 配置
-    # ==================================================================
 cat > /etc/nginx/conf.d/singbox_sub.conf <<EOF
 server {
     listen $nginx_port;
@@ -845,11 +646,11 @@ server {
 
     server_name sb_sub.local;
 
-    add_header Cache-Control "no-cache, no-store, must-revalidate";
+    add_header Cache-Control "no-cache, must-revalidate";
     add_header Pragma "no-cache";
     add_header Expires "0";
 
-    location /$HY2_PASSWORD {
+    location /$uuid {
         alias $sub_file;
         default_type text/plain;
     }
@@ -860,24 +661,24 @@ server {
 }
 EOF
 
-    # 自动修复 nginx 主配置 include 规则
+    # ------------------- 修复 nginx 主配置 -------------------
     if [[ -f /etc/nginx/nginx.conf ]]; then
         if ! grep -q "conf.d/\*\.conf" /etc/nginx/nginx.conf; then
             sed -i '/http {/a\    include /etc/nginx/conf.d/*.conf;' /etc/nginx/nginx.conf
-            _yellow "已自动修复 nginx.conf：加入 conf.d/*.conf"
         fi
     fi
 
-    nginx -t >/dev/null 2>&1 || {
-        _red "Nginx 配置测试失败，请检查：/etc/nginx/conf.d/singbox_sub.conf"
+    if ! nginx -t >/dev/null 2>&1; then
+        red "Nginx 配置语法错误，请检查 /etc/nginx/conf.d/singbox_sub.conf"
         return
-    }
+    fi
 
     systemctl restart nginx
-    _green "订阅服务已启动（端口：$nginx_port）"
+    green "订阅服务已启动 → 端口：$nginx_port"
 }
+
 # ======================================================================
-# Sing-box 服务管理（提供启动 / 停止 / 重启）
+# Sing-box 服务管理
 # ======================================================================
 restart_singbox() {
     if command_exists systemctl; then
@@ -904,280 +705,336 @@ stop_singbox() {
 }
 
 # ======================================================================
-# Sing-box 服务管理菜单（可视化）
+# 订阅服务管理菜单（增强版）
 # ======================================================================
-manage_singbox() {
+disable_open_sub() {
     clear
-    _blue  "===================================================="
-    _green "                 Sing-box 服务管理"
-    _blue  "===================================================="
+    blue "===================================================="
+    green "               管理订阅服务（Nginx）"
+    blue "===================================================="
     echo ""
 
-    _green  " 1. 启动 Sing-box"
-    _green  " 2. 停止 Sing-box"
-    _green  " 3. 重启 Sing-box"
-    _purple " 0. 返回主菜单"
+    green " 1. 关闭订阅服务"
+    green " 2. 启用订阅服务"
+    green " 3. 修改订阅端口"
+    green " 4. 修复订阅配置"
+    purple " 0. 返回主菜单"
     echo ""
 
-    read -rp "请输入选项(0-3): " m
+    read -rp "请选择 (0-4): " s
 
-    case "$m" in
-        1) start_singbox;  _green "Sing-box 已启动";;
-        2) stop_singbox;   _green "Sing-box 已停止";;
-        3) restart_singbox; _green "Sing-box 已重启";;
-        0) return;;
-        *) _red "无效选项";;
+    case "$s" in
+
+        1)
+            systemctl stop nginx
+            green "订阅服务已关闭"
+            ;;
+
+        2)
+            systemctl start nginx
+            if systemctl is-active nginx >/dev/null; then
+                green "订阅服务已启动"
+            else
+                red "订阅服务启动失败，请检查配置"
+            fi
+            ;;
+
+        3)
+            read -rp "请输入新的订阅端口：" new_port
+            if ! is_valid_port "$new_port"; then red "端口无效"; return; fi
+            if is_port_occupied "$new_port"; then red "端口已占用"; return; fi
+
+            sed -i "s/listen [0-9]\+;/listen $new_port;/" /etc/nginx/conf.d/singbox_sub.conf
+            sed -i "s/listen \[::\]:[0-9]\+;/listen [::]:$new_port;/" /etc/nginx/conf.d/singbox_sub.conf
+
+            echo "$new_port" > "$sub_port_file"
+
+            if nginx -t >/dev/null 2>&1; then
+                systemctl restart nginx
+                green "订阅端口修改为：$new_port"
+            else
+                red "配置错误，恢复原配置..."
+                add_nginx_conf
+            fi
+            ;;
+
+        4)
+            yellow "正在修复订阅配置..."
+            add_nginx_conf
+            systemctl restart nginx
+            green "修复完成"
+            ;;
+
+        0)
+            return
+            ;;
+
+        *)
+            red "无效输入，请重试"
+            ;;
     esac
 
-    read -n 1 -s -r -p $'\033[1;92m按任意键返回...\033[0m'
+    read -n 1 -s -r -p "按任意键返回菜单..."
 }
 
 # ======================================================================
-# 查看节点订阅信息（直接读取 sub.txt）
+# 查看节点信息（与安装完成展示保持完全一致）
 # ======================================================================
 check_nodes() {
     clear
-    _purple "================== 节点订阅信息 =================="
+    blue "============================================================"
+    blue "                     查看节点信息"
+    blue "============================================================"
 
-    if [[ -f "$sub_file" ]]; then
-        while IFS= read -r line; do
-            _white "$line"
-        done < "$sub_file"
+    [[ ! -f "$config_dir" ]] && { red "未找到配置文件"; return; }
+
+    hy2_port=$(jq -r '.inbounds[0].listen_port' "$config_dir")
+    uuid=$(jq -r '.inbounds[0].users[0].password' "$config_dir")
+
+    if [[ -f "$sub_port_file" ]]; then
+        sub_port=$(cat "$sub_port_file")
     else
-        _red "订阅文件不存在：$sub_file"
+        sub_port=$((hy2_port + 1))
     fi
 
-    _purple "==================================================="
+    ipv4=$(curl -4 -s https://api.ipify.org)
+    ipv6=$(curl -6 -s https://api64.ipify.org)
+    [[ -n "$ipv4" ]] && server_ip="$ipv4" || server_ip="[$ipv6]"
+
+    print_node_info_custom "$server_ip" "$hy2_port" "$uuid" "$sub_port" "$RANGE_PORTS"
 }
 
 # ======================================================================
-# 修改节点配置（端口 / UUID / 节点名称 / 跳跃端口）
+# 修改节点配置（端口 / UUID / 名称 / 跳跃端口）
 # ======================================================================
 change_config() {
     clear
-    _blue  "===================================================="
-    _green "                 修改节点配置"
-    _blue  "===================================================="
+    blue  "===================================================="
+    green "                 修改节点配置"
+    blue  "===================================================="
     echo ""
 
-    _green  " 1. 修改 HY2 主端口"
-    _green  " 2. 修改 UUID（密码）"
-    _green  " 3. 修改节点名称"
-    _green  " 4. 添加跳跃端口"
-    _green  " 5. 删除跳跃端口"
-    _purple " 0. 返回主菜单"
+    green " 1. 修改 HY2 主端口"
+    green " 2. 修改 UUID（密码）"
+    green " 3. 修改节点名称（只影响订阅名称）"
+    green " 4. 添加跳跃端口"
+    green " 5. 删除跳跃端口 NAT 规则"
+    purple " 0. 返回主菜单"
     echo ""
 
-    read -rp "请输入选项(0-5): " choice
+    read -rp "请选择(0-5): " choice
 
     case "$choice" in
         1)
-            read -rp "请输入新的 HY2 主端口：" new_port
-            is_valid_port "$new_port" || { _red "端口无效"; return; }
+            read -rp "请输入新的主端口：" new_port
+            if ! is_valid_port "$new_port"; then red "端口无效"; return; fi
+            if is_port_occupied "$new_port"; then red "端口被占用"; return; fi
             sed -i "s/\"listen_port\": [0-9]*/\"listen_port\": $new_port/" "$config_dir"
             restart_singbox
-            _green "主端口已修改：$new_port"
+            green "主端口已修改：$new_port"
             ;;
+
         2)
             read -rp "请输入新的 UUID：" new_uuid
-            is_valid_uuid "$new_uuid" || { _red "UUID 格式无效"; return; }
+            if ! is_valid_uuid "$new_uuid"; then red "UUID 无效"; return; fi
             sed -i "s/\"password\": \".*\"/\"password\": \"$new_uuid\"/" "$config_dir"
             restart_singbox
-            _green "UUID 已修改"
+            green "UUID 修改成功"
             ;;
+
         3)
             read -rp "请输入新的节点名称：" new_name
             echo "#$new_name" > "$sub_file"
             base64 -w0 "$sub_file" > "${work_dir}/sub_base64.txt"
-            _green "节点名称已更新"
+            green "节点名称已更新"
             ;;
+
         4)
-            read -rp "请输入跳跃起始端口：" jmin
-            read -rp "请输入跳跃结束端口：" jmax
-            is_valid_range "${jmin}-${jmax}" || { _red "范围无效"; return; }
+            read -rp "跳跃起始端口：" jmin
+            read -rp "跳跃结束端口：" jmax
+
+            if ! is_valid_range "${jmin}-${jmax}"; then
+                red "格式无效（示例：10000-20000）"
+                return
+            fi
+
             configure_port_jump "$jmin" "$jmax"
-            _green "跳跃端口区间已添加：${jmin}-${jmax}"
+            green "跳跃端口已应用"
             ;;
+
         5)
             delete_jump_rule
-            _green "跳跃端口规则已删除"
+            green "跳跃端口 NAT 已删除"
             ;;
+
         0)
-            return ;;
+            return
+            ;;
         *)
-            _red "无效选项" ;;
+            red "无效选项"
+            ;;
     esac
 
-    read -n 1 -s -r -p $'\033[1;92m按任意键返回...\033[0m'
+    echo
+    read -n 1 -s -r -p "按任意键返回菜单..."
 }
 
 # ======================================================================
-# 卸载 Sing-box（带 Nginx 订阅服务处理）
+# 卸载 Sing-box（含订阅服务）
 # ======================================================================
 uninstall_singbox() {
     read -rp "确认卸载 Sing-box？(y/n): " u
-    [[ "$u" != "y" ]] && { _yellow "取消卸载"; return; }
+    [[ "$u" != "y" ]] && { yellow "取消卸载"; return; }
 
     stop_singbox
-    systemctl disable sing-box 2>/dev/null
+    systemctl disable sing-box >/dev/null 2>&1
     rm -f /etc/systemd/system/sing-box.service
     systemctl daemon-reload
 
     rm -rf /etc/sing-box
-    _green "Sing-box 已卸载"
+    green "Sing-box 已卸载"
 
-    # 如果订阅服务配置存在，删除它但不强制删除 Nginx
+    # 删除订阅配置
     if [[ -f /etc/nginx/conf.d/singbox_sub.conf ]]; then
         rm -f /etc/nginx/conf.d/singbox_sub.conf
-        _green "订阅服务已移除"
+        green "订阅服务配置已删除"
     fi
 
-    # 检测是否卸载 nginx（可选）
+    # 是否卸载 Nginx
     if command_exists nginx; then
-        read -rp "是否卸载 nginx？(y/N): " delng
-        if [[ "$delng" == "y" || "$delng" == "Y" ]]; then
+        read -rp "是否卸载 Nginx？(y/N): " delng
+        if [[ "$delng" =~ ^[Yy]$ ]]; then
             if command_exists apt; then apt remove -y nginx nginx-core
             elif command_exists yum; then yum remove -y nginx
             elif command_exists dnf; then dnf remove -y nginx
             elif command_exists apk; then apk del nginx
             fi
-            _green "nginx 已卸载"
+            green "Nginx 已卸载"
         else
-            _yellow "已保留 nginx"
-            systemctl restart nginx 2>/dev/null
+            yellow "已保留 Nginx"
+            systemctl restart nginx >/dev/null 2>&1
         fi
     fi
 
-    _green "卸载完成"
+    green "卸载流程完成"
 }
 
 # ======================================================================
-# 自动模式完成后执行：应用跳跃端口 + 输出订阅 + 启动 Nginx
+# 自动安装流程（环境变量触发）
 # ======================================================================
 start_service_after_finish_sb() {
 
     sleep 1
-    if command_exists systemctl; then
-        systemctl daemon-reload
-        systemctl enable sing-box
-        systemctl restart sing-box
-    fi
+    systemctl daemon-reload
+    systemctl enable sing-box
+    systemctl restart sing-box
 
-    sleep 1
-
-    # 若设置 RANGE_PORTS，则应用 NAT 规则
+    # 跳跃端口 NAT
     handle_range_ports
 
-    # 输出可视化订阅信息
+    # 输出节点完整信息
     generate_subscription_info
 
-    # 启动订阅服务（Nginx）
+    # 启动 Nginx
     add_nginx_conf
 }
 
-# ======================================================================
-# 自动安装入口（当检测到环境变量时触发）
-# ======================================================================
 quick_install() {
-    _purple "进入自动安装模式（由环境变量触发）..."
+    purple "检测到环境变量，自动安装模式启动..."
 
     install_common_packages
     install_singbox
     start_service_after_finish_sb
 
-    _green "自动安装已完成"
+    green "自动安装完成！"
 }
 
 # ======================================================================
-# 菜单主界面（交互入口）
+# 主菜单
 # ======================================================================
 menu() {
     clear
-    _blue "===================================================="
-    _gradient "        Sing-box Hysteria2 管理脚本"
-    _green   "               作者：$AUTHOR"
-    _brown   "               版本：$VERSION"
-    _blue "===================================================="
+    blue "===================================================="
+    gradient "       Sing-box Hy2 一键脚本（整合版）"
+    green   "                 作者：$AUTHOR"
+    yellow  "                 版本：$VERSION"
+    blue "===================================================="
     echo ""
 
-    # 服务状态检查
     if systemctl is-active sing-box >/dev/null 2>&1; then
-        sb_status="$(_green '运行中')"
+        sb_status="$(green '运行中')"
     else
-        sb_status="$(_red '未运行')"
+        sb_status="$(red '未运行')"
     fi
 
     if systemctl is-active nginx >/dev/null 2>&1; then
-        ng_status="$(_green '运行中')"
+        ng_status="$(green '运行中')"
     else
-        ng_status="$(_red '未运行')"
+        ng_status="$(red '未运行')"
     fi
 
-    _yellow " Sing-box 状态：$sb_status"
-    _yellow " Nginx 状态：   $ng_status"
+    yellow " Sing-box 状态：$sb_status"
+    yellow " Nginx 状态：   $ng_status"
     echo ""
 
-    _green  " 1. 安装 Sing-box (HY2)"
-    _red    " 2. 卸载 Sing-box"
-    _yellow "----------------------------------------"
-    _green  " 3. 管理 Sing-box 服务"
-    _green  " 4. 查看节点信息"
-    _yellow "----------------------------------------"
-    _green  " 5. 修改节点配置"
-    _green  " 6. 管理订阅服务"
-    _yellow "----------------------------------------"
-    _purple " 7. 老王工具箱"
-    _yellow "----------------------------------------"
-    _red    " 0. 退出脚本"
+    green  " 1. 安装 Sing-box (HY2)"
+    red    " 2. 卸载 Sing-box"
+    yellow "----------------------------------------"
+    green  " 3. 管理 Sing-box 服务"
+    green  " 4. 查看节点信息"
+    yellow "----------------------------------------"
+    green  " 5. 修改节点配置"
+    green  " 6. 管理订阅服务"
+    yellow "----------------------------------------"
+    purple " 7. 老王工具箱"
+    yellow "----------------------------------------"
+    red    " 0. 退出脚本"
     echo ""
 
     read -rp "请输入选项(0-7): " choice
 }
 
 # ======================================================================
-# 主循环（菜单模式执行）
+# 主循环
 # ======================================================================
 main_loop() {
     while true; do
         menu
 
         case "$choice" in
+
             1)
+                unset PORT UUID RANGE_PORTS NODE_NAME
                 install_common_packages
                 install_singbox
                 start_service_after_finish_sb
                 ;;
-            2)  uninstall_singbox ;;
-            3)  manage_singbox ;;
-            4)  check_nodes ;;
-            5)  change_config ;;
-            6)  disable_open_sub ;;
-            7)  bash <(curl -Ls ssh_tool.eooce.com) ;;
-            0)  exit 0 ;;
-            *)  _red "无效选项" ;;
+
+            2) uninstall_singbox ;;
+            3) manage_singbox ;;
+            4) check_nodes ;;
+            5) change_config ;;
+            6) disable_open_sub ;;
+            7) bash <(curl -Ls ssh_tool.eooce.com) ;;
+            0) exit 0 ;;
+            *) red "无效选项" ;;
         esac
 
-        read -n 1 -s -r -p $'\033[1;92m按任意键返回主菜单...\033[0m'
+        echo
+        read -n 1 -s -r -p "按任意键返回主菜单..."
     done
 }
 
 # ======================================================================
-# 主入口：根据环境变量自动或手动安装
-# - 若任意变量非空 → 自动安装
-# - 否则进入交互菜单
+# 主入口
 # ======================================================================
 main() {
-
     is_interactive_mode
-
     if [[ $? -eq 1 ]]; then
-        # 自动模式
         quick_install
-        read -n 1 -s -r -p $'\033[1;92m安装完成！按任意键进入主菜单...\033[0m'
+        read -n 1 -s -r -p "安装完成！按任意键进入主菜单..."
         main_loop
     else
-        clear_env_vars   # 强制进入交互模式
-        # 交互模式（菜单）
         main_loop
     fi
 }
