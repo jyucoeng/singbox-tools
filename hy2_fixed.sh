@@ -583,6 +583,7 @@ EOF
 #   4. 为跳跃端口生成新的订阅文件（不修改 sub.port）
 #   5. 兼容普通模式与跳跃端口模式的切换
 # ======================================================================
+
 configure_port_jump() {
     local min="$1"
     local max="$2"
@@ -600,10 +601,10 @@ configure_port_jump() {
     # 1. 放行 INPUT（IPv4 + IPv6）
     # =====================================================
     iptables -C INPUT -p udp --dport ${min}:${max} -j ACCEPT &>/dev/null || \
-        iptables -I INPUT -p udp --dport ${min}:${max} -j ACCEPT
+        iptables -I INPUT -p udp --dport ${min}-${max} -j ACCEPT
 
     ip6tables -C INPUT -p udp --dport ${min}:${max} -j ACCEPT &>/dev/null || \
-        ip6tables -I INPUT -p udp --dport ${min}:${max} -j ACCEPT
+        ip6tables -I INPUT -p udp --dport ${min}-${max} -j ACCEPT
 
     green "已放行 UDP 端口区间：${min}-${max}"
 
@@ -645,7 +646,6 @@ configure_port_jump() {
         if [[ "$url_body" == "$host_part" ]]; then
             new_url="${host_part}?mport=${listen_port},${min}-${max}#${node_tag}"
         else
-            # 如果已有 mport → 替换
             if echo "$query_part" | grep -q "mport="; then
                 new_query=$(echo "$query_part" | sed "s/mport=[^&]*/mport=${listen_port},${min}-${max}/")
             else
@@ -660,19 +660,26 @@ configure_port_jump() {
 
 
     # =====================================================
-    # 5. 更新订阅（sub.txt / base64 / json）
-    #     格式： http://IP:min-max/uuid
+    # 5. 更新订阅文件（保持 sub.port，不写跳跃区间）
     # =====================================================
     uuid=$(jq -r '.inbounds[0].users[0].password' "$config_dir")
+
+    # 获取订阅端口 sub.port（不自动修改）
+    if [[ -f "$sub_port_file" ]]; then
+        sub_port=$(cat "$sub_port_file")
+    else
+        sub_port=$((listen_port + 1))
+    fi
 
     ipv4=$(curl -4 -s https://api.ipify.org)
     ipv6=$(curl -6 -s https://api64.ipify.org)
     [[ -n "$ipv4" ]] && server_ip="$ipv4" || server_ip="[$ipv6]"
 
-    sub_url="http://${server_ip}:${min}-${max}/${uuid}"
+    # ❗关键：订阅永远使用 sub_port，而不是 min-max
+    sub_url="http://${server_ip}:${sub_port}/${uuid}"
 
 cat > "$sub_file" <<EOF
-# HY2 主订阅（跳跃端口）
+# HY2 主订阅（跳跃端口模式，但订阅端口不变）
 $sub_url
 EOF
 
@@ -684,19 +691,21 @@ cat > "${work_dir}/sub.json" <<EOF
 }
 EOF
 
-    green "订阅文件已切换为跳跃端口模式：${min}-${max}"
+    green "订阅文件已更新（保持 sub.port 原样，不使用跳跃端口）"
 
 
     # =====================================================
     # 6. 重启服务
     # =====================================================
     restart_singbox
-    green "跳跃端口已成功启用 → 生效端口：${min}-${max}"
+    green "跳跃端口已成功启用 → 生效区间：${min}-${max}"
 
     echo ""
-    yellow "提示：sub.port 未修改（遵从你的规则）"
+    yellow "提示：订阅端口 sub.port 未被修改（这是正确行为）"
     echo ""
 }
+
+
 
 
 # ======================================================================
