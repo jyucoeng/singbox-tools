@@ -1300,6 +1300,82 @@ EOF
 
 
 # ======================================================================
+# 修改nginx订阅端口
+# ======================================================================
+change_subscribe_port() {
+
+    # 1. 输入端口
+    read -rp "$(red "请输入新的订阅端口：")" new_port
+
+    # 2. 校验端口格式
+    if ! is_valid_port "$new_port"; then
+        red "端口无效"
+        return
+    fi
+    if is_port_occupied "$new_port"; then
+        red "端口已被占用"
+        return
+    fi
+
+    # 3. 更新 sub.port 文件
+    echo "$new_port" > "$sub_port_file"
+    green "订阅端口已修改为：$new_port"
+
+    # 4. 获取必要信息
+    uuid=$(jq -r '.inbounds[0].users[0].password' "$config_dir")
+
+    ipv4=$(curl -4 -s https://api.ipify.org)
+    ipv6=$(curl -6 -s https://api64.ipify.org)
+    [[ -n "$ipv4" ]] && server_ip="$ipv4" || server_ip="[$ipv6]"
+
+    # 5. 生成新的订阅 URL（注意：不受跳跃端口影响）
+    sub_url="http://${server_ip}:${new_port}/${uuid}"
+
+    # 6. 写入订阅文件
+cat > "$sub_file" <<EOF
+# HY2 主订阅（订阅端口已手动修改）
+$sub_url
+EOF
+
+    base64 -w0 "$sub_file" > "${work_dir}/sub_base64.txt"
+
+cat > "${work_dir}/sub.json" <<EOF
+{
+  "hy2": "$sub_url"
+}
+EOF
+
+    # 7. 同步更新 Nginx 配置（必须保留 uuid 路径）
+cat > /etc/nginx/conf.d/singbox_sub.conf <<EOF
+server {
+    listen $new_port;
+    listen [::]:$new_port;
+
+    server_name sb_sub.local;
+
+    location /$uuid {
+        alias $sub_file;
+        default_type text/plain;
+    }
+
+    location / {
+        return 404;
+    }
+}
+EOF
+
+    # 8. 重启 Nginx
+    if nginx -t >/dev/null 2>&1; then
+        systemctl restart nginx
+        green "订阅系统（Nginx + 订阅文件）已同步到新端口：$new_port"
+    else
+        red "Nginx 配置测试失败，请检查 /etc/nginx/conf.d/singbox_sub.conf"
+    fi
+}
+
+
+
+# ======================================================================
 # 订阅服务管理菜单（遵循你的新菜单规范 + 完整注释）
 # ======================================================================
 disable_open_sub() {
@@ -1307,10 +1383,9 @@ disable_open_sub() {
         clear
         blue  "========== 管理订阅服务（Nginx） =========="
         echo ""
-        green " 1. 关闭订阅服务"
-        green " 2. 启动订阅服务"
-        green " 3. 修改订阅端口（手动操作）"
-        green " 4. 修复订阅配置 (重新生成 Nginx 配置)"
+        green " 1. 关闭nginx"
+        green " 2. 启动nginx"
+        green " 3. 修改nginx订阅端口（手动操作）"
         yellow "---------------------------------------------"
         green  " 0. 返回主菜单"
         red    "88. 退出脚本"
@@ -1323,56 +1398,20 @@ disable_open_sub() {
 
             1)
                 systemctl stop nginx
-                green "订阅服务已关闭"
+                green "nginx服务已关闭"
                 ;;
 
             2)
                 systemctl start nginx
                 if systemctl is-active nginx >/dev/null; then
-                    green "订阅服务已启动"
+                    green "nginx服务已启动"
                 else
-                    red "订阅服务启动失败"
+                    red "nginx服务启动失败"
                 fi
                 ;;
 
             3)
-                read -rp "请输入新的订阅端口：" new_port
-                if ! is_valid_port "$new_port"; then red "端口无效"; continue; fi
-                if is_port_occupied "$new_port"; then red "端口已被占用"; continue; fi
-
-                echo "$new_port" > "$sub_port_file"
-                green "订阅端口已修改为：$new_port"
-
-                # 同步更新订阅文件
-                uuid=$(jq -r '.inbounds[0].users[0].password' "$config_dir")
-                ipv4=$(curl -4 -s https://api.ipify.org)
-                ipv6=$(curl -6 -s https://api64.ipify.org)
-                [[ -n "$ipv4" ]] && server_ip="$ipv4" || server_ip="[$ipv6]"
-
-                sub_url="http://${server_ip}:${new_port}/${uuid}"
-
-cat > "$sub_file" <<EOF
-# HY2 主订阅（订阅端口已修改）
-$sub_url
-EOF
-
-                base64 -w0 "$sub_file" > "${work_dir}/sub_base64.txt"
-
-cat > "${work_dir}/sub.json" <<EOF
-{
-  "hy2": "$sub_url"
-}
-EOF
-
-                systemctl restart nginx
-                green "订阅系统和 Nginx 已重新加载"
-                ;;
-
-            4)
-                yellow "正在修复订阅配置..."
-                add_nginx_conf
-                systemctl restart nginx
-                green "订阅服务配置已重新生成"
+                change_subscribe_port
                 ;;
 
             0)
