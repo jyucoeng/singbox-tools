@@ -16,7 +16,7 @@ export LANG=en_US.UTF-8
 # 基本信息
 # ======================================================================
 AUTHOR="littleDoraemon"
-VERSION="v1.0.1"
+VERSION="v1.0.2"
 SINGBOX_VERSION="1.12.13"
 
 # ======================================================================
@@ -940,7 +940,7 @@ change_config() {
         case "$sel" in
             1)
                 change_main_tuic_port
-                read -n 1 -s -r -p "按任意键返回菜单..." </dev/tty
+                
                 ;;
             2)
                 read -rp "$(red_input "请输入新的 UUID（回车自动生成）：")" new_uuid
@@ -1009,29 +1009,44 @@ change_config() {
 }
 
 
-change_main_tuic_port(){
-    read -rp "$(red_input "请输入新的 TUIC 主端口（UDP）：")" new_port
-    is_valid_port "$new_port" || { red "端口无效"; return; }
-    is_port_occupied "$new_port" && { red "端口已被占用"; return; }
+change_main_tuic_port() {
+    local new_port
+    local old_port
+
+    while true; do
+        read -rp "$(red_input "请输入新的 TUIC 主端口（UDP）：")" new_port
+
+        if ! is_valid_port "$new_port"; then
+            red "端口无效，请输入 1-65535 之间的数字"
+            continue
+        fi
+
+        if is_port_occupied "$new_port"; then
+            red "端口已被占用，请更换一个端口"
+            continue
+        fi
+
+        break
+    done
 
     # 旧主端口
     old_port=$(jq -r '.inbounds[0].listen_port' "$config_dir")
 
     # 更新配置文件
-    jq ".inbounds[0].listen_port=$new_port" "$config_dir" > /tmp/tuic_cfg && mv /tmp/tuic_cfg "$config_dir"
+    jq ".inbounds[0].listen_port=$new_port" "$config_dir" > /tmp/tuic_cfg \
+        && mv /tmp/tuic_cfg "$config_dir"
 
     # 放行新端口
     allow_port "$new_port"
 
-    # -------------------------
     # 自动刷新跳跃端口 NAT 映射
-    # -------------------------
     refresh_jump_ports_for_new_main_port "$new_port"
 
     # 重启服务
     systemctl restart sing-box-tuic
 
     green "TUIC 主端口已从 ${old_port} 修改为：${new_port}"
+    read -n 1 -s -r -p "按任意键返回菜单..." </dev/tty
 }
 
 # ======================================================================
