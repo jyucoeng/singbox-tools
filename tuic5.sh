@@ -1229,6 +1229,7 @@ main_loop() {
                 check_nodes
                 # 持久化节点名称
                 get_node_name > "$work_dir/node_name"
+                read -n 1 -s -r -p "安装完成！按任意键进入主菜单..."
                 ;;
             2) uninstall_tuic ;;
             3) manage_singbox ;;
