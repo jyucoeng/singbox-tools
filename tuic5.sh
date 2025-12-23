@@ -2,7 +2,7 @@
 export LANG=en_US.UTF-8
 
 # ======================================================================
-# Sing-box TUIC v5 一键脚本（专属版）
+# Sing-box TUIC v5 一键脚本
 # 作者：littleDoraemon
 # 说明：
 #   - 结构 / 行为 / 主控流程 与 hy2_fixed.sh 对齐
@@ -16,7 +16,7 @@ export LANG=en_US.UTF-8
 # 基本信息
 # ======================================================================
 AUTHOR="littleDoraemon"
-VERSION="v1.0.2"
+VERSION="v1.0.1"
 SINGBOX_VERSION="1.12.13"
 
 # ======================================================================
@@ -1039,6 +1039,11 @@ change_main_tuic_port() {
     # 放行新端口
     allow_port "$new_port"
 
+    # 删除旧端口的放行规则
+    iptables -D INPUT -p udp --dport "$old_port" -j ACCEPT 2>/dev/null
+    ip6tables -D INPUT -p udp --dport "$old_port" -j ACCEPT 2>/dev/null
+
+
     # 自动刷新跳跃端口 NAT 映射
     refresh_jump_ports_for_new_main_port "$new_port"
 
@@ -1228,7 +1233,7 @@ quick_install() {
 menu() {
     clear
     blue "===================================================="
-    gradient "       Sing-box 一键脚本（TUIC v5 专属版）"
+    gradient "       Sing-box 一键脚本（TUIC v5版本）"
     green    "       作者：$AUTHOR"
     yellow   "       版本：$VERSION"
     blue "===================================================="
