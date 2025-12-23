@@ -931,6 +931,7 @@ change_config() {
         case "$sel" in
             1)
                 change_main_tuic_port
+                read -n 1 -s -r -p "安装完成！按任意键进入主菜单..." </dev/tty
                 ;;
             2)
                 read -rp "$(red_input "请输入新的 UUID（回车自动生成）：")" new_uuid
