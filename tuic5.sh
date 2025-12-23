@@ -1325,8 +1325,8 @@ menu() {
     blue "===================================================="
     echo ""
 
-    systemctl is-active sing-box-tuic >/dev/null 2>&1 && sb="$(green 运行中)" || sb="$(red 未运行)"
-    systemctl is-active nginx >/dev/null 2>&1 && ng="$(green 运行中)" || ng="$(red 未运行)"
+    sb="$(get_singbox_status_colored)"
+    ng="$(get_nginx_status_colored)"
 
     yellow " Sing-box 状态：$sb"
     yellow " Nginx 状态：   $ng"
@@ -1346,6 +1346,60 @@ menu() {
 
     read -rp "请输入选项：" choice
 }
+
+
+get_singbox_status_colored() {
+    # 未安装：systemd 服务文件不存在
+    if ! systemctl list-unit-files --type=service 2>/dev/null | grep -q '^sing-box\.service'; then
+        red "未安装"
+        return
+    fi
+
+    # 已安装，正在运行
+    if systemctl is-active sing-box >/dev/null 2>&1; then
+        green "运行中"
+    else
+        red "未运行"
+    fi
+}
+
+
+
+# ==================================================
+#Nginx 状态 =「订阅服务是否可用」
+#这至少应该满足 任意一条：
+#1、nginx service active
+#2、订阅端口存在且被监听
+#3、订阅配置文件存在 + 进程存在
+# ==================================================
+get_nginx_status_colored() {
+
+    # nginx 未安装
+    if ! command_exists nginx; then
+        red "未安装"
+        return
+    fi
+
+    # 有订阅端口，并且端口正在监听（IPv4 / IPv6 任一）
+    if [[ -f "$sub_port_file" ]]; then
+        local p
+        p=$(cat "$sub_port_file")
+
+        if ss -tuln | grep -q ":$p "; then
+            green "运行中"
+            return
+        fi
+    fi
+
+    # fallback：systemd 状态
+    if systemctl is-active nginx >/dev/null 2>&1; then
+        green "运行中"
+    else
+        red "未运行"
+    fi
+}
+
+
 
 # ======================================================================
 # 主循环（与 hy2_fixed.sh 对齐）
