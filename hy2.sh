@@ -1326,40 +1326,44 @@ get_singbox_status_colored() {
 }
 
 
-
-# ==================================================
-#Nginx 状态 =「订阅服务是否可用」
-#这至少应该满足 任意一条：
-#1、nginx service active
-#2、订阅端口存在且被监听
-#3、订阅配置文件存在 + 进程存在
-# ==================================================
 get_nginx_status_colored() {
 
-    # nginx 未安装
+    local conf="/etc/nginx/conf.d/singbox_hy2_sub.conf"
+
+    # 1️⃣ nginx 未安装
     if ! command_exists nginx; then
         red "未安装"
         return
     fi
 
-    # 有订阅端口，并且端口正在监听（IPv4 / IPv6 任一）
+    # 2️⃣ 订阅配置不存在（等价于订阅服务未启用）
+    if [[ ! -f "$conf" ]]; then
+        red "未运行"
+        return
+    fi
+
+    # 3️⃣ nginx 进程不存在
+    if ! pgrep -x nginx >/dev/null 2>&1; then
+        red "未运行"
+        return
+    fi
+
+    # 4️⃣ 检查订阅端口是否被 nginx 监听
     if [[ -f "$sub_port_file" ]]; then
         local p
         p=$(cat "$sub_port_file")
 
-        if ss -tuln | grep -q ":$p "; then
+        # 只认 nginx 监听
+        if ss -tulnp 2>/dev/null | grep -q "nginx.*:$p"; then
             green "运行中"
             return
         fi
     fi
 
-    # fallback：systemd 状态
-    if systemctl is-active nginx >/dev/null 2>&1; then
-        green "运行中"
-    else
-        red "未运行"
-    fi
+    # 5️⃣ nginx 活着，但订阅不可用
+    yellow "未运行"
 }
+
 
 
 
