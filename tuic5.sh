@@ -949,7 +949,7 @@ change_config() {
                 systemctl restart sing-box-tuic
                 systemctl restart nginx
                 green "UUID 已成功修改"
-                read -n 1 -s -r -p "按任意键返回菜单..."
+                read -n 1 -s -r -p "按任意键返回菜单..." </dev/tty
                 ;;
             3)
                 read -rp "$(red_input "请输入新的节点名称：")" new_name
@@ -957,7 +957,7 @@ change_config() {
                 ;;
             4)
                 add_jump_port
-                read -n 1 -s -r -p "按任意键返回菜单..."
+                read -n 1 -s -r -p "按任意键返回菜单..." </dev/tty
                 ;;
             5)
                 if [[ -f "$range_port_file" ]]; then
@@ -982,7 +982,8 @@ change_config() {
                     green "跳跃端口已彻底删除：${min}-${max}"
                 else
                     yellow "当前未启用跳跃端口"
-                read -n 1 -s -r -p "按任意键返回菜单..."    
+
+                read -n 1 -s -r -p "按任意键返回菜单..." </dev/tty
                 fi
                 ;;
 
@@ -1241,12 +1242,12 @@ main_loop() {
                 check_nodes
                 # 持久化节点名称
                 get_node_name > "$work_dir/node_name"
-                read -n 1 -s -r -p "安装完成！按任意键进入主菜单..."
+                read -n 1 -s -r -p "安装完成！按任意键进入主菜单..." </dev/tty
                 ;;
             2) uninstall_tuic ;;
             3) manage_singbox ;;
             4) check_nodes 
-               read -n 1 -s -r -p "安装完成！按任意键进入主菜单..."
+               read -n 1 -s -r -p "安装完成！按任意键进入主菜单..." </dev/tty
             ;;
             5) change_config ;;
             6) manage_subscribe_menu ;;
@@ -1263,7 +1264,8 @@ main() {
     is_interactive_mode
     if [[ $? -eq 1 ]]; then
         quick_install
-        read -n 1 -s -r -p "安装完成！按任意键进入主菜单..."
+
+        read -n 1 -s -r -p "安装完成！按任意键进入主菜单..." </dev/tty
         main_loop
     else
         main_loop
