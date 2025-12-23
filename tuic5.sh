@@ -16,7 +16,7 @@ export LANG=en_US.UTF-8
 # 基本信息
 # ======================================================================
 AUTHOR="littleDoraemon"
-VERSION="v1.0.1"
+VERSION="v1.0.2"
 SINGBOX_VERSION="1.12.13"
 
 # ======================================================================
@@ -998,8 +998,8 @@ change_config() {
 
 change_main_tuic_port(){
     read -rp "$(red_input "请输入新的 TUIC 主端口（UDP）：")" new_port
-    is_valid_port "$new_port" || { red "端口无效"; continue; }
-    is_port_occupied "$new_port" && { red "端口已被占用"; continue; }
+    is_valid_port "$new_port" || { red "端口无效"; return; }
+    is_port_occupied "$new_port" && { red "端口已被占用"; return; }
 
     # 旧主端口
     old_port=$(jq -r '.inbounds[0].listen_port' "$config_dir")
