@@ -10,7 +10,7 @@ export LANG=en_US.UTF-8
 # ============================================================
 
 AUTHOR="littleDoraemon"
-VERSION="1.0.3"
+VERSION="1.0.4"
 
 
 SINGBOX_VERSION="1.12.13"
@@ -1336,34 +1336,21 @@ get_nginx_status_colored() {
         return
     fi
 
-    # 2️⃣ 订阅配置不存在（等价于订阅服务未启用）
+    # 2️⃣ nginx 服务未运行
+    if ! systemctl is-active nginx >/dev/null 2>&1; then
+        red "未运行"
+        return
+    fi
+
+    # 3️⃣ nginx 正在运行，但未启用订阅
     if [[ ! -f "$conf" ]]; then
-        red "未运行"
+        yellow "运行中（未启用订阅）"
         return
     fi
 
-    # 3️⃣ nginx 进程不存在
-    if ! pgrep -x nginx >/dev/null 2>&1; then
-        red "未运行"
-        return
-    fi
-
-    # 4️⃣ 检查订阅端口是否被 nginx 监听
-    if [[ -f "$sub_port_file" ]]; then
-        local p
-        p=$(cat "$sub_port_file")
-
-        # 只认 nginx 监听
-        if ss -tulnp 2>/dev/null | grep -q "nginx.*:$p"; then
-            green "运行中"
-            return
-        fi
-    fi
-
-    # 5️⃣ nginx 活着，但订阅不可用
-    yellow "未运行"
+    # 4️⃣ nginx + 订阅配置都正常
+    green "运行中"
 }
-
 
 
 
