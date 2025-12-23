@@ -10,7 +10,7 @@ export LANG=en_US.UTF-8
 # ============================================================
 
 AUTHOR="littleDoraemon"
-VERSION="1.0.5"
+VERSION="1.0.1"
 
 
 SINGBOX_VERSION="1.12.13"
@@ -510,16 +510,16 @@ check_nodes() {
         return
     }
 
-    # -------------------------
+    # =====================================================
     # 基础信息
-    # -------------------------
+    # =====================================================
     local PORT UUID
     PORT=$(jq -r '.inbounds[0].listen_port' "$config_dir")
     UUID=$(jq -r '.inbounds[0].users[0].password' "$config_dir")
 
-    # -------------------------
+    # =====================================================
     # 探测 IPv4 / IPv6
-    # -------------------------
+    # =====================================================
     local ip4 ip6
     ip4=$(get_ipv4)
     ip6=$(get_ipv6)
@@ -530,15 +530,15 @@ check_nodes() {
         return
     fi
 
-    # -------------------------
-    # 节点名称（基础名）
-    # -------------------------
+    # =====================================================
+    # 节点基础名称（不带 v4/v6）
+    # =====================================================
     local BASE_NAME
     BASE_NAME=$(get_node_name)
 
-    # -------------------------
+    # =====================================================
     # 订阅端口
-    # -------------------------
+    # =====================================================
     local sub_port
     if [[ -f "$sub_port_file" ]]; then
         sub_port=$(cat "$sub_port_file")
@@ -547,21 +547,20 @@ check_nodes() {
         echo "$sub_port" > "$sub_port_file"
     fi
 
-    # -------------------------
+    # =====================================================
     # 初始化订阅内容
-    # -------------------------
+    # =====================================================
     > "$sub_file"
 
     yellow "========================================================"
 
     # =====================================================
-    # IPv4 节点
+    # HY2 IPv4 节点
     # =====================================================
     local hy2_v4=""
     if [[ -n "$ip4" ]]; then
         local name4 enc4
-
-        name4="${BASE_NAME}-v4"
+        name4="${BASE_NAME}"
         enc4=$(urlencode "$name4")
 
         hy2_v4="hysteria2://${UUID}@${ip4}:${PORT}/?insecure=1&alpn=h3#${enc4}"
@@ -576,13 +575,12 @@ check_nodes() {
     fi
 
     # =====================================================
-    # IPv6 节点
+    # HY2 IPv6 节点（必须使用 []）
     # =====================================================
     local hy2_v6=""
     if [[ -n "$ip6" ]]; then
         local name6 enc6
-
-        name6="${BASE_NAME}-v6"
+        name6="${BASE_NAME}"
         enc6=$(urlencode "$name6")
 
         hy2_v6="hysteria2://${UUID}@[${ip6}]:${PORT}/?insecure=1&alpn=h3#${enc6}"
@@ -598,50 +596,85 @@ check_nodes() {
 
     yellow "========================================================"
 
-    # -------------------------
-    # 生成本地订阅
-    # -------------------------
+    # =====================================================
+    # 本地订阅（base64）
+    # =====================================================
     base64 -w0 "$sub_file" > "${work_dir}/sub_base64.txt"
 
-    # -------------------------
-    # 基础订阅 URL（v4 优先，否则 v6）
-    # -------------------------
-    local base_ip sub_url
+    # =====================================================
+    # 基础订阅 URL（IPv4 / IPv6 分离）
+    # =====================================================
+    local sub_url_v4="" sub_url_v6=""
+
     if [[ -n "$ip4" ]]; then
-        base_ip="$ip4"
-    else
-        base_ip="[${ip6}]"
+        sub_url_v4="http://${ip4}:${sub_port}/${UUID}"
+
+        purple "基础订阅（IPv4）："
+        green "$sub_url_v4"
+        [[ "$mode" != "silent" ]] && generate_qr "$sub_url_v4"
+        echo ""
     fi
 
-    sub_url="http://${base_ip}:${sub_port}/${UUID}"
+    if [[ -n "$ip6" ]]; then
+        sub_url_v6="http://[${ip6}]:${sub_port}/${UUID}"
 
-    purple "基础订阅链接："
-    green "$sub_url"
-    [[ "$mode" != "silent" ]] && generate_qr "$sub_url"
-    echo ""
+        purple "基础订阅（IPv6）："
+        green "$sub_url_v6"
+        [[ "$mode" != "silent" ]] && generate_qr "$sub_url_v6"
+        echo ""
+    fi
 
-    # -------------------------
-    # 多客户端订阅
-    # -------------------------
-    local clash_url singbox_url surge_url
-    clash_url="https://sublink.eooce.com/clash?config=${sub_url}"
-    singbox_url="https://sublink.eooce.com/singbox?config=${sub_url}"
-    surge_url="https://sublink.eooce.com/surge?config=${sub_url}"
+    yellow "========================================================"
 
-    purple "Clash / Mihomo："
-    green "$clash_url"
-    [[ "$mode" != "silent" ]] && generate_qr "$clash_url"
-    echo ""
+    # =====================================================
+    # 客户端订阅（IPv4）
+    # =====================================================
+    if [[ -n "$sub_url_v4" ]]; then
+        local clash_v4 singbox_v4 surge_v4
+        clash_v4="https://sublink.eooce.com/clash?config=${sub_url_v4}"
+        singbox_v4="https://sublink.eooce.com/singbox?config=${sub_url_v4}"
+        surge_v4="https://sublink.eooce.com/surge?config=${sub_url_v4}"
 
-    purple "Sing-box："
-    green "$singbox_url"
-    [[ "$mode" != "silent" ]] && generate_qr "$singbox_url"
-    echo ""
+        purple "Clash / Mihomo（IPv4）："
+        green "$clash_v4"
+        [[ "$mode" != "silent" ]] && generate_qr "$clash_v4"
+        echo ""
 
-    purple "Surge："
-    green "$surge_url"
-    [[ "$mode" != "silent" ]] && generate_qr "$surge_url"
-    echo ""
+        purple "Sing-box（IPv4）："
+        green "$singbox_v4"
+        [[ "$mode" != "silent" ]] && generate_qr "$singbox_v4"
+        echo ""
+
+        purple "Surge（IPv4）："
+        green "$surge_v4"
+        [[ "$mode" != "silent" ]] && generate_qr "$surge_v4"
+        echo ""
+    fi
+
+    # =====================================================
+    # 客户端订阅（IPv6）
+    # =====================================================
+    if [[ -n "$sub_url_v6" ]]; then
+        local clash_v6 singbox_v6 surge_v6
+        clash_v6="https://sublink.eooce.com/clash?config=${sub_url_v6}"
+        singbox_v6="https://sublink.eooce.com/singbox?config=${sub_url_v6}"
+        surge_v6="https://sublink.eooce.com/surge?config=${sub_url_v6}"
+
+        purple "Clash / Mihomo（IPv6）："
+        green "$clash_v6"
+        [[ "$mode" != "silent" ]] && generate_qr "$clash_v6"
+        echo ""
+
+        purple "Sing-box（IPv6）："
+        green "$singbox_v6"
+        [[ "$mode" != "silent" ]] && generate_qr "$singbox_v6"
+        echo ""
+
+        purple "Surge（IPv6）："
+        green "$surge_v6"
+        [[ "$mode" != "silent" ]] && generate_qr "$surge_v6"
+        echo ""
+    fi
 
     yellow "========================================================"
 
