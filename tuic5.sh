@@ -16,7 +16,7 @@ export LANG=en_US.UTF-8
 # 基本信息
 # ======================================================================
 AUTHOR="littleDoraemon"
-VERSION="v1.0.2"
+VERSION="v1.0.1"
 SINGBOX_VERSION="1.12.13"
 
 # ======================================================================
@@ -981,10 +981,12 @@ change_config() {
                     rm -f "$range_port_file"
 
                     green "跳跃端口已彻底删除：${min}-${max}"
+                    read -n 1 -s -r -p "按任意键返回菜单..." </dev/tty
                 else
                     yellow "当前未启用跳跃端口"
+                    read -n 1 -s -r -p "按任意键返回菜单..." </dev/tty
 
-                read -n 1 -s -r -p "按任意键返回菜单..." </dev/tty
+                
                 fi
                 ;;
 
