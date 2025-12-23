@@ -11,7 +11,7 @@ export LANG=en_US.UTF-8
 # ============================================================
 
 AUTHOR="littleDoraemon"
-VERSION="1.0.4"
+VERSION="1.0.1"
 
 
 SINGBOX_VERSION="1.12.13"
@@ -742,6 +742,7 @@ change_hy2_port() {
     green "Sing-box 已重启，端口修改生效"
 
     check_nodes silent
+    pause_return
 
 }
 
