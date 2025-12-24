@@ -25,7 +25,7 @@ export LANG=en_US.UTF-8
 # ======================================================================
 
 AUTHOR="littleDoraemon"
-VERSION="v2.3.8"
+VERSION="v2.3.10"
 SINGBOX_VERSION="1.12.13"
 
 SERVICE_NAME="sing-box-vless-reality"
@@ -370,7 +370,8 @@ systemctl enable ${SERVICE_NAME}
 # =====================================================
 build_subscribe_conf(){
   [[ -f "$SUB_PORT_FILE" ]] || echo $((PORT+1)) > "$SUB_PORT_FILE"
-cat > "$NGX_CONF" <<EOF
+
+  cat > "$NGX_CONF" <<EOF
 server {
   listen $(cat "$SUB_PORT_FILE");
   listen [::]:$(cat "$SUB_PORT_FILE");
@@ -380,8 +381,12 @@ server {
   }
 }
 EOF
+
   ln -sf "$NGX_CONF" "$NGX_LINK"
-  systemctl reload nginx
+
+  if systemctl is-active nginx >/dev/null 2>&1; then
+    systemctl reload nginx
+  fi
 }
 
 
