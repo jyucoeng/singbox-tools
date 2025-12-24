@@ -270,6 +270,12 @@ main() {
   green "✅ Socks5 服务已启动"
   [[ -n "$IP_V4" ]] && blue "IPv4: socks5://$USERNAME:$PASSWORD@$IP_V4:$PORT"
   [[ -n "$IP_V6" ]] && yellow "IPv6: socks5://$USERNAME:$PASSWORD@[$IP_V6]:$PORT"
+
+  echo
+  yellow "管理命令："
+  green "  systemctl status sing-box-socks5"
+  green "  systemctl restart sing-box-socks5"
+  green "  journalctl -u sing-box-socks5 -f"
 }
 
 main "$@"
