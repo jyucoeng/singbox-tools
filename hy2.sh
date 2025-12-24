@@ -10,7 +10,7 @@ export LANG=en_US.UTF-8
 # ============================================================
 
 AUTHOR="littleDoraemon"
-VERSION="1.0.6"
+VERSION="1.0.7"
 
 
 SINGBOX_VERSION="1.12.13"
@@ -1181,16 +1181,28 @@ uninstall_singbox() {
 # ============================================================
 # 订阅服务（Nginx）管理菜单
 # ============================================================
+
 manage_subscribe_menu() {
     while true; do
         clear
         blue "========== 订阅服务管理（Nginx） =========="
         echo ""
 
+        # 订阅状态（你刚刚抽出来的函数）
+        print_subscribe_status
+        echo ""
+
+        # ---------- nginx 原生管理 ----------
         green " 1. 启动 Nginx"
         green " 2. 停止 Nginx"
         green " 3. 重启 Nginx"
-        green " 4. 修改订阅端口"
+
+        # ---------- 订阅管理 ----------
+        yellow "-----------------------------------------"
+        green " 4. 启用 / 重建订阅服务"
+        green " 5. 修改订阅端口"
+        green " 6. 关闭订阅服务"
+
         yellow "-----------------------------------------"
         green " 0. 返回上级菜单"
         red   "88. 退出脚本"
@@ -1198,6 +1210,7 @@ manage_subscribe_menu() {
 
         read -rp "请选择操作：" sel
         case "$sel" in
+            # ===== nginx 原生操作 =====
             1)
                 systemctl start nginx
                 systemctl is-active nginx >/dev/null 2>&1 \
@@ -1217,17 +1230,21 @@ manage_subscribe_menu() {
                     || red "Nginx 重启失败"
                 pause_return
                 ;;
+
+            # ===== 订阅管理 =====
             4)
-                read -rp "$(red_input "请输入新的订阅端口：")" new_sub_port
-                if ! is_valid_port "$new_sub_port"; then
-                    red "端口无效"
-                    pause_return
-                    continue
-                fi
-                echo "$new_sub_port" > "$sub_port_file"
-                green "订阅端口已修改为：$new_sub_port"
+                build_subscribe_conf
                 pause_return
                 ;;
+            5)
+                change_subscribe_port
+                pause_return
+                ;;
+            6)
+                disable_subscribe
+                pause_return
+                ;;
+
             0)
                 return
                 ;;
@@ -1259,9 +1276,11 @@ main_menu() {
 
         sb="$(get_singbox_status_colored)"
         ng="$(get_nginx_status_colored)"
+        ss="$(get_subscribe_status_colored)"
 
         yellow " Sing-box 状态：$sb"
         yellow " Nginx 状态：   $ng"
+        yellow " 订阅 状态：   $ss"
         echo ""
         green " 1. 安装 Sing-box (HY2)"
         red   " 2. 卸载 Sing-box"
@@ -1325,33 +1344,113 @@ get_singbox_status_colored() {
     fi
 }
 
-
 get_nginx_status_colored() {
-
-    local conf="/etc/nginx/conf.d/singbox_hy2_sub.conf"
-
-    # 1️⃣ nginx 未安装
     if ! command -v nginx >/dev/null 2>&1; then
         red "未安装"
         return
     fi
 
-    # 2️⃣ nginx master 进程是否存在（唯一权威）
-    if ! pgrep -f '^nginx: master process' >/dev/null 2>&1; then
+    if systemctl is-active nginx >/dev/null 2>&1; then
+        green "运行中"
+    else
         red "未运行"
-        return
     fi
-
-    # 3️⃣ nginx 在运行，但订阅未启用
-    if [[ ! -f "$conf" ]]; then
-        yellow "运行中（未启用订阅）"
-        return
-    fi
-
-    # 4️⃣ 一切正常
-    green "运行中"
 }
 
+get_subscribe_status_colored() {
+    local conf="/etc/nginx/conf.d/singbox_hy2_sub.conf"
+
+    if [[ -f "$conf" ]]; then
+        green "已启用"
+    else
+        yellow "未启用"
+    fi
+}
+
+
+print_subscribe_status() {
+    if [[ -f "$sub_nginx_conf" ]]; then
+        green "当前订阅状态：已启用"
+    else
+        yellow "当前订阅状态：未启用"
+    fi
+}
+
+
+
+build_subscribe_conf() {
+    local sub_port uuid content
+
+    # 基本校验
+    [[ ! -f "$sub_file" ]] && {
+        red "订阅内容不存在，请先生成节点"
+        return 1
+    }
+
+    uuid=$(jq -r '.inbounds[0].users[0].password' "$config_dir")
+    sub_port=$(cat "$sub_port_file" 2>/dev/null)
+
+    # 兜底
+    [[ -z "$sub_port" ]] && {
+        sub_port=$(( $(jq -r '.inbounds[0].listen_port' "$config_dir") + 1 ))
+        echo "$sub_port" > "$sub_port_file"
+    }
+
+    content=$(base64 -w0 "$sub_file")
+
+    cat > "$sub_nginx_conf" <<EOF
+server {
+    listen ${sub_port};
+    server_name _;
+
+    location /${uuid} {
+        default_type text/plain;
+        return 200 "${content}";
+    }
+}
+EOF
+
+    # 建立软链
+    ln -sf "$sub_nginx_conf" "$nginx_conf_link"
+
+    systemctl reload nginx
+
+    green "订阅服务已生成并生效"
+}
+
+
+
+disable_subscribe() {
+    rm -f "$sub_nginx_conf"
+    rm -f "$nginx_conf_link"
+
+    systemctl reload nginx
+
+    green "订阅服务已关闭"
+}
+
+change_subscribe_port() {
+    read -rp "$(red_input "请输入新的订阅端口：")" new_port
+
+    if ! is_valid_port "$new_port"; then
+        red "端口无效"
+        return
+    fi
+
+    if is_port_occupied "$new_port"; then
+        red "端口已被占用"
+        return
+    fi
+
+    echo "$new_port" > "$sub_port_file"
+
+    # 如果订阅已启用，重建 conf
+    if [[ -f "$sub_nginx_conf" ]]; then
+        build_subscribe_conf
+    fi
+
+    green "订阅端口已修改为：$new_port"
+}
 
 
 main_entry() {
