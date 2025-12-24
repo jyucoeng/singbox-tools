@@ -64,7 +64,7 @@ gen_password() {
 }
 
 gen_port() {
-  shuf -i 20000-50000 -n 1
+  shuf -i 1-65530 -n 1
 }
 
 check_port_free() {
