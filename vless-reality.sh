@@ -25,7 +25,7 @@ export LANG=en_US.UTF-8
 # ======================================================================
 
 AUTHOR="littleDoraemon"
-VERSION="v2.3.12"
+VERSION="v2.3.13"
 SINGBOX_VERSION="1.12.13"
 
 SERVICE_NAME="sing-box-vless-reality"
@@ -524,7 +524,7 @@ check_nodes() {
     green  "${uri}#${name_enc}"
     echo ""
 
-    yellow "【人类可读（仅展示，已 decode）】"
+    brown "【人类可读（仅展示，已 decode）】"
     green  "${uri}#${name_dec}"
     echo ""
   done < "$SUB_FILE"
@@ -920,19 +920,18 @@ menu(){
 }
 
 get_singbox_status_colored() {
-    # 未安装：systemd 服务文件不存在
     if ! systemctl list-unit-files --type=service 2>/dev/null | grep -q "^${SERVICE_NAME}\.service"; then
         red "未安装"
         return
     fi
 
-    # 已安装，正在运行
-    if systemctl is-active ${SERVICE_NAME} 2>&1; then
+    if systemctl is-active --quiet ${SERVICE_NAME}; then
         green "运行中"
     else
         red "未运行"
     fi
 }
+
 
 
 

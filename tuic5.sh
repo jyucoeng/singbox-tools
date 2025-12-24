@@ -24,12 +24,14 @@ export LANG=en_US.UTF-8
 # 基本信息
 # ======================================================================
 AUTHOR="littleDoraemon"
-VERSION="v1.0.1"
+VERSION="v2.0.1"
 SINGBOX_VERSION="1.12.13"
 
 # ======================================================================
 # 路径定义（TUIC 独立）
 # ======================================================================
+SERVICE_NAME="sing-box-tuic"
+
 work_dir="/etc/sing-box-tuic"
 config_dir="${work_dir}/config.json"
 client_dir="${work_dir}/url.txt"
@@ -600,7 +602,7 @@ EOF
     green "配置文件已生成：$config_dir"
 
     # -------------------- systemd 服务 --------------------
-cat > /etc/systemd/system/sing-box-tuic.service <<EOF
+cat > /etc/systemd/system/${SERVICE_NAME}.service <<EOF
 [Unit]
 Description=Sing-box TUIC
 After=network.target
@@ -615,8 +617,8 @@ WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
-    systemctl enable sing-box-tuic
-    systemctl restart sing-box-tuic
+    systemctl enable ${SERVICE_NAME}
+    systemctl restart ${SERVICE_NAME}
 
     green "Sing-box TUIC 服务已启动"
 }
@@ -893,9 +895,9 @@ manage_singbox() {
         read -rp "请选择操作：" sel
 
         case "$sel" in
-            1) systemctl start sing-box-tuic ;;
-            2) systemctl stop sing-box-tuic ;;
-            3) systemctl restart sing-box-tuic ;;
+            1) systemctl start ${SERVICE_NAME} ;;
+            2) systemctl stop ${SERVICE_NAME} ;;
+            3) systemctl restart ${SERVICE_NAME} ;;
             0) return ;;
             88) exit 0 ;;
             *) red "无效输入，请重新选择" ;;
@@ -1074,7 +1076,7 @@ change_config() {
                 jq ".inbounds[0].users[0].uuid=\"$new_uuid\" | .inbounds[0].users[0].password=\"$new_uuid\"" \
                     "$config_dir" > /tmp/tuic_cfg && mv /tmp/tuic_cfg "$config_dir"
 
-                systemctl restart sing-box-tuic
+                systemctl restart ${SERVICE_NAME}
                 systemctl restart nginx
                 green "UUID 已成功修改"
                 read -n 1 -s -r -p "按任意键返回菜单..." </dev/tty
@@ -1163,7 +1165,7 @@ change_main_tuic_port() {
     refresh_jump_ports_for_new_main_port "$new_port"
 
     # 重启服务
-    systemctl restart sing-box-tuic
+    systemctl restart ${SERVICE_NAME}
 
     green "TUIC 主端口已从 ${old_port} 修改为：${new_port}"
     read -n 1 -s -r -p "按任意键返回菜单..." </dev/tty
@@ -1293,9 +1295,9 @@ uninstall_tuic() {
     green "已清理跳跃端口相关防火墙规则"
 
     # ---------- 停止并删除服务 ----------
-    systemctl stop sing-box-tuic 2>/dev/null
-    systemctl disable sing-box-tuic 2>/dev/null
-    rm -f /etc/systemd/system/sing-box-tuic.service
+    systemctl stop ${SERVICE_NAME} 2>/dev/null
+    systemctl disable ${SERVICE_NAME} 2>/dev/null
+    rm -f /etc/systemd/system/${SERVICE_NAME}.service
     systemctl daemon-reload
 
     # ---------- 删除运行目录 ----------
@@ -1380,14 +1382,12 @@ menu() {
 
 
 get_singbox_status_colored() {
-    # 未安装：systemd 服务文件不存在
-    if ! systemctl list-unit-files --type=service 2>/dev/null | grep -q '^sing-box\.service'; then
+    if ! systemctl list-unit-files --type=service 2>/dev/null | grep -q "^${SERVICE_NAME}\.service"; then
         red "未安装"
         return
     fi
 
-    # 已安装，正在运行
-    if systemctl is-active sing-box >/dev/null 2>&1; then
+    if systemctl is-active --quiet ${SERVICE_NAME}; then
         green "运行中"
     else
         red "未运行"

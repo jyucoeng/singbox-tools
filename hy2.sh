@@ -21,12 +21,14 @@ export LANG=en_US.UTF-8
 # ======================================================================
 
 AUTHOR="littleDoraemon"
-VERSION="1.0.1"
+VERSION="2.0.1"
 
 
 SINGBOX_VERSION="1.12.13"
 
 # ======================= 路径定义 =======================
+SERVICE_NAME="sing-box-hy2"
+
 work_dir="/etc/sing-box"
 config_dir="$work_dir/config.json"
 client_dir="$work_dir/url.txt"
@@ -490,7 +492,7 @@ EOF
     # ====================================================
     # systemd 服务
     # ====================================================
-cat > /etc/systemd/system/sing-box.service <<EOF
+cat > /etc/systemd/system/${SERVICE_NAME}.service <<EOF
 [Unit]
 Description=Sing-box Hysteria2
 After=network.target
@@ -505,8 +507,8 @@ WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
-    systemctl enable sing-box
-    systemctl restart sing-box
+    systemctl enable ${SERVICE_NAME}
+    systemctl restart ${SERVICE_NAME}
 
     green "Sing-box HY2 服务已启动"
 
@@ -828,26 +830,26 @@ manage_singbox() {
         read -rp "请选择操作：" sel
         case "$sel" in
             1)
-                systemctl start sing-box
-                systemctl is-active sing-box >/dev/null 2>&1 \
+                systemctl start ${SERVICE_NAME}
+                systemctl is-active ${SERVICE_NAME} >/dev/null 2>&1 \
                     && green "Sing-box 已启动" \
                     || red "Sing-box 启动失败"
                 pause_return
                 ;;
             2)
-                systemctl stop sing-box
+                systemctl stop ${SERVICE_NAME}
                 green "Sing-box 已停止"
                 pause_return
                 ;;
             3)
-                systemctl restart sing-box
-                systemctl is-active sing-box >/dev/null 2>&1 \
+                systemctl restart ${SERVICE_NAME}
+                systemctl is-active ${SERVICE_NAME} >/dev/null 2>&1 \
                     && green "Sing-box 已重启" \
                     || red "Sing-box 重启失败"
                 pause_return
                 ;;
             4)
-                systemctl status sing-box -n 20
+                systemctl status ${SERVICE_NAME} -n 20
                 pause_return
                 ;;
             0)
@@ -897,7 +899,7 @@ change_hy2_port() {
 
 
     # 重启服务
-    systemctl restart sing-box
+    systemctl restart ${SERVICE_NAME}
 
     green "Sing-box 已重启，端口修改生效"
 
@@ -928,7 +930,7 @@ change_uuid() {
 
     green "UUID 已修改：${old_uuid} → ${new_uuid}"
 
-    systemctl restart sing-box
+    systemctl restart ${SERVICE_NAME}
     green "Sing-box 已重启"
 
     pause_return
@@ -1154,9 +1156,9 @@ uninstall_singbox() {
     green "已清理跳跃端口相关防火墙规则"
 
     # ---------- 停止并删除服务 ----------
-    systemctl stop sing-box 2>/dev/null
-    systemctl disable sing-box 2>/dev/null
-    rm -f /etc/systemd/system/sing-box.service
+    systemctl stop ${SERVICE_NAME} 2>/dev/null
+    systemctl disable ${SERVICE_NAME} 2>/dev/null
+    rm -f /etc/systemd/system/${SERVICE_NAME}.service
     systemctl daemon-reload
 
     # ---------- 删除运行目录 ----------
@@ -1342,21 +1344,19 @@ main_menu() {
     done
 }
 
-
 get_singbox_status_colored() {
-    # 未安装：systemd 服务文件不存在
-    if ! systemctl list-unit-files --type=service 2>/dev/null | grep -q '^sing-box\.service'; then
+    if ! systemctl list-unit-files --type=service 2>/dev/null | grep -q "^${SERVICE_NAME}\.service"; then
         red "未安装"
         return
     fi
 
-    # 已安装，正在运行
-    if systemctl is-active sing-box >/dev/null 2>&1; then
+    if systemctl is-active --quiet ${SERVICE_NAME}; then
         green "运行中"
     else
         red "未运行"
     fi
 }
+
 
 get_nginx_status_colored() {
     if ! command -v nginx >/dev/null 2>&1; then
