@@ -14,7 +14,7 @@ export LANG=en_US.UTF-8
 #     curl -fsSL https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/vless-reality.sh -o vless-reality.sh && chmod +x vless-reality.sh && ./vless-reality.sh
 #    
 #     1.2 非交互式全自动安装:
-#     PORT=31020 SNI=www.visa.com NODE_NAME="小叮当的节点" bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/vless-reality.sh)
+#     PORT=31090 SNI=www.visa.com NODE_NAME="小叮当的节点" bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/vless-reality.sh)
 #
 # 
 # ======================================================================
@@ -36,6 +36,10 @@ SUB_PORT_FILE="$WORK_DIR/sub.port"
 
 NGX_CONF="$WORK_DIR/vless_reality_sub.conf"
 NGX_LINK="/etc/nginx/conf.d/vless_reality_sub.conf"
+
+REALITY_PUBKEY_FILE="$WORK_DIR/reality_public.key"
+REALITY_SID_FILE="$WORK_DIR/reality_short_id"
+
 
 DEFAULT_SNI="www.bing.com"
 
@@ -258,9 +262,17 @@ uninstall_singbox(){
 # Reality key
 # =====================================================
 gen_reality(){
+  local k
   k=$("$WORK_DIR/sing-box" generate reality-keypair)
+
   PRIVATE_KEY=$(awk '/PrivateKey/ {print $2}' <<<"$k")
   PUBLIC_KEY=$(awk '/PublicKey/ {print $2}' <<<"$k")
+
+  # 生成 short_id（8 位 hex，符合主流客户端）
+  SHORT_ID=$(openssl rand -hex 4)
+
+  echo "$PUBLIC_KEY" > "$REALITY_PUBKEY_FILE"
+  echo "$SHORT_ID" > "$REALITY_SID_FILE"
 }
 
 # =====================================================
@@ -288,7 +300,7 @@ cat > "$CONFIG" <<EOF
           "server_port": 443
         },
         "private_key": "$PRIVATE_KEY",
-        "short_id": [""]
+        "short_id": ["'"$SHORT_ID"'"]
       }
     }
   }],
@@ -339,9 +351,14 @@ EOF
 }
 
 
+
 generate_nodes() {
   local ip4 ip6 name sni
+  local pbk sid
 
+  # -----------------------------
+  # 获取必要参数
+  # -----------------------------
   ip4=$(get_ip4)
   ip6=$(get_ip6)
   name=$(get_node_name)
@@ -352,25 +369,43 @@ generate_nodes() {
     return 1
   }
 
+  # Reality 公钥与 short_id（必须存在）
+  if [[ ! -f "$REALITY_PUBKEY_FILE" || ! -f "$REALITY_SID_FILE" ]]; then
+    red "未找到 Reality 公钥或 short_id，请重新安装或生成 Reality 密钥"
+    return 1
+  fi
+
+  pbk=$(cat "$REALITY_PUBKEY_FILE")
+  sid=$(cat "$REALITY_SID_FILE")
+
+  # -----------------------------
   # 确保订阅端口存在
+  # -----------------------------
   [[ -f "$SUB_PORT_FILE" ]] || echo $((PORT + 1)) > "$SUB_PORT_FILE"
 
-  # 生成订阅内容（全量，v4 + v6）
+  # -----------------------------
+  # 生成订阅内容（单行 URI）
+  # -----------------------------
   > "$SUB_FILE"
 
-  [[ -n "$ip4" ]] && echo \
-"vless://${UUID}@${ip4}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${sni}&fp=chrome&type=tcp#${name}" \
->> "$SUB_FILE"
+  # IPv4
+  if [[ -n "$ip4" ]]; then
+    echo "vless://${UUID}@${ip4}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${sni}&fp=chrome&pbk=${pbk}&sid=${sid}&type=tcp&headerType=none#${name}" >> "$SUB_FILE"
+  fi
 
-  [[ -n "$ip6" ]] && echo \
-"vless://${UUID}@[${ip6}]:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${sni}&fp=chrome&type=tcp#${name}" \
->> "$SUB_FILE"
+  # IPv6
+  if [[ -n "$ip6" ]]; then
+    echo "vless://${UUID}@[${ip6}]:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${sni}&fp=chrome&pbk=${pbk}&sid=${sid}&type=tcp&headerType=none#${name}" >> "$SUB_FILE"
+  fi
 
+  # -----------------------------
   # Base64 订阅（全量）
+  # -----------------------------
   base64 -w0 "$SUB_FILE" > "$SUB_B64"
 
   return 0
 }
+
 
 # =====================================================
 # 核心：check_nodes（唯一事实源）
