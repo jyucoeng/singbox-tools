@@ -25,7 +25,7 @@ export LANG=en_US.UTF-8
 # ======================================================================
 
 AUTHOR="littleDoraemon"
-VERSION="v2.3.6"
+VERSION="v2.3.7"
 SINGBOX_VERSION="1.12.13"
 
 SERVICE_NAME="sing-box-vless-reality"
@@ -202,13 +202,22 @@ install_singbox(){
     *) red "不支持架构"; exit 1 ;;
   esac
 
-  curl -fsSL -o /tmp/sb.tgz \
+  mkdir -p "$WORK_DIR"
+
+  local tmpdir
+  tmpdir=$(mktemp -d)
+
+  curl -fsSL -o "$tmpdir/sb.tgz" \
     https://github.com/SagerNet/sing-box/releases/download/v${SINGBOX_VERSION}/sing-box-${SINGBOX_VERSION}-linux-${ARCH}.tar.gz
 
-  tar -xzf /tmp/sb.tgz -C /tmp
-  mv /tmp/sing-box-*/sing-box "$WORK_DIR/"
+  tar -xzf "$tmpdir/sb.tgz" -C "$tmpdir"
+
+  mv "$tmpdir"/sing-box-*/sing-box "$WORK_DIR/sing-box"
   chmod +x "$WORK_DIR/sing-box"
+
+  rm -rf "$tmpdir"
 }
+
 
 uninstall_singbox(){
   clear
