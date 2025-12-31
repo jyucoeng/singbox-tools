@@ -24,7 +24,7 @@ export LANG=en_US.UTF-8
 # 基本信息
 # ======================================================================
 AUTHOR="littleDoraemon"
-VERSION="v2.0.1"
+VERSION="v1.0.2"
 SINGBOX_VERSION="1.12.13"
 
 # ======================================================================
@@ -40,7 +40,7 @@ sub_port_file="${work_dir}/sub.port"
 range_port_file="${work_dir}/range_ports"
 
 sub_nginx_conf="$work_dir/singbox_tuic_sub.conf"
-nginx_conf_link="/etc/nginx/conf.d/singbox_tuic_sub.conf"
+
 
 
 
@@ -84,7 +84,21 @@ fi
 # ======================================================================
 command_exists(){ command -v "$1" >/dev/null 2>&1; }
 is_valid_port(){ [[ "$1" =~ ^[0-9]+$ && "$1" -ge 1 && "$1" -le 65535 ]]; }
-is_port_occupied(){ ss -tuln | grep -q ":$1 "; }
+
+is_port_occupied(){  
+    
+    local port="$1"
+
+  if command -v ss >/dev/null 2>&1; then
+    # ss：兼容 IPv4 / IPv6 / [::]:PORT / 0.0.0.0:PORT
+    ss -tuln | grep -qE "[:.]${port}\b"
+  elif command -v netstat >/dev/null 2>&1; then
+    netstat -tuln | grep -qE "[:.]${port}\b"
+  else
+    # 理论兜底：无 ss / netstat 时认为未占用
+    return 1
+  fi
+}
 
 urlencode(){ printf "%s" "$1" | jq -sRr @uri; }
 urldecode(){ printf '%b' "${1//%/\\x}"; }
@@ -135,6 +149,87 @@ get_public_ip() {
 
     echo ""
     return 1
+}
+
+
+detect_nginx_conf_dir() {
+  if [[ "$INIT_SYSTEM" == "openrc" ]]; then
+    echo "/etc/nginx/http.d"
+  else
+    echo "/etc/nginx/conf.d"
+  fi
+}
+
+
+detect_init() {
+  if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    INIT_SYSTEM="systemd"
+  elif command -v rc-service >/dev/null 2>&1; then
+    INIT_SYSTEM="openrc"
+  else
+    red "无法识别 init 系统"
+    exit 1
+  fi
+}
+
+
+
+init_nginx_paths() {
+  NGX_NGINX_DIR="$(detect_nginx_conf_dir)"
+  nginx_conf_link="$NGX_NGINX_DIR/singbox_tuic_sub.conf"
+  mkdir -p "$NGX_NGINX_DIR"
+}
+
+
+init_platform() {
+  init_nginx_paths
+}
+
+
+
+service_enable() {
+  local svc="$1"
+  if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+    systemctl enable "$svc"
+  else
+    rc-update add "$svc" default 2>/dev/null || rc-update add "$svc" boot
+  fi
+}
+
+service_start() {
+  local svc="$1"
+  if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+    systemctl start "$svc"
+  else
+    rc-service "$svc" start
+  fi
+}
+
+service_stop() {
+  local svc="$1"
+  if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+    systemctl stop "$svc"
+  else
+    rc-service "$svc" stop
+  fi
+}
+
+service_restart() {
+  local svc="$1"
+  if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+    systemctl restart "$svc"
+  else
+    rc-service "$svc" restart
+  fi
+}
+
+service_active() {
+  local svc="$1"
+  if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+    systemctl is-active --quiet "$svc"
+  else
+   rc-service "$svc" status | grep -q "started"
+  fi
 }
 
 # ======================================================================
@@ -244,6 +339,17 @@ install_common_packages() {
             fi
         fi
     done
+
+     # ==================================================
+    # Alpine nftables / iptables NAT 兼容兜底（TUIC 必须）
+    # ==================================================
+    if command_exists apk; then
+        if ! iptables -t nat -L >/dev/null 2>&1; then
+            yellow "检测到 iptables NAT 不可用，尝试安装 iptables-legacy 兼容层"
+            apk add iptables-legacy ip6tables-legacy >/dev/null 2>&1 || true
+        fi
+    fi
+
 }
 
 # ======================================================================
@@ -616,9 +722,8 @@ LimitNOFILE=1048576
 WantedBy=multi-user.target
 EOF
 
-    systemctl daemon-reload
-    systemctl enable ${SERVICE_NAME}
-    systemctl restart ${SERVICE_NAME}
+    make_service
+
 
     green "Sing-box TUIC 服务已启动"
 }
@@ -686,12 +791,14 @@ EOF
 
     ln -sf "$sub_nginx_conf" "$nginx_conf_link"
 
-    if systemctl is-active nginx >/dev/null 2>&1; then
-        systemctl reload nginx
+    if command_exists nginx && service_active nginx; then
+        service_restart nginx
         green "订阅服务已生成并生效"
     else
         yellow "Nginx 未运行，订阅配置已生成，启动 Nginx 后生效"
     fi
+
+    
 }
 
 
@@ -730,6 +837,69 @@ get_ipv4() {
         [[ -n "$ip" ]] && { echo "$ip"; return; }
     done
  }
+
+
+make_service_systemd() {
+
+cat > /etc/systemd/system/${SERVICE_NAME}.service <<EOF
+[Unit]
+Description=Sing-box tuic5
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=${work_dir}/sing-box run -c ${config_dir}
+Restart=always
+RestartSec=3
+LimitNOFILE=1048576
+
+# 安全加固（可选，但推荐）
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  # 重新加载 systemd
+  systemctl daemon-reload
+}
+
+
+
+make_service_openrc() {
+cat > /etc/init.d/${SERVICE_NAME} <<EOF
+#!/sbin/openrc-run
+name="sing-box tuic5"
+command="$work_dir/sing-box"
+command_args="run -c $config_dir"
+supervisor="supervise-daemon"
+output_log="/var/log/${SERVICE_NAME}.log"
+error_log="/var/log/${SERVICE_NAME}.err"
+
+depend() {
+  need net
+}
+EOF
+
+chmod +x /etc/init.d/${SERVICE_NAME}
+}
+
+
+make_service() {
+  if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+    make_service_systemd
+  else
+    make_service_openrc
+  fi
+
+  service_enable "${SERVICE_NAME}"
+  service_start  "${SERVICE_NAME}"
+}
+
 
 
 check_nodes() {
@@ -895,9 +1065,9 @@ manage_singbox() {
         read -rp "请选择操作：" sel
 
         case "$sel" in
-            1) systemctl start ${SERVICE_NAME} ;;
-            2) systemctl stop ${SERVICE_NAME} ;;
-            3) systemctl restart ${SERVICE_NAME} ;;
+            1) service_start ${SERVICE_NAME} ;;
+            2) service_stop ${SERVICE_NAME} ;;
+            3) service_restart ${SERVICE_NAME} ;;
             0) return ;;
             88) exit 0 ;;
             *) red "无效输入，请重新选择" ;;
@@ -914,16 +1084,13 @@ manage_subscribe_menu() {
         blue "========== 订阅服务管理（TUIC / Nginx） =========="
         echo ""
 
-        # 订阅状态（唯一事实源）
         print_subscribe_status
         echo ""
 
-        # ---------- nginx 服务管理 ----------
         green " 1. 启动 Nginx"
         green " 2. 停止 Nginx"
         green " 3. 重启 Nginx"
 
-        # ---------- 订阅管理 ----------
         yellow "---------------------------------------------"
         green " 4. 启用 / 重建订阅服务"
         green " 5. 修改订阅端口"
@@ -936,28 +1103,21 @@ manage_subscribe_menu() {
 
         read -rp "请选择操作：" sel
         case "$sel" in
-            # ===== nginx 原生操作 =====
             1)
-                systemctl start nginx
-                systemctl is-active nginx >/dev/null 2>&1 \
-                    && green "Nginx 已启动" \
-                    || red "Nginx 启动失败"
+                service_start nginx
+                service_active nginx && green "Nginx 已启动" || red "Nginx 启动失败"
                 pause_return
                 ;;
             2)
-                systemctl stop nginx
-                green "Nginx 已停止"
+                service_stop nginx
+                service_active nginx && red "Nginx 停止失败" || green "Nginx 已停止"
                 pause_return
                 ;;
             3)
-                systemctl restart nginx
-                systemctl is-active nginx >/dev/null 2>&1 \
-                    && green "Nginx 已重启" \
-                    || red "Nginx 重启失败"
+                service_restart nginx
+                service_active nginx && green "Nginx 已重启" || red "Nginx 重启失败"
                 pause_return
                 ;;
-
-            # ===== 订阅管理 =====
             4)
                 build_subscribe_conf
                 pause_return
@@ -970,7 +1130,6 @@ manage_subscribe_menu() {
                 disable_subscribe
                 pause_return
                 ;;
-
             0)
                 return
                 ;;
@@ -987,13 +1146,15 @@ manage_subscribe_menu() {
 
 
 
+
 disable_subscribe() {
     rm -f "$sub_nginx_conf"
     rm -f "$nginx_conf_link"
 
-    if systemctl is-active nginx >/dev/null 2>&1; then
-        systemctl reload nginx
+    if command_exists nginx && service_active nginx; then
+        service_restart nginx
     fi
+
 
     green "订阅服务已关闭"
 }
@@ -1076,8 +1237,8 @@ change_config() {
                 jq ".inbounds[0].users[0].uuid=\"$new_uuid\" | .inbounds[0].users[0].password=\"$new_uuid\"" \
                     "$config_dir" > /tmp/tuic_cfg && mv /tmp/tuic_cfg "$config_dir"
 
-                systemctl restart ${SERVICE_NAME}
-                systemctl restart nginx
+                service_restart ${SERVICE_NAME}
+                service_restart nginx
                 green "UUID 已成功修改"
                 read -n 1 -s -r -p "按任意键返回菜单..." </dev/tty
                 ;;
@@ -1165,7 +1326,7 @@ change_main_tuic_port() {
     refresh_jump_ports_for_new_main_port "$new_port"
 
     # 重启服务
-    systemctl restart ${SERVICE_NAME}
+    service_restart ${SERVICE_NAME}
 
     green "TUIC 主端口已从 ${old_port} 修改为：${new_port}"
     read -n 1 -s -r -p "按任意键返回菜单..." </dev/tty
@@ -1273,45 +1434,69 @@ add_jump_port() {
 uninstall_tuic() {
 
     clear
-    blue "============== 卸载 TUIC =============="
+    blue "============== 卸载 TUIC v5 =============="
     echo ""
 
-    read -rp "确认卸载 TUIC？ [Y/n]（默认 Y）：" u
+    read -rp "确认卸载 Sing-box TUIC？ [Y/n]（默认 Y）：" u
     u=${u:-y}
+    [[ ! "$u" =~ ^[Yy]$ ]] && { yellow "已取消卸载"; pause_return; return; }
 
-    [[ ! "$u" =~ ^[Yy]$ ]] && { yellow "已取消卸载"; return; }
-
-    # ---------- 清理跳跃端口 ----------
+    # ==================================================
+    # 1. 清理跳跃端口 NAT / 防火墙规则
+    # ==================================================
     remove_jump_rule
     if [[ -f "$range_port_file" ]]; then
         rp=$(cat "$range_port_file")
         min="${rp%-*}"
         max="${rp#*-}"
+
         iptables -D INPUT -p udp --dport ${min}:${max} -j ACCEPT 2>/dev/null
         ip6tables -D INPUT -p udp --dport ${min}:${max} -j ACCEPT 2>/dev/null
         rm -f "$range_port_file"
     fi
+    green "已清理跳跃端口相关规则"
 
-    green "已清理跳跃端口相关防火墙规则"
+    # ==================================================
+    # 2. 停止并移除服务（systemd / openrc 自适应）
+    # ==================================================
+    if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+        systemctl stop ${SERVICE_NAME} 2>/dev/null
+        systemctl disable ${SERVICE_NAME} 2>/dev/null
+        rm -f /etc/systemd/system/${SERVICE_NAME}.service
+        systemctl daemon-reload
+    else
+        rc-service ${SERVICE_NAME} stop 2>/dev/null
+        rc-update del ${SERVICE_NAME} 2>/dev/null
+        rm -f /etc/init.d/${SERVICE_NAME}
+    fi
+    green "TUIC 服务已移除"
 
-    # ---------- 停止并删除服务 ----------
-    systemctl stop ${SERVICE_NAME} 2>/dev/null
-    systemctl disable ${SERVICE_NAME} 2>/dev/null
-    rm -f /etc/systemd/system/${SERVICE_NAME}.service
-    systemctl daemon-reload
-
-    # ---------- 删除运行目录 ----------
+    # ==================================================
+    # 3. 删除运行目录
+    # ==================================================
     rm -rf "$work_dir"
 
-    # ---------- 删除 nginx 订阅配置 ----------
-    rm -f /etc/nginx/conf.d/singbox_tuic_sub.conf
+    # ==================================================
+    # 4. 删除订阅配置（使用统一 nginx_conf_link）
+    # ==================================================
+    rm -f "$sub_nginx_conf" "$nginx_conf_link"
 
-    # ---------- 是否卸载 nginx ----------
+    # ==================================================
+    # 5. 重载 nginx（如存在且正在运行）
+    # ==================================================
+    if command_exists nginx && service_active nginx; then
+        service_restart nginx
+    fi
+
+    green "TUIC v5 已卸载完成"
+    echo ""
+
+    # ==================================================
+    # 6. 是否卸载 Nginx（可选）
+    # ==================================================
     if command_exists nginx; then
-        echo ""
-        read -rp "是否卸载 Nginx？ [y/N]（默认 N）：" delng
+        read -rp "是否同时卸载 Nginx？ [y/N]：" delng
         delng=${delng:-n}
-
         if [[ "$delng" =~ ^[Yy]$ ]]; then
             if command_exists apt; then
                 apt remove -y nginx nginx-core
@@ -1328,8 +1513,10 @@ uninstall_tuic() {
         fi
     fi
 
-    green "TUIC 卸载完成"
+    pause_return
 }
+
+
 
 # ======================================================================
 # 自动模式安装入口（与 hy2_fixed.sh 对齐）
@@ -1381,53 +1568,58 @@ menu() {
 }
 
 
+
+
+
+
 get_singbox_status_colored() {
-    if ! systemctl list-unit-files --type=service 2>/dev/null | grep -q "^${SERVICE_NAME}\.service"; then
-        red "未安装"
-        return
+    # ---------- 是否已安装 ----------
+    if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+        systemctl list-unit-files --type=service 2>/dev/null \
+            | grep -q "^${SERVICE_NAME}\.service" \
+            || { red "未安装"; return; }
+    else
+        [[ -f "/etc/init.d/${SERVICE_NAME}" ]] || { red "未安装"; return; }
     fi
 
-    if systemctl is-active --quiet ${SERVICE_NAME}; then
+    # ---------- 运行状态 ----------
+    if service_active "${SERVICE_NAME}"; then
         green "运行中"
     else
         red "未运行"
     fi
 }
-
-
-
-get_nginx_status_colored() {
-    if ! command_exists nginx; then
-        red "未安装"
-        return
-    fi
-
-    if systemctl is-active nginx >/dev/null 2>&1; then
-        green "运行中"
-    else
-        red "未运行"
-    fi
-}
-
 
 get_subscribe_status_colored() {
-    if [[ -f "$sub_nginx_conf" ]]; then
-        green "已启用"
-    else
+    # 配置不存在 → 一定未启用
+    [[ ! -f "$sub_nginx_conf" ]] && { yellow "未启用"; return; }
+
+    # nginx 未安装
+    if ! command_exists nginx; then
         yellow "未启用"
+        return
     fi
+
+    # nginx 未运行
+    if ! service_active nginx; then
+        yellow "未启用"
+        return
+    fi
+
+    green "已启用"
 }
 
 print_subscribe_status() {
-    if [[ -f "$sub_nginx_conf" ]]; then
-        green "当前订阅状态：已启用"
-    else
+    if [[ ! -f "$sub_nginx_conf" ]] || ! command_exists nginx || ! service_active nginx; then
         yellow "当前订阅状态：未启用"
+    else
+        green "当前订阅状态：已启用"
     fi
 }
 
+
 is_subscribe_enabled() {
-    [[ -f "$sub_nginx_conf" ]]
+    [[ -f "$sub_nginx_conf" ]] && command_exists nginx && service_active nginx
 }
 
 
@@ -1466,6 +1658,8 @@ main_loop() {
 # 主入口（与 hy2_fixed.sh 完全一致）
 # ======================================================================
 main() {
+    detect_init
+    init_platform
     is_interactive_mode
     if [[ $? -eq 1 ]]; then
         quick_install
