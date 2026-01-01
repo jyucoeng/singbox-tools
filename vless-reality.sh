@@ -26,7 +26,7 @@ export LANG=en_US.UTF-8
 # ======================================================================
 
 AUTHOR="littleDoraemon"
-VERSION="v1.0.12(2026-01-01)"
+VERSION="v1.0.13(2026-01-01)"
 SINGBOX_VERSION="1.12.13"
 
 SERVICE_NAME="sing-box-vless-reality"
@@ -945,8 +945,8 @@ print_subscribe_guide() {
 
 check_nodes() {
   local mode="$1"   # silent / empty
-  yellow "下面是节点与订阅信息，请根据你使用的客户端选择对应订阅链接："
-  echo ""
+  # yellow "下面是节点与订阅信息，请根据你使用的客户端选择对应订阅链接："
+  # echo ""
 
 
   # =====================================================
