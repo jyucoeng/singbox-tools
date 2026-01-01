@@ -1679,6 +1679,16 @@ menu() {
 
 
 
+get_nginx_status_colored() {
+    if ! command_exists nginx; then
+        red "未安装"
+        return
+    fi
+
+    service_active nginx && green "运行中" || red "未运行"
+}
+
+
 
 
 get_singbox_status_colored() {
