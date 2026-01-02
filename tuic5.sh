@@ -24,7 +24,7 @@ export LANG=en_US.UTF-8
 # 基本信息
 # ======================================================================
 AUTHOR="littleDoraemon"
-VERSION="v1.0.4(2026-01-01)"
+VERSION="v1.0.5(2026-01-01)"
 SINGBOX_VERSION="1.12.13"
 
 # ======================================================================
@@ -678,13 +678,14 @@ install_singbox() {
             done
         fi
 
-        # -------- 订阅端口（NGINX_PORT）--------
-        if is_valid_port "$NGINX_PORT" && ! is_port_occupied "$NGINX_PORT"; then
-            :
-        else
-            yellow "NGINX_PORT 无效或被占用，切换为交互输入"
-            prompt_valid_port "NGINX_PORT" "请输入 TUIC 订阅端口（TCP）："
-        fi
+     # -------- 订阅端口（NGINX_PORT）--------
+    if is_valid_port "$NGINX_PORT" && ! is_port_occupied "$NGINX_PORT"; then
+        echo "$NGINX_PORT" > "$sub_port_file"
+
+    else
+        yellow "NGINX_PORT 无效或被占用，切换为交互输入"
+        prompt_valid_port "NGINX_PORT" "请输入 TUIC 订阅端口（TCP）："
+     fi
 
 
     # ===============================
@@ -989,6 +990,11 @@ make_service() {
   service_start  "${SERVICE_NAME}"
 }
 
+pause_return() {
+    echo ""
+    read -n 1 -s -r -p "按任意键返回菜单..."
+    echo ""
+}
 
 
 check_nodes() {
