@@ -3,7 +3,7 @@ export LANG=en_US.UTF-8
 
 
 AUTHOR="littleDoraemon"
-VERSION="1.0.2(2026-01-03)"
+VERSION="1.0.3(2026-01-03)"
 
 
 # ================== Argo 参数快照（彻底隔离 shell 环境） ==================
@@ -453,7 +453,6 @@ install_cloudflared(){
     chmod +x "$out"
 }
 
-
 create_argo_vm_service(){
     cat > /etc/systemd/system/argo-vm.service <<EOF
 [Unit]
@@ -464,13 +463,15 @@ Requires=sb.service
 [Service]
 Type=simple
 EnvironmentFile=$HOME/agsb/argo-vm.env
-ExecStart=$HOME/agsb/cloudflared tunnel \\
-  --no-autoupdate \\
-  --edge-ip-version auto \\
-  --url http://localhost:\${VM_PORT} \\
-  --pidfile $HOME/agsb/argo_vm.pid \\
-  --logfile $HOME/agsb/argo_vm.log \\
-  run --token \${VM_TOKEN}
+
+# 使用 sh -c，确保重定向与变量展开行为一致
+ExecStart=/bin/sh -c '$HOME/agsb/cloudflared tunnel \
+  --no-autoupdate \
+  --edge-ip-version auto \
+  --url http://localhost:\${VM_PORT} \
+  run --token \${VM_TOKEN} \
+  >/dev/null 2>&1'
+
 Restart=on-failure
 RestartSec=5s
 
@@ -478,6 +479,8 @@ RestartSec=5s
 WantedBy=multi-user.target
 EOF
 }
+
+
 
 
 create_argo_vm_openrc(){
@@ -494,7 +497,8 @@ start_pre() {
 
 command_args="tunnel --no-autoupdate --edge-ip-version auto \
   --url http://localhost:\${VM_PORT} \
-  run --token \${VM_TOKEN}"
+  run --token ${VM_TOKEN} \
+  >/dev/null 2>&1"
 
 depend() {
     need net
@@ -502,7 +506,6 @@ depend() {
 EOF
     chmod +x /etc/init.d/argo-vm
 }
-
 
 
 
@@ -520,13 +523,15 @@ Requires=sb.service
 [Service]
 Type=simple
 EnvironmentFile=$HOME/agsb/argo-tr.env
-ExecStart=$HOME/agsb/cloudflared tunnel \\
-  --no-autoupdate \\
-  --edge-ip-version auto \\
-  --url http://localhost:\${TR_PORT} \\
-  --pidfile $HOME/agsb/argo_tr.pid \\
-  --logfile $HOME/agsb/argo_tr.log \\
-  run --token \${TR_TOKEN}
+
+# 使用 sh -c，确保变量展开与输出重定向行为一致
+ExecStart=/bin/sh -c '$HOME/agsb/cloudflared tunnel \
+  --no-autoupdate \
+  --edge-ip-version auto \
+  --url http://localhost:\${TR_PORT} \
+  run --token \${TR_TOKEN} \
+  >/dev/null 2>&1'
+
 Restart=on-failure
 RestartSec=5s
 
@@ -534,6 +539,7 @@ RestartSec=5s
 WantedBy=multi-user.target
 EOF
 }
+
 
 
 create_argo_tr_openrc(){
@@ -556,7 +562,8 @@ start_pre() {
 
 command_args="tunnel --no-autoupdate --edge-ip-version auto \
   --url http://localhost:\${TR_PORT} \
-  run --token \${TR_TOKEN}"
+  run --token \${TR_TOKEN} \
+  >/dev/null 2>&1"
 
 depend() {
     need net
@@ -721,7 +728,7 @@ cip(){
         if [ -f "$HOME/agsb/port_hy2" ]; then
             port_hy2=$(cat "$HOME/agsb/port_hy2")
             yellow "【Hysteria2】"
-            content= "hysteria2://$uuid@$server_v4:$port_hy2?security=tls&alpn=h3&insecure=1&sni=$cdn_domain"
+            content="hysteria2://$uuid@$server_v4:$port_hy2?security=tls&alpn=h3&insecure=1&sni=$cdn_domain"
             green "$content"
             generate_qr "$content"
             echo
@@ -748,7 +755,7 @@ cip(){
         if [ -f "$HOME/agsb/port_hy2" ]; then
             port_hy2=$(cat "$HOME/agsb/port_hy2")
             yellow "【Hysteria2】"
-            content "hysteria2://$uuid@$server_v6:$port_hy2?security=tls&alpn=h3&insecure=1&sni=$cdn_domain"
+            content="hysteria2://$uuid@$server_v6:$port_hy2?security=tls&alpn=h3&insecure=1&sni=$cdn_domain"
             green "$content"
             generate_qr "$content"
             echo
@@ -760,7 +767,7 @@ cip(){
             public_key=$(awk 'NR==2{print $2}' "$HOME/agsb/reality.key")
             short_id=$(cat "$HOME/agsb/short_id")
             yellow "【VLESS Reality】"
-            content= "vless://$uuid@$server_v6:$port_vlr?encryption=none&security=reality&sni=$cdn_domain&fp=chrome&flow=xtls-rprx-vision&publicKey=$public_key&shortId=$short_id"
+            content="vless://$uuid@$server_v6:$port_vlr?encryption=none&security=reality&sni=$cdn_domain&fp=chrome&flow=xtls-rprx-vision&publicKey=$public_key&shortId=$short_id"
             green "$content"
             generate_qr "$content"
             echo
