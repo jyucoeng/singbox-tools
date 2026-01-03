@@ -14,6 +14,9 @@ else
     fi
 fi
 export uuid=${uuid:-''}; export port_vm_ws=${vmpt:-''}; export port_tr=${trpt:-''}; export port_hy2=${hypt:-''}; export port_vlr=${vlrt:-''}; export cdnym=${cdnym:-''}; export argo=${argo:-''}; export ARGO_DOMAIN=${agn:-''}; export ARGO_AUTH=${agk:-''}; export ippz=${ippz:-''}; export name=${name:-''}; export oap=${oap:-''}
+
+install_deps
+
 v46url="https://icanhazip.com"
 agsburl="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh"
 
@@ -36,7 +39,7 @@ gradient() {
     echo
 }
 # ================== 颜色函数 ==================
-VERSION="1.0.4(2026-01-03)"
+VERSION="1.0.5(2026-01-03)"
 showmode(){
     blue "===================================================="
     gradient "       agsb 一键脚本（vmess/trojan Argo选1 ·  4 协议）"
@@ -52,7 +55,106 @@ showmode(){
     yellow "卸载脚本命令：agsb del"
     echo "---------------------------------------------------------"
 }
-echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"; echo "agsb一键无交互脚本💣 (Sing-box内核版)"; echo "当前版本：V25.12.18"; echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+install_deps() {
+    echo "🔍 正在检测系统依赖…"
+
+    # ---------- 系统识别 ----------
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        OS_ID="$ID"
+        OS_LIKE="$ID_LIKE"
+    else
+        OS_ID="unknown"
+        OS_LIKE=""
+    fi
+
+    need_cmd() {
+        command -v "$1" >/dev/null 2>&1
+    }
+
+    # ---------- Alpine ----------
+    if [ "$OS_ID" = "alpine" ]; then
+        echo "📦 系统：Alpine Linux"
+
+        APK_PKGS=""
+
+        add_pkg() {
+            case " $APK_PKGS " in
+                *" $1 "*) ;;
+                *) APK_PKGS="$APK_PKGS $1" ;;
+            esac
+        }
+
+        need_cmd curl     || add_pkg curl
+        need_cmd wget     || add_pkg wget
+        need_cmd openssl  || add_pkg openssl
+        need_cmd shuf     || add_pkg coreutils
+        need_cmd base64   || add_pkg coreutils
+        need_cmd sed      || add_pkg sed
+        need_cmd awk      || add_pkg gawk
+
+        if [ -n "$APK_PKGS" ]; then
+            echo "⬇️  安装缺失依赖:$APK_PKGS"
+            apk add --no-cache $APK_PKGS || {
+                echo "❌ Alpine 依赖安装失败"
+                exit 1
+            }
+        else
+            echo "✅ Alpine 依赖已满足"
+        fi
+        return
+    fi
+
+    # ---------- Debian / Ubuntu ----------
+    if [ "$OS_ID" = "debian" ] || [ "$OS_ID" = "ubuntu" ] || echo "$OS_LIKE" | grep -q debian; then
+        echo "📦 系统：Debian / Ubuntu"
+
+        APT_PKGS=""
+
+        add_pkg() {
+            case " $APT_PKGS " in
+                *" $1 "*) ;;
+                *) APT_PKGS="$APT_PKGS $1" ;;
+            esac
+        }
+
+        need_cmd curl     || add_pkg curl
+        need_cmd wget     || add_pkg wget
+        need_cmd openssl  || add_pkg openssl
+        need_cmd shuf     || add_pkg coreutils
+        need_cmd base64   || add_pkg coreutils
+        need_cmd sed      || add_pkg sed
+        need_cmd awk      || add_pkg gawk
+        need_cmd crontab  || add_pkg cron
+
+        if [ -n "$APT_PKGS" ]; then
+            echo "⬇️  安装缺失依赖:$APT_PKGS"
+            apt-get update -y >/dev/null 2>&1
+            apt-get install -y $APT_PKGS || {
+                echo "❌ Debian / Ubuntu 依赖安装失败"
+                exit 1
+            }
+        else
+            echo "✅ Debian / Ubuntu 依赖已满足"
+        fi
+        return
+    fi
+
+    echo "⚠️ 未识别系统：$OS_ID"
+    echo "⚠️ 请自行确保以下命令存在："
+    echo "   curl wget openssl shuf base64 sed awk"
+}
+
+b64_noline() {
+    if base64 --help 2>&1 | grep -q '\-w'; then
+        base64 -w0
+    else
+        base64 | tr -d '\n'
+    fi
+}
+
+
+echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"; echo "agsb一键无交互脚本💣 (Sing-box内核版)";  echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 hostname=$(uname -a | awk '{print $2}'); op=$(cat /etc/redhat-release 2>/dev/null || cat /etc/os-release 2>/dev/null | grep -i pretty_name | cut -d \" -f2); case $(uname -m) in aarch64) cpu=arm64;; x86_64) cpu=amd64;; *) echo "目前脚本不支持$(uname -m)架构" && exit; esac; mkdir -p "$HOME/agsb"
 v4v6(){
     v4=$( (curl -s4m5 -k "$v46url" 2>/dev/null) || (wget -4 -qO- --tries=2 "$v46url" 2>/dev/null) )
@@ -266,8 +368,19 @@ cip(){
             vmatls_link1=""
         fi
         sbtk=$(cat "$HOME/agsb/sbargotoken.log" 2>/dev/null); [ -n "$sbtk" ] && nametn="Argo固定隧道token:\n$sbtk"
-        argoshow="Argo隧道信息 (使用 $vlvm-ws 端口: $(cat $HOME/agsb/argoport.log 2>/dev/null))\n---------------------------------------------------------\nArgo域名: ${argodomain}\n\n${nametn}\n\n💣 443端口Argo-TLS节点 (优选IP可替换):\n${vmatls_link1}${tratls_link1}"
-        yellow "---------------------------------------------------------"; echo -e "$argoshow"; yellow "---------------------------------------------------------"
+        yellow "---------------------------------------------------------"
+        yellow "Argo隧道信息 (使用 ${vlvm}-ws 端口: $(cat $HOME/agsb/argoport.log 2>/dev/null))"
+        yellow "---------------------------------------------------------"
+
+        yellow "Argo域名: ${argodomain}"
+        [ -n "${nametn}" ] && echo -e "$(green "${nametn}")"
+
+        green ""
+        purple "💣 443端口 Argo-TLS 节点 (优选IP可替换):"
+        green "${vmatls_link1}${tratls_link1}"
+
+        yellow "---------------------------------------------------------"
+
     fi
     echo; echo "聚合节点: cat $HOME/agsb/jh.txt"; echo "========================================================="; echo "相关快捷方式如下："; showmode
 }
