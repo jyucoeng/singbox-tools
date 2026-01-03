@@ -26,7 +26,7 @@
 | 变量 | 说明 |
 |------|------|
 | uuid | 四协议共用 UUID（不传自动生成） |
-| cdn | CDN / SNI 域名（HY2、VLESS Reality 建议设置，如果不设置将会默认使用 www.bing.com） |
+| cdn | CDN / SNI 域名（HY2、VLESS Reality 建议设置，如果不设置将会默认使用 www.bing.com ） |
 
 ## 使用示例
 
