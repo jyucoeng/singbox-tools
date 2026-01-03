@@ -3,7 +3,7 @@ export LANG=en_US.UTF-8
 
 
 AUTHOR="littleDoraemon"
-VERSION="1.0.3(2026-01-03)"
+VERSION="1.0.4(2026-01-03)"
 
 
 # ================== Argo 参数快照（彻底隔离 shell 环境） ==================
