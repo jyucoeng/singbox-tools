@@ -5,6 +5,20 @@ export LANG=en_US.UTF-8
 AUTHOR="littleDoraemon"
 VERSION="1.0.1(2026-01-03)"
 
+
+# ================== Argo 参数快照（彻底隔离 shell 环境） ==================
+ARG_AG_VM_FLAG="${argo_vm_flag-}"
+ARG_AG_VM_DOMAIN="${ag_vm_domain-}"
+ARG_AG_VM_TOKEN="${ag_vm_token-}"
+
+ARG_AG_TR_FLAG="${argo_tr_flag-}"
+ARG_AG_TR_DOMAIN="${ag_tr_domain-}"
+ARG_AGK_TR_TOKEN="${ag_tr_token-}"
+
+# 立刻切断 shell 环境污染
+unset argo_vm_flag ag_vm_domain ag_vm_token
+unset argo_tr_flag ag_tr_domain ag_tr_token
+
 # ================== 颜色函数 ==================
 white(){ echo -e "\033[1;37m$1\033[0m"; }
 red(){ echo -e "\e[1;91m$1\033[0m"; }
@@ -31,14 +45,6 @@ gradient() {
 [ -z "${vlrt+x}" ] || vlr=yes
 
 
-# ================== 双 Argo 变量 ==================
-export argo_vm=${argo_vm:-''}
-export argo_tr=${argo_tr:-''}
-export agn_vm=${agn_vm:-''}
-export agk_vm=${agk_vm:-''}
-export agn_tr=${agn_tr:-''}
-export agk_tr=${agk_tr:-''}
-
 # Argo / CDN 入口域名（仅用于 add，占位）
 CDN_DOMAIN_DEFAULT="www.bing.com"
 
@@ -59,7 +65,6 @@ agsburl="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/mai
 mkdir -p "$HOME/agsb"
 
 showmode(){
-  
 
     blue "===================================================="
     gradient "       agsb 一键脚本（双 Argo ·  4 协议）"
@@ -73,7 +78,7 @@ showmode(){
     yellow "agsb ups     更新 sing-box"
     yellow "agsb rep     重置(会先卸载然后再安装)"
     yellow "agsb del     卸载"
-    yellow "agsb help     查看功能菜单"
+    yellow "agsb help    查看功能菜单"
     yellow "------------------------------------------------"
 }
 
@@ -82,10 +87,7 @@ check_root(){
         red "依赖安装需要 root 权限，请使用 root 运行脚本"
         exit 1
     fi
-
 }
-
-
 
 
 get_cdn_domain() {
@@ -570,8 +572,9 @@ EOF
 # ================== 启动 VMess Argo ==================
 
 start_argo_vm(){
-    [ -z "$argo_vm" ] && return
-    [ -z "$agk_vm" ] && return
+    [ -z "$ARG_AG_VM_FLAG" ] && return
+    [ -z "$ARG_AG_VM_TOKEN" ] && return
+
     [ -z "$port_vm_ws" ] && return
 
     install_cloudflared
@@ -580,7 +583,7 @@ start_argo_vm(){
    if command -v systemctl >/dev/null 2>&1 && pidof systemd >/dev/null 2>&1; then
         create_argo_vm_service
         echo "VM_PORT=$port_vm_ws" > "$HOME/agsb/argo-vm.env"
-        echo "VM_TOKEN=$agk_vm" >> "$HOME/agsb/argo-vm.env"
+        echo "VM_TOKEN=$ARG_AG_VM_TOKEN" >> "$HOME/agsb/argo-vm.env"
         systemctl daemon-reload
         systemctl enable argo-vm >/dev/null 2>&1
         systemctl restart argo-vm
@@ -591,7 +594,7 @@ start_argo_vm(){
     if command -v rc-service >/dev/null 2>&1; then
         create_argo_vm_openrc
         echo "VM_PORT=$port_vm_ws" > "$HOME/agsb/argo-vm.env"
-        echo "VM_TOKEN=$agk_vm" >> "$HOME/agsb/argo-vm.env"
+        echo "VM_TOKEN=$ARG_AG_VM_TOKEN" >> "$HOME/agsb/argo-vm.env"
         rc-update add argo-vm default >/dev/null 2>&1
         rc-service argo-vm restart
         return
@@ -603,8 +606,8 @@ start_argo_vm(){
 
 # ================== 启动 Trojan Argo（完全正确版） ==================
 start_argo_tr(){
-    [ -z "$argo_tr" ] && return
-    [ -z "$agk_tr" ] && return
+    [ -z "$ARG_AG_TR_FLAG" ] && return
+    [ -z "$ARG_AGK_TR_TOKEN" ] && return
     [ -z "$port_tr" ] && return
 
     install_cloudflared
@@ -613,7 +616,7 @@ start_argo_tr(){
     if command -v systemctl >/dev/null 2>&1 && pidof systemd >/dev/null 2>&1; then
         create_argo_tr_service
         echo "TR_PORT=$port_tr" > "$HOME/agsb/argo-tr.env"
-        echo "TR_TOKEN=$agk_tr" >> "$HOME/agsb/argo-tr.env"
+        echo "TR_TOKEN=$ARG_AGK_TR_TOKEN" >> "$HOME/agsb/argo-tr.env"
         systemctl daemon-reload
         systemctl enable argo-tr >/dev/null 2>&1
         systemctl restart argo-tr
@@ -624,7 +627,7 @@ start_argo_tr(){
     if command -v rc-service >/dev/null 2>&1; then
         create_argo_tr_openrc
         echo "TR_PORT=$port_tr" > "$HOME/agsb/argo-tr.env"
-        echo "TR_TOKEN=$agk_tr" >> "$HOME/agsb/argo-tr.env"
+        echo "TR_TOKEN=$ARG_AGK_TR_TOKEN" >> "$HOME/agsb/argo-tr.env"
         rc-update add argo-tr default >/dev/null 2>&1
         rc-service argo-tr restart
         return
@@ -651,15 +654,34 @@ agsbstatus(){
 
     if pidof systemd >/dev/null 2>&1; then
         systemctl is-active sb >/dev/null && echo "Sing-box：运行中" || echo "Sing-box：未运行"
-        [ -n "$argo_vm" ] && (systemctl is-active argo-vm >/dev/null && echo "VMess Argo：运行中" || echo "VMess Argo：未运行")
-        [ -n "$argo_tr" ] && (systemctl is-active argo-tr >/dev/null && echo "Trojan Argo：运行中" || echo "Trojan Argo：未运行")
+        [ -n "$ARG_AG_VM_FLAG" ] && (systemctl is-active argo-vm >/dev/null && echo "VMess Argo：运行中" || echo "VMess Argo：未运行")
+        [ -n "$ARG_AG_TR_FLAG" ] && (systemctl is-active argo-tr >/dev/null && echo "Trojan Argo：运行中" || echo "Trojan Argo：未运行")
     elif command -v rc-service >/dev/null 2>&1; then
         rc-service sing-box status >/dev/null 2>&1 && echo "Sing-box：运行中" || echo "Sing-box：未运行"
-        [ -n "$argo_vm" ] && (rc-service argo-vm status >/dev/null 2>&1 && echo "VMess Argo：运行中" || echo "VMess Argo：未运行")
-        [ -n "$argo_tr" ] && (rc-service argo-tr status >/dev/null 2>&1 && echo "Trojan Argo：运行中" || echo "Trojan Argo：未运行")
+        [ -n "$ARG_AG_VM_FLAG" ] && (rc-service argo-vm status >/dev/null 2>&1 && echo "VMess Argo：运行中" || echo "VMess Argo：未运行")
+        [ -n "$ARG_AG_TR_FLAG" ] && (rc-service argo-tr status >/dev/null 2>&1 && echo "Trojan Argo：运行中" || echo "Trojan Argo：未运行")
     fi
 }
 
+
+urlencode(){
+    printf "%s" "$1" | jq -sRr @uri
+}
+
+urldecode(){
+    printf '%b' "${1//%/\\x}"
+}
+
+# ======================= QR（在线） =======================
+generate_qr() {
+    local link="$1"
+    [[ -z "$link" ]] && return
+    echo ""
+    yellow "二维码链接："
+    echo "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${link}"
+    echo ""
+    echo ""
+}
 
 
 # ================== IP & 节点输出 ==================
@@ -699,7 +721,9 @@ cip(){
         if [ -f "$HOME/agsb/port_hy2" ]; then
             port_hy2=$(cat "$HOME/agsb/port_hy2")
             yellow "【Hysteria2】"
-            green "hysteria2://$uuid@$server_v4:$port_hy2?security=tls&alpn=h3&insecure=1&sni=$cdn_domain"
+            content= "hysteria2://$uuid@$server_v4:$port_hy2?security=tls&alpn=h3&insecure=1&sni=$cdn_domain"
+            green "$content"
+            generate_qr "$content"
             echo
         fi
 
@@ -709,7 +733,9 @@ cip(){
             public_key=$(awk 'NR==2{print $2}' "$HOME/agsb/reality.key")
             short_id=$(cat "$HOME/agsb/short_id")
             yellow "【VLESS Reality】"
-            green "vless://$uuid@$server_v4:$port_vlr?encryption=none&security=reality&sni=$cdn_domain&fp=chrome&flow=xtls-rprx-vision&publicKey=$public_key&shortId=$short_id"
+            content="vless://$uuid@$server_v4:$port_vlr?encryption=none&security=reality&sni=$cdn_domain&fp=chrome&flow=xtls-rprx-vision&publicKey=$public_key&shortId=$short_id"
+            green "$content"
+            generate_qr "$content"
             echo
         fi
     fi
@@ -722,7 +748,9 @@ cip(){
         if [ -f "$HOME/agsb/port_hy2" ]; then
             port_hy2=$(cat "$HOME/agsb/port_hy2")
             yellow "【Hysteria2】"
-            green "hysteria2://$uuid@$server_v6:$port_hy2?security=tls&alpn=h3&insecure=1&sni=$cdn_domain"
+            content "hysteria2://$uuid@$server_v6:$port_hy2?security=tls&alpn=h3&insecure=1&sni=$cdn_domain"
+            green "$content"
+            generate_qr "$content"
             echo
         fi
 
@@ -732,24 +760,30 @@ cip(){
             public_key=$(awk 'NR==2{print $2}' "$HOME/agsb/reality.key")
             short_id=$(cat "$HOME/agsb/short_id")
             yellow "【VLESS Reality】"
-            green "vless://$uuid@$server_v6:$port_vlr?encryption=none&security=reality&sni=$cdn_domain&fp=chrome&flow=xtls-rprx-vision&publicKey=$public_key&shortId=$short_id"
+            content= "vless://$uuid@$server_v6:$port_vlr?encryption=none&security=reality&sni=$cdn_domain&fp=chrome&flow=xtls-rprx-vision&publicKey=$public_key&shortId=$short_id"
+            green "$content"
+            generate_qr "$content"
             echo
         fi
     fi
 
     # ================= Argo（不分 IP） =================
-    if [ -n "$argo_vm" ] && [ -n "$agn_vm" ]; then
+    if [ -n "$ARG_AG_VM_FLAG" ] && [ -n "$ARG_AG_VM_DOMAIN" ]; then
         purple "----------- Argo -----------"
         vmess_json=$(printf '{"v":"2","ps":"vmess-argo","add":"%s","port":"443","id":"%s","aid":"0","net":"ws","type":"none","host":"%s","path":"/%s-vm","tls":"tls","sni":"%s"}' \
-            "$cdn_domain" "$uuid" "$agn_vm" "$uuid" "$agn_vm")
+            "$cdn_domain" "$uuid" "$ARG_AG_VM_DOMAIN" "$uuid" "$ARG_AG_VM_DOMAIN")
         yellow "【VMess Argo】"
-        green "vmess://$(echo "$vmess_json" | base64 -w0)"
+        content= "vmess://$(echo "$vmess_json" | base64 -w0)"
+        green "$content"
+        generate_qr "$content"
         echo
     fi
 
-    if [ -n "$argo_tr" ] && [ -n "$agn_tr" ]; then
+    if [ -n "$ARG_AG_TR_FLAG" ] && [ -n "$ARG_AG_TR_DOMAIN" ]; then
         yellow "【Trojan Argo】"
-        green "trojan://$uuid@$cdn_domain:443?security=tls&type=ws&host=$agn_tr&path=/$uuid-tr&sni=$agn_tr&fp=chrome"
+        content="trojan://$uuid@$cdn_domain:443?security=tls&type=ws&host=$ARG_AG_TR_DOMAIN&path=/$uuid-tr&sni=$ARG_AG_TR_DOMAIN&fp=chrome"
+        green "$content"
+        generate_qr "$content"
         echo
     fi
 
@@ -851,6 +885,7 @@ ups(){
     upsingbox
     sbrestart
 }
+
 
 
 

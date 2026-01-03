@@ -74,12 +74,12 @@ Argo是入口方式，不是协议，最多支持2个（VMess/Trojan各1个）
 
 | 变量 | 说明 |
 |------|------|
-| argo_vm | 启用 VMess Argo |
-| agn_vm | VMess Argo 绑定域名 |
-| agk_vm | VMess Argo Token |
-| argo_tr | 启用 Trojan Argo |
-| agn_tr | Trojan Argo 绑定域名 |
-| agk_tr | Trojan Argo Token |
+| argo_vm_flag | 启用 VMess Argo |
+| ag_vm_domain | VMess Argo 绑定域名 |
+| ag_vm_token | VMess Argo Token |
+| argo_tr_flag | 启用 Trojan Argo |
+| ag_tr_domain | Trojan Argo 绑定域名 |
+| ag_tr_token | Trojan Argo Token |
 
 **双Argo示例**
 ```bash
@@ -87,12 +87,12 @@ vmpt=2080 \
 trpt=2081 \
 uuid="你的UUID" \
 cdn="www.cloudflare.com" \
-argo_vm=1 \
-agn_vm="vm.example.com" \
-agk_vm="VM_ARGO_TOKEN" \
-argo_tr=1 \
-agn_tr="tr.example.com" \
-agk_tr="TR_ARGO_TOKEN" \
+argo_vm_flag=1 \
+ag_vm_domain="vm.example.com" \
+ag_vm_token="VM_ARGO_TOKEN" \
+argo_tr_flag=1 \
+ag_tr_domain="tr.example.com" \
+ag_tr_token="TR_ARGO_TOKEN" \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/agsb.sh)
 ```
 
