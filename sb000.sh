@@ -241,8 +241,14 @@ installsb(){
 EOF
     insuuid
     write2AgsbFolders
+    # Generate a new private key and certificate for hy2
     openssl ecparam -genkey -name prime256v1 -out "$HOME/agsb/private.key" >/dev/null 2>&1
     openssl req -new -x509 -days 36500 -key "$HOME/agsb/private.key" -out "$HOME/agsb/cert.pem" -subj "/CN=${hy_sni}" >/dev/null 2>&1
+
+    # Generate a new private key and certificate for tuic5
+    openssl ecparam -genkey -name prime256v1 -out "$HOME/agsb/tuic5_private.key" >/dev/null 2>&1
+    openssl req -new -x509 -key "$HOME/agsb/tuic5_private.key" -out "$HOME/agsb/tuic5_cert.pem" -days 3650 -subj "/CN=${tu_sni}" >/dev/null 2>&1
+
 
     #todo 添加tuic协议
     if [ -n "$tup" ]; then
@@ -252,7 +258,7 @@ EOF
         yellow "Tuic5端口：$port_tu"
 
          cat >> "$HOME/agsb/sb.json" <<EOF
-{"type": "tuic5", "tag": "tuic5-sb", "listen": "::", "listen_port": ${port_tu}, "users": [ { "password": "${uuid}" } ], "tls": { "enabled": true, "certificate_path": "$HOME/agsb/cert.pem", "key_path": "$HOME/agsb/private.key" }},
+{"type": "tuic5", "tag": "tuic5-sb", "listen": "::", "listen_port": ${port_tu}, "users": [ { "uuid": "${uuid}" } ],"congestion_control": "bbr", "tls": { "enabled": true, "certificate_path": "$HOME/agsb/tuic5_cert.pem", "key_path": "$HOME/agsb/tuic5_private.key","server_name": "${tu_sni}" }},
 EOF
     fi
 
@@ -290,7 +296,7 @@ EOF
 {"type": "vmess", "tag": "vmess-sb", "listen": "::", "listen_port": ${port_vm_ws},"users": [ { "uuid": "${uuid}", "alterId": 0 } ],"transport": { "type": "ws", "path": "/${uuid}-vm" }},
 EOF
     fi
-
+    # 添加vless-reality-vision协议
     if [ -n "$vlr" ]; then
         if [ -z "$port_vlr" ] && [ ! -e "$HOME/agsb/port_vlr" ];  then 
             port_vlr=$(shuf -i 10000-65535 -n 1); 
@@ -487,7 +493,8 @@ cip(){
      # TUIC5 protocol (tuic5 or tupt)
     if grep -q "tuic5-sb" "$HOME/agsb/sb.json"; then
         port_tu=$(cat "$HOME/agsb/port_tu")
-        tuic5_link="tuic5://${uuid}@${server_ip}:${port_tu}?security=tls&sni=${tu_sni}#${sxname}tuic5-$hostname"
+        tu_sni=$(cat "$HOME/agsb/tu_sni"); 
+        tuic5_link="tuic5://${uuid}@${server_ip}:${port_tu}?congestion_control=bbr&security=tls&sni=${tu_sni}&version=5#${sxname}tuic5-$hostname"
         yellow "💣【 TUIC5 】(直连协议)"
         green "$tuic5_link" | tee -a "$HOME/agsb/jh.txt"
         echo;
