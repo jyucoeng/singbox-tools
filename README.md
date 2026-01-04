@@ -15,7 +15,8 @@
 - 或者这个argo参数留空，表示不启用argo
 
 > ⚠️ Argo 只能用于 VMess / Trojan
-> ❌ 对 hypt / vlrt 无效
+
+> ❌ 对 hypt / vlrt /tupt无效
 
 ## ③ agn / agk（Argo 固定隧道）
 
