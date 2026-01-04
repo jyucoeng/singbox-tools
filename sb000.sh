@@ -251,9 +251,9 @@ EOF
     openssl ecparam -genkey -name prime256v1 -out "$HOME/agsb/private.key" >/dev/null 2>&1
     openssl req -new -x509 -days 36500 -key "$HOME/agsb/private.key" -out "$HOME/agsb/cert.pem" -subj "/CN=${hy_sni}" >/dev/null 2>&1
 
-    # Generate a new private key and certificate for tuic5
-    openssl ecparam -genkey -name prime256v1 -out "$HOME/agsb/tuic5_private.key" >/dev/null 2>&1
-    openssl req -new -x509 -key "$HOME/agsb/tuic5_private.key" -out "$HOME/agsb/tuic5_cert.pem" -days 3650 -subj "/CN=${tu_sni}" >/dev/null 2>&1
+    # Generate a new private key and certificate for tuic
+    openssl ecparam -genkey -name prime256v1 -out "$HOME/agsb/tuic_private.key" >/dev/null 2>&1
+    openssl req -new -x509 -key "$HOME/agsb/tuic_private.key" -out "$HOME/agsb/tuic_cert.pem" -days 3650 -subj "/CN=${tu_sni}" >/dev/null 2>&1
 
 
     #todo 添加tuic协议
@@ -263,10 +263,10 @@ EOF
         port_tu=$(cat "$HOME/agsb/port_tu"); 
         password=$uuid
 
-        yellow "Tuic5端口：$port_tu"
+        yellow "Tuic端口：$port_tu"
 
          cat >> "$HOME/agsb/sb.json" <<EOF
-{"type": "tuic", "tag": "tuic-sb", "listen": "::", "listen_port": ${port_tu}, "users": [ {  "uuid": "$uuid", "password": "$password" } ],"congestion_control": "bbr", "tls": { "enabled": true,"alpn": ["h3"], "certificate_path": "$HOME/agsb/tuic5_cert.pem", "key_path": "$HOME/agsb/tuic5_private.key","server_name": "${tu_sni}" }},
+{"type": "tuic", "tag": "tuic-sb", "listen": "::", "listen_port": ${port_tu}, "users": [ {  "uuid": "$uuid", "password": "$password" } ],"congestion_control": "bbr", "tls": { "enabled": true,"alpn": ["h3"], "certificate_path": "$HOME/agsb/tuic_cert.pem", "key_path": "$HOME/agsb/tuic_private.key","server_name": "${tu_sni}" }},
 EOF
     fi
 
@@ -516,15 +516,15 @@ cip(){
     fi
     
     
-     # TUIC5 protocol (tuic5 or tupt)
+     # TUIC protocol (tuic or tupt)
     if grep -q "tuic-sb" "$HOME/agsb/sb.json"; then
         port_tu=$(cat "$HOME/agsb/port_tu")
         tu_sni=$(cat "$HOME/agsb/tu_sni"); 
         password=$uuid
 
-        tuic5_link="tuic5://${uuid}:${password}@${server_ip}:${port_tu}?sni=${tu_sni}&congestion_control=bbr&security=tls&udp_relay_mode=native&alpn=h3&allow_insecure=1#${sxname}tuic5-$hostname"
-        yellow "💣【 TUIC5 】(直连协议)"
-        green "$tuic5_link" | tee -a "$HOME/agsb/jh.txt"
+        tuic_link="tuic://${uuid}:${password}@${server_ip}:${port_tu}?sni=${tu_sni}&congestion_control=bbr&security=tls&udp_relay_mode=native&alpn=h3&allow_insecure=1#${sxname}tuic-$hostname"
+        yellow "💣【 TUIC 】(直连协议)"
+        green "$tuic_link" | tee -a "$HOME/agsb/jh.txt"
         echo;
     fi
     # VLESS-Reality-Vision protocol (vless-reality-vision)
