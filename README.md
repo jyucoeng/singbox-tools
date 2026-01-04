@@ -1,4 +1,4 @@
-# singbox 一键安装脚本
+# singbox 一键安装脚本（4协议，vmess argo/trojan argo +hy2+vless-Reality+tuic，这些协议可自由组合）
 
 # 环境变量说明
 
@@ -59,7 +59,7 @@ trojan://${uuid}@${cf_host}:cf_port?...
 
 # 常见组合调用方式
 
-## 组合1️⃣ 仅 1 直连协议（不走 Argo,hypt与vlrt参数选一个来写）
+## 组合1️⃣ 仅 1 直连协议（不走 Argo,hypt与vlrt、tupt这几个参数选一个来写）
 
 ### 只要hy2协议
 
@@ -72,6 +72,13 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ```bash
 vlrt=2083 \
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)
+```
+
+### 只要tuic协议
+
+```bash
+tupt=2082 \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)
 ```
 
@@ -104,7 +111,7 @@ argo=trpt \
 agn="test-trojan.xxxx.xyz" \
 agk="eyJhIjoiYTg2NTc2M21111wdsdwdwdwWRiZmMxYzJkYzRlYTYiLCJ0IjoiZDgyYzk3MmItZGNlNy00ODJkLWI2NjgtYmJlNDgyZDMxNTNhIiwicyI6IlkyRmhNbVkxTURVdFlUZ3lPQzAwTVRBMExUbGhNakV0TUdNd1pXVmlORFF4WWpobCJ9" \
 name="小叮当-韩国春川"  \
-bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) 
 ```
 
 ## 当使用trojan的argo时
@@ -116,7 +123,7 @@ argo=trpt \
 agn="test-vmess.xxxx.xyz" \
 agk="eyJhIjoiYTg2NTc2M20000wdsdwdwdwWRiZmMxYzJkYzRlYTYiLCJ0IjoiZDgyYzk3MmItZGNlNy00ODJkLWI2NjgtYmJlNDgyZDMxNTNhIiwicyI6IlkyRmhNbVkxTURVdFlUZ3lPQzAwTVRBMExUbGhNakV0TUdNd1pXVmlORFF4WWpobCJ9" \
 name="小叮当-韩国春川"  \
-bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) 
 ```
 
 ## 4️⃣ VMess + Hysteria2+ vless
@@ -130,17 +137,18 @@ argo=vmpt \
 agn="test-vmess.xx66.nyc.mn" \
 agk="eyJhIjoiYTg2NTc2M2YxOGEwOTZhOWI3MWRiZmMxYzJkYzRlYTYiLCJ0IjoiOTQzNzM0ZGUtOGQ5Ni00MmNkLThhMTQtNzE0ODJjMTg2ODlmIiwicyI6IlltRXhNakk1WXpVdE56TXhaQzAwWVRrd0xUa3dNR1l0T0dNek9HWXpZekk1TkRGbCJ9" \
 name="小叮当-韩国春川"  \
-bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) 
 ```
 
 
-## 5 测试用例
+## 5 测试用例（4协议，hy2+vless+tuic+Argo trojan）
 ```bash
 uuid=0631a7f3-09f8-4144-acf2-a4f5bd9ed281 \
 ippz=4 \
 trpt=31003 \
 hypt=31001 \
 vlrt=31002 \
+tupt=31005 \
 argo=trpt \
 agn="test-tr.xxxx.nyc.mn" \
 agk="eyJhIjoiYTg2NTc2M2YxOGEwOTZhOWI3MWRiZmMxYzJkYzRlYTYiLCJ0IjoiZDgyYzk3MmItZGNlNy00ODJkLWI2NjgtYmJlNDgyZDMxNTNhIiwicyI6IlkyRmhNbVkxTURVdFlUZ3lPQzAwTVRBMExUbGhNakV0TUdNd1pXVmlO4000WWpobCJ9" \
@@ -148,11 +156,12 @@ name="小叮当-韩国春川"  \
 cdn_host="www.visa.com" \
 hy_sni="time.js" \
 vl_sni="www.yahoo.com" \
-bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
+tu_sni="time.js" \
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)  rep
 ```
 
 ## 解释一下上面那一大堆参数：
- 0、 bash后面跟了一个参数 rep，代表覆盖式安装，你可以用这个改成其他功能，比如del 代表 卸载, list 代表 查看节点，具体有哪些值你可以跑一次安装脚本你就知道怎么用了。
+ 0、 如果bash后面跟了一个参数 rep（如果没跟这个参数默认为安装），代表覆盖式安装，你可以用这个改成其他功能，比如del 代表 卸载, list 代表 查看节点，具体有哪些值你可以跑一次安装脚本你就知道怎么用了。
 
  1、uuid 不传的时候会自动生成
 
@@ -163,14 +172,16 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
    trpt=31003 \
    hypt=31001 \
    vlrt=31002 \
+   tupt=31005 \
    ```
-     这三个分别为trojan、hy2、vless的端口
+     这4个分别为trojan、hy2、vless、tuic的端口
 
 4、argo 代表使用的是哪一个协议作为argo，只能是一下三种值
 
     - 当argo=vmpt 表示启用vmess的argo转发
     - 当argo=trpt 表示启用trojan的argo转发
     - 或者这个argo参数留空，表示不启用argo
+
 5、agn 和 agk 分别为隧道域名和隧道 token
 
 6、 name 节点名称前缀
@@ -181,16 +192,31 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 9、vl_sni 指的是用vless协议的sni(伪装域名)，缺省值为www.ua.edu，你可以自己传你要的值，比如 www.yahoo.com。不传就会使用缺省值做兜底。
 
+10、vl_sni 指的是用vless协议的sni(伪装域名)，缺省值为www.ua.edu，你可以自己传你要的值，比如 www.yahoo.com。不传就会使用缺省值做兜底。
+
+11、argo的默认端口443（这个暂时不让修改，所以你换 cdn_host参数的值的时候注意一下是443端口才能支持）
+
+12、所有的协议都出输出到聚合节点文件中: cat /root/agsb/jh.txt
 
 ## 以此类推，最后给一下协议组合吧
 
-| 你设置了什么             | 实际生成的节点        |
-| ------------------ | -------------- |
-| hypt               | 1（hy2）         |
-| vlrt               | 1（vless）       |
-| vmpt               | 0（无直连）         |
-| trpt               | 0（无直连）         |
-| vmpt + argo=vmpt   | 1（Argo-vmess）  |
-| trpt + argo=trpt   | 1（Argo-trojan） |
-| hypt + vlrt        | 2（直连）          |
-| hypt + vlrt + argo | **3（最大）**      |
+| 你设置了什么                   | 实际生成的节点                                          |
+| ---------------------------- | ----------------------------------------------------- |
+| hypt                         | 1（hy2）                                              |
+| vlrt                         | 1（vless）                                            |
+| tupt                         | 1（tuic）                                             |
+| vmpt                         | 0（无直连）                                           |
+| trpt                         | 0（无直连）                                           |
+| vmpt + argo=vmpt             | 1（Argo-vmess）                                       |
+| trpt + argo=trpt             | 1（Argo-trojan）                                      |
+| hypt + vlrt                  | 2（hy2和vless直连）                                   |
+| hypt + vlrt + tupt           | 3（hy2、vless、tuic直连）                             |
+| hypt + vlrt + argo           | **3（hy2、vless直连+Argo-vmess或者Argo-trojan）**         |
+| hypt + vlrt + tupt + argo    | **4（hy2、vless、tuic直连+Argo-vmess或者Argo-trojan）**   |
+
+
+## 感谢
+
+感谢以下开发者的贡献：
+
+- [77160860大佬](https://github.com/77160860/proxy)
