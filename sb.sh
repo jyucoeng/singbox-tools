@@ -104,53 +104,7 @@ install_deps() {
     echo "⚠️ 请自行确保以下命令存在："
     echo "   curl wget openssl shuf base64 sed awk"
 }
-export uuid=${uuid:-''}; 
-export port_vm_ws=${vmpt:-''}; 
-export port_tr=${trpt:-''}; 
-export port_hy2=${hypt:-''}; 
-export port_vlr=${vlrt:-''}; 
-
-export argo=${argo:-''}; 
-export ARGO_DOMAIN=${agn:-''}; 
-export ARGO_AUTH=${agk:-''}; 
-export ippz=${ippz:-''}; 
-export name=${name:-''}; 
-export oap=${oap:-''}
-
-
-
-
-# ---------- CF_HOST 处理 ----------
-# 默认值 cdn.7zz.cn  到时候可以改成www.visa.com
-DEFAULT_CF_HOST="cdn.7zz.cn"
-#
-DEFAULT_CF_PORT=443
-
-# 如果当前没传 cf_host，但本地有持久化文件，则读取
-if [ -z "${cf_host:-}" ] && [ -f "$HOME/agsb/cf_host" ]; then
-  cf_host=$(cat "$HOME/agsb/cf_host")
-fi
-
-# 如果当前没传 cf_port，但本地有持久化文件，则读取
-if [ -z "${cf_port:-}" ] && [ -f "$HOME/agsb/cf_port" ]; then
-  cf_port=$(cat "$HOME/agsb/cf_port")
-fi
-
-# 如果当前没传 CF_PORT，则使用默认端口
-export cf_port=${cf_port:-$DEFAULT_CF_PORT}
-
-# 最终兜底
-export cf_host=${cf_host:-$DEFAULT_CF_HOST}
-
-
-
-
-
-
-
-
-
-
+export uuid=${uuid:-''}; export port_vm_ws=${vmpt:-''}; export port_tr=${trpt:-''}; export port_hy2=${hypt:-''}; export port_vlr=${vlrt:-''}; export cdnym=${cdnym:-''}; export argo=${argo:-''}; export ARGO_DOMAIN=${agn:-''}; export ARGO_AUTH=${agk:-''}; export ippz=${ippz:-''}; export name=${name:-''}; export oap=${oap:-''}
 
 install_deps
 
@@ -176,7 +130,7 @@ gradient() {
     echo
 }
 # ================== 颜色函数 ==================
-VERSION="1.0.2(2026-01-03)"
+VERSION="1.0.1(2026-01-03)"
 AUTHOR="littleDoraemon"
 
 showmode(){
@@ -274,12 +228,10 @@ EOF
         port_vlr=$(cat "$HOME/agsb/port_vlr"); echo "VLESS-Reality-Vision端口：$port_vlr"
         if [ ! -f "$HOME/agsb/reality.key" ]; then "$HOME/agsb/sing-box" generate reality-keypair > "$HOME/agsb/reality.key"; fi
         private_key=$(sed -n '1p' "$HOME/agsb/reality.key" | awk '{print $2}')
-        [ -f "$HOME/agsb/short_id" ] && short_id=$(cat "$HOME/agsb/short_id") || { short_id=$(openssl rand -hex 4); echo "$short_id" > "$HOME/agsb/short_id";  yellow "short_id值=${short_id}" }
+        [ -f "$HOME/agsb/short_id" ] && short_id=$(cat "$HOME/agsb/short_id") || { short_id=$(openssl rand -hex 4); echo "$short_id" > "$HOME/agsb/short_id"; }
 
-
-        # server= www.ua.edu
         cat >> "$HOME/agsb/sb.json" <<EOF
-{"type": "vless", "tag": "vless-reality-vision-sb", "listen": "::", "listen_port": ${port_vlr},"sniff": true,"users": [{"uuid": "${uuid}","flow": "xtls-rprx-vision"}],"tls": {"enabled": true,"server_name": "${cf_host}","reality": {"enabled": true,"handshake": {"server": "${cf_host}","server_port": ${cf_port}},"private_key": "${private_key}","short_id": ["${short_id}"]}}},
+{"type": "vless", "tag": "vless-reality-vision-sb", "listen": "::", "listen_port": ${port_vlr},"sniff": true,"users": [{"uuid": "${uuid}","flow": "xtls-rprx-vision"}],"tls": {"enabled": true,"server_name": "www.ua.edu","reality": {"enabled": true,"handshake": {"server": "www.ua.edu","server_port": 443},"private_key": "${private_key}","short_id": ["${short_id}"]}}},
 EOF
     fi
 }
@@ -372,19 +324,13 @@ EOF
     sleep 5; echo
     if find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -Eq 'agsb/(sing-box|c)' || pgrep -f 'agsb/(sing-box|c)' >/dev/null 2>&1 ; then
         [ -f ~/.bashrc ] || touch ~/.bashrc; sed -i '/agsb/d' ~/.bashrc; SCRIPT_PATH="$HOME/bin/agsb"; mkdir -p "$HOME/bin"; (curl -sL "$agsburl" -o "$SCRIPT_PATH") || (wget -qO "$SCRIPT_PATH" "$agsburl"); chmod +x "$SCRIPT_PATH"
-        if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then echo "if ! pgrep -f 'agsb/sing-box' >/dev/null 2>&1; then export cf_host=\"${cf_host}\" cf_port=\"${cf_port}\" short_id=\"${short_id}\" name=\"${name}\" ippz=\"${ippz}\" argo=\"${argo}\" uuid=\"${uuid}\" $vmp=\"${port_vm_ws}\" $trp=\"${port_tr}\" $hyp=\"${port_hy2}\" $vlr=\"${port_vlr}\" agn=\"${ARGO_DOMAIN}\" agk=\"${ARGO_AUTH}\"; bash "$HOME/bin/agsb"; fi" >> ~/.bashrc; fi
+        if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then echo "if ! pgrep -f 'agsb/sing-box' >/dev/null 2>&1; then export shord_id=\"${shord_id}\" cdnym=\"${cdnym}\" name=\"${name}\" ippz=\"${ippz}\" argo=\"${argo}\" uuid=\"${uuid}\" $vmp=\"${port_vm_ws}\" $trp=\"${port_tr}\" $hyp=\"${port_hy2}\" $vlr=\"${port_vlr}\" agn=\"${ARGO_DOMAIN}\" agk=\"${ARGO_AUTH}\"; bash "$HOME/bin/agsb"; fi" >> ~/.bashrc; fi
         sed -i '/export PATH="\$HOME\/bin:\$PATH"/d' ~/.bashrc; echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.bashrc"; grep -qxF 'source ~/.bashrc' ~/.bash_profile 2>/dev/null || echo 'source ~/.bashrc' >> ~/.bash_profile; . ~/.bashrc 2>/dev/null
         crontab -l > /tmp/crontab.tmp 2>/dev/null
         if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then sed -i '/agsb\/sing-box/d' /tmp/crontab.tmp; echo '@reboot sleep 10 && nohup $HOME/agsb/sing-box run -c $HOME/agsb/sb.json >/dev/null 2>&1 &' >> /tmp/crontab.tmp; fi
         sed -i '/agsb\/cloudflared/d' /tmp/crontab.tmp
         if [ -n "$argo" ] && [ -n "$vmag" ]; then if [ -n "${ARGO_DOMAIN}" ] && [ -n "${ARGO_AUTH}" ]; then if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then echo '@reboot sleep 10 && nohup $HOME/agsb/cloudflared tunnel --no-autoupdate --edge-ip-version auto run --token $(cat $HOME/agsb/sbargotoken.log) >/dev/null 2>&1 &' >> /tmp/crontab.tmp; fi; else echo '@reboot sleep 10 && nohup $HOME/agsb/cloudflared tunnel --url http://localhost:$(cat $HOME/agsb/argoport.log) --edge-ip-version auto --no-autoupdate > $HOME/agsb/argo.log 2>&1 &' >> /tmp/crontab.tmp; fi; fi
         crontab /tmp/crontab.tmp >/dev/null 2>&1; rm /tmp/crontab.tmp
-        
-       
-        # ---------- 持久化 cf_host 和 cf_port ----------
-        echo "$cf_host" > "$HOME/agsb/cf_host"
-        echo "$cf_port" > "$HOME/agsb/cf_port"
-
         echo "agsb脚本进程启动成功，安装完毕" && sleep 2
     else
         echo "agsb脚本进程未启动，安装失败" && exit
@@ -413,20 +359,17 @@ cip(){
         port_vlr=$(cat "$HOME/agsb/port_vlr")
         public_key=$(sed -n '2p' "$HOME/agsb/reality.key" | awk '{print $2}')
         short_id=$(cat "$HOME/agsb/short_id")
-        yellow "shortId的值=${short_id}"
-        vless_link="vless://${uuid}@${server_ip}:${port_vlr}?encryption=none&security=reality&sni=$cf_host&fp=chrome&flow=xtls-rprx-vision&publicKey=${public_key}&shortId=${short_id}#${sxname}vless-reality-$hostname"
+        vless_link="vless://${uuid}@${server_ip}:${port_vlr}?encryption=none&security=reality&sni=www.ua.edu&fp=chrome&flow=xtls-rprx-vision&publicKey=${public_key}&shortId=${short_id}#${sxname}vless-reality-$hostname"
         yellow "💣【 VLESS-Reality-Vision 】(直连协议)"; green "$vless_link" | tee -a "$HOME/agsb/jh.txt"; echo;
     fi
     argodomain=$(cat "$HOME/agsb/sbargoym.log" 2>/dev/null); [ -z "$argodomain" ] && argodomain=$(grep -a trycloudflare.com "$HOME/agsb/argo.log" 2>/dev/null | awk 'NR==2{print}' | awk -F// '{print $2}' | awk '{print $1}')
     if [ -n "$argodomain" ]; then
         vlvm=$(cat $HOME/agsb/vlvm 2>/dev/null); uuid=$(cat "$HOME/agsb/uuid")
         if [ "$vlvm" = "Vmess" ]; then
-            # VMess Argo 生成部分
-            vmatls_link1="vmess://$(echo "{\"v\":\"2\",\"ps\":\"${sxname}vmess-ws-tls-argo-$hostname-$cf_port\",\"add\":\"$cf_host\",\"port\":\"$cf_port\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":\"$argodomain\",\"path\":\"/${uuid}-vm\",\"tls\":\"tls\",\"sni\":\"$argodomain\"}" | base64 -w0)"
+            vmatls_link1="vmess://$(echo "{\"v\":\"2\",\"ps\":\"${sxname}vmess-ws-tls-argo-$hostname-443\",\"add\":\"cdn.7zz.cn\",\"port\":\"443\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":\"$argodomain\",\"path\":\"/${uuid}-vm\",\"tls\":\"tls\",\"sni\":\"$argodomain\"}" | base64 -w0)"
             tratls_link1=""
         elif [ "$vlvm" = "Trojan" ]; then
-            # Trojan Argo 生成部分
-            tratls_link1="trojan://${uuid}@$cf_host:$cf_port?security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-tr&sni=${argodomain}&fp=chrome#${sxname}trojan-ws-tls-argo-$hostname-$cf_port"
+            tratls_link1="trojan://${uuid}@cdn.7zz.cn:443?security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-tr&sni=${argodomain}&fp=chrome#${sxname}trojan-ws-tls-argo-$hostname-443"
             vmatls_link1=""
         fi
         sbtk=$(cat "$HOME/agsb/sbargotoken.log" 2>/dev/null); [ -n "$sbtk" ] && nametn="Argo固定隧道token:\n$sbtk"
@@ -443,7 +386,7 @@ cip(){
         fi
 
         green ""
-        green "💣 $cf_port端口 Argo-TLS 节点 (优选IP可替换):"
+        green "💣 443端口 Argo-TLS 节点 (优选IP可替换):"
         green "${vmatls_link1}${tratls_link1}" | tee -a "$HOME/agsb/jh.txt"
 
         yellow "---------------------------------------------------------"
@@ -484,7 +427,7 @@ argorestart(){
     fi
 }
 if [ "$1" = "del" ]; then cleandel; rm -rf "$HOME/agsb"; echo "卸载完成"; showmode; exit; fi
-if [ "$1" = "rep" ]; then cleandel; rm -rf "$HOME/agsb"/{sb.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,cf_host,name,cf_port,short_id}; echo "重置完成..."; sleep 2; fi
+if [ "$1" = "rep" ]; then cleandel; rm -rf "$HOME/agsb"/{sb.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,cdnym,name,short_id}; echo "重置完成..."; sleep 2; fi
 if [ "$1" = "list" ]; then cip; exit; fi
 if [ "$1" = "ups" ]; then kill -15 $(pgrep -f 'agsb/sing-box' 2>/dev/null); upsingbox && sbrestart && echo "Sing-box内核更新完成" && sleep 2 && cip; exit; fi
 if [ "$1" = "res" ]; then sbrestart; argorestart; sleep 5 && echo "重启完成" && sleep 3 && cip; exit; fi
