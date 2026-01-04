@@ -286,9 +286,9 @@ EOF
             green "随机生成short_id,值: $short_id"
         fi
 
-
+        # www.ua.edu
         cat >> "$HOME/agsb/sb.json" <<EOF
-{"type": "vless", "tag": "vless-reality-vision-sb", "listen": "::", "listen_port": ${port_vlr},"sniff": true,"users": [{"uuid": "${uuid}","flow": "xtls-rprx-vision"}],"tls": {"enabled": true,"server_name": "www.ua.edu","reality": {"enabled": true,"handshake": {"server": "www.ua.edu","server_port": 443},"private_key": "${private_key}","short_id": ["${short_id}"]}}},
+{"type": "vless", "tag": "vless-reality-vision-sb", "listen": "::", "listen_port": ${port_vlr},"sniff": true,"users": [{"uuid": "${uuid}","flow": "xtls-rprx-vision"}],"tls": {"enabled": true,"server_name": "www.yahoo.com","reality": {"enabled": true,"handshake": {"server": "www.yahoo.com","server_port": 443},"private_key": "${private_key}","short_id": ["${short_id}"]}}},
 EOF
     fi
 }
@@ -417,9 +417,9 @@ cip(){
         port_vlr=$(cat "$HOME/agsb/port_vlr")
         public_key=$(sed -n '2p' "$HOME/agsb/reality.key" | awk '{print $2}')
         short_id=$(cat "$HOME/agsb/short_id")
-        green "cip函数中的short_id,值为:$short_id"
+        white "cip函数中的short_id,值为:$short_id"
 
-        vless_link="vless://${uuid}@${server_ip}:${port_vlr}?encryption=none&security=reality&sni=www.ua.edu&fp=chrome&flow=xtls-rprx-vision&publicKey=${public_key}&shortId=${short_id}#${sxname}vless-reality-$hostname"
+        vless_link="vless://${uuid}@${server_ip}:${port_vlr}?encryption=none&security=reality&sni=www.yahoo.com&fp=chrome&flow=xtls-rprx-vision&publicKey=${public_key}&shortId=${short_id}#${sxname}vless-reality-$hostname"
         yellow "💣【 VLESS-Reality-Vision 】(直连协议)"; green "$vless_link" | tee -a "$HOME/agsb/jh.txt"; echo;
     fi
     argodomain=$(cat "$HOME/agsb/sbargoym.log" 2>/dev/null); [ -z "$argodomain" ] && argodomain=$(grep -a trycloudflare.com "$HOME/agsb/argo.log" 2>/dev/null | awk 'NR==2{print}' | awk -F// '{print $2}' | awk '{print $1}')
