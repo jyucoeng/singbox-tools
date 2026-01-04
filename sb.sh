@@ -104,6 +104,13 @@ install_deps() {
     echo "⚠️ 请自行确保以下命令存在："
     echo "   curl wget openssl shuf base64 sed awk"
 }
+
+# Environment variables for controlling CDN host and SNI values
+export cdn_host=${cdn_host:-"cdn.7zz.cn"}  # Default CDN host for vmess or trojan  www.visa.com
+export hy_sni=${hy_sni:-"www.bing.com"}    # Default SNI for hy2 protocol
+export vl_sni=${vl_sni:-"www.ua.edu"}   # Default SNI for vless protocol   www.ua.edu www.yahoo.com
+
+
 export uuid=${uuid:-''}; 
 export port_vm_ws=${vmpt:-''}; 
 export port_tr=${trpt:-''}; 
@@ -143,7 +150,7 @@ gradient() {
     echo
 }
 # ================== 颜色函数 ==================
-VERSION="1.0.1(2026-01-03)"
+VERSION="1.0.2(2026-01-03)"
 AUTHOR="littleDoraemon"
 
 showmode(){
@@ -226,7 +233,7 @@ installsb(){
 EOF
     insuuid
     openssl ecparam -genkey -name prime256v1 -out "$HOME/agsb/private.key" >/dev/null 2>&1
-    openssl req -new -x509 -days 36500 -key "$HOME/agsb/private.key" -out "$HOME/agsb/cert.pem" -subj "/CN=www.bing.com" >/dev/null 2>&1
+    openssl req -new -x509 -days 36500 -key "$HOME/agsb/private.key" -out "$HOME/agsb/cert.pem" -subj "/CN=${hy_sni}" >/dev/null 2>&1
 
     if [ -n "$hyp" ]; then
         if [ -z "$port_hy2" ] && [ ! -e "$HOME/agsb/port_hy2" ]; then port_hy2=$(shuf -i 10000-65535 -n 1); echo "$port_hy2" > "$HOME/agsb/port_hy2"; elif [ -n "$port_hy2" ]; then echo "$port_hy2" > "$HOME/agsb/port_hy2"; fi
@@ -288,7 +295,7 @@ EOF
 
         # www.ua.edu
         cat >> "$HOME/agsb/sb.json" <<EOF
-{"type": "vless", "tag": "vless-reality-vision-sb", "listen": "::", "listen_port": ${port_vlr},"sniff": true,"users": [{"uuid": "${uuid}","flow": "xtls-rprx-vision"}],"tls": {"enabled": true,"server_name": "www.yahoo.com","reality": {"enabled": true,"handshake": {"server": "www.yahoo.com","server_port": 443},"private_key": "${private_key}","short_id": ["${short_id}"]}}},
+{"type": "vless", "tag": "vless-reality-vision-sb", "listen": "::", "listen_port": ${port_vlr},"sniff": true,"users": [{"uuid": "${uuid}","flow": "xtls-rprx-vision"}],"tls": {"enabled": true,"server_name": "${vl_sni}","reality": {"enabled": true,"handshake": {"server": "${vl_sni}","server_port": 443},"private_key": "${private_key}","short_id": ["${short_id}"]}}},
 EOF
     fi
 }
@@ -381,7 +388,7 @@ EOF
     sleep 5; echo
     if find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -Eq 'agsb/(sing-box|c)' || pgrep -f 'agsb/(sing-box|c)' >/dev/null 2>&1 ; then
         [ -f ~/.bashrc ] || touch ~/.bashrc; sed -i '/agsb/d' ~/.bashrc; SCRIPT_PATH="$HOME/bin/agsb"; mkdir -p "$HOME/bin"; (curl -sL "$agsburl" -o "$SCRIPT_PATH") || (wget -qO "$SCRIPT_PATH" "$agsburl"); chmod +x "$SCRIPT_PATH"
-        if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then echo "if ! pgrep -f 'agsb/sing-box' >/dev/null 2>&1; then export shord_id=\"${shord_id}\" cdnym=\"${cdnym}\" name=\"${name}\" ippz=\"${ippz}\" argo=\"${argo}\" uuid=\"${uuid}\" $vmp=\"${port_vm_ws}\" $trp=\"${port_tr}\" $hyp=\"${port_hy2}\" $vlr=\"${port_vlr}\" agn=\"${ARGO_DOMAIN}\" agk=\"${ARGO_AUTH}\"; bash "$HOME/bin/agsb"; fi" >> ~/.bashrc; fi
+        if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then echo "if ! pgrep -f 'agsb/sing-box' >/dev/null 2>&1; then export vl_sni=\"${vl_sni}\" hy_sni=\"${hy_sni}\"  cdn_host=\"${cdn_host}\"  shord_id=\"${shord_id}\" cdnym=\"${cdnym}\" name=\"${name}\" ippz=\"${ippz}\" argo=\"${argo}\" uuid=\"${uuid}\" $vmp=\"${port_vm_ws}\" $trp=\"${port_tr}\" $hyp=\"${port_hy2}\" $vlr=\"${port_vlr}\" agn=\"${ARGO_DOMAIN}\" agk=\"${ARGO_AUTH}\"; bash "$HOME/bin/agsb"; fi" >> ~/.bashrc; fi
         sed -i '/export PATH="\$HOME\/bin:\$PATH"/d' ~/.bashrc; echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.bashrc"; grep -qxF 'source ~/.bashrc' ~/.bash_profile 2>/dev/null || echo 'source ~/.bashrc' >> ~/.bash_profile; . ~/.bashrc 2>/dev/null
         crontab -l > /tmp/crontab.tmp 2>/dev/null
         if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then sed -i '/agsb\/sing-box/d' /tmp/crontab.tmp; echo '@reboot sleep 10 && nohup $HOME/agsb/sing-box run -c $HOME/agsb/sb.json >/dev/null 2>&1 &' >> /tmp/crontab.tmp; fi
@@ -412,26 +419,29 @@ cip(){
     }
     ipchange; rm -rf "$HOME/agsb/jh.txt"; uuid=$(cat "$HOME/agsb/uuid"); server_ip=$(cat "$HOME/agsb/server_ip.log"); sxname=$(cat "$HOME/agsb/name" 2>/dev/null);
     echo "*********************************************************"; purple "agsb脚本输出节点配置如下："; echo;
-    if grep -q "hy2-sb" "$HOME/agsb/sb.json"; then port_hy2=$(cat "$HOME/agsb/port_hy2"); hy2_link="hysteria2://$uuid@$server_ip:$port_hy2?security=tls&alpn=h3&insecure=1&sni=www.bing.com#${sxname}hy2-$hostname"; yellow "💣【 Hysteria2 】(直连协议)"; green "$hy2_link" | tee -a "$HOME/agsb/jh.txt"; echo; fi
+    if grep -q "hy2-sb" "$HOME/agsb/sb.json"; then port_hy2=$(cat "$HOME/agsb/port_hy2"); hy_sni=$(cat "$HOME/agsb/hy_sni"); hy2_link="hysteria2://$uuid@$server_ip:$port_hy2?security=tls&alpn=h3&insecure=1&sni=${hy_sni}#${sxname}hy2-$hostname"; yellow "💣【 Hysteria2 】(直连协议)"; green "$hy2_link" | tee -a "$HOME/agsb/jh.txt"; echo; fi
     if grep -q "vless-reality-vision-sb" "$HOME/agsb/sb.json"; then
         port_vlr=$(cat "$HOME/agsb/port_vlr")
         public_key=$(sed -n '2p' "$HOME/agsb/reality.key" | awk '{print $2}')
         short_id=$(cat "$HOME/agsb/short_id")
+        vl_sni=$(cat "$HOME/agsb/vl_sni")
         white "cip函数中的short_id,值为:$short_id"
 
        # vless_link="vless://${uuid}@${server_ip}:${port_vlr}?encryption=none&security=reality&sni=www.yahoo.com&fp=chrome&flow=xtls-rprx-vision&publicKey=${public_key}&shortId=${short_id}#${sxname}vless-reality-$hostname"
         
-        vless_link="vless://${uuid}@${server_ip}:${port_vlr}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.yahoo.com&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#${sxname}vless-reality-$hostname" 
+        vless_link="vless://${uuid}@${server_ip}:${port_vlr}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${vl_sni}&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#${sxname}vless-reality-$hostname" 
         yellow "💣【 VLESS-Reality-Vision 】(直连协议)"; green "$vless_link" | tee -a "$HOME/agsb/jh.txt"; echo;
     fi
     argodomain=$(cat "$HOME/agsb/sbargoym.log" 2>/dev/null); [ -z "$argodomain" ] && argodomain=$(grep -a trycloudflare.com "$HOME/agsb/argo.log" 2>/dev/null | awk 'NR==2{print}' | awk -F// '{print $2}' | awk '{print $1}')
+    cdn_host=$(cat "$HOME/agsb/cdn_host")
+
     if [ -n "$argodomain" ]; then
         vlvm=$(cat $HOME/agsb/vlvm 2>/dev/null); uuid=$(cat "$HOME/agsb/uuid")
         if [ "$vlvm" = "Vmess" ]; then
-            vmatls_link1="vmess://$(echo "{\"v\":\"2\",\"ps\":\"${sxname}vmess-ws-tls-argo-$hostname-443\",\"add\":\"cdn.7zz.cn\",\"port\":\"443\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":\"$argodomain\",\"path\":\"/${uuid}-vm\",\"tls\":\"tls\",\"sni\":\"$argodomain\"}" | base64 -w0)"
+            vmatls_link1="vmess://$(echo "{\"v\":\"2\",\"ps\":\"${sxname}vmess-ws-tls-argo-$hostname-443\",\"add\":\"${cdn_host}\",\"port\":\"443\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":\"$argodomain\",\"path\":\"/${uuid}-vm\",\"tls\":\"tls\",\"sni\":\"$argodomain\"}" | base64 -w0)"
             tratls_link1=""
         elif [ "$vlvm" = "Trojan" ]; then
-            tratls_link1="trojan://${uuid}@cdn.7zz.cn:443?security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-tr&sni=${argodomain}&fp=chrome#${sxname}trojan-ws-tls-argo-$hostname-443"
+            tratls_link1="trojan://${uuid}@${cdn_host}:443?security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-tr&sni=${argodomain}&fp=chrome#${sxname}trojan-ws-tls-argo-$hostname-443"
             vmatls_link1=""
         fi
 
@@ -489,7 +499,7 @@ argorestart(){
     fi
 }
 if [ "$1" = "del" ]; then cleandel; rm -rf "$HOME/agsb"; echo "卸载完成"; showmode; exit; fi
-if [ "$1" = "rep" ]; then cleandel; rm -rf "$HOME/agsb"/{sb.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,cdnym,name,short_id}; echo "重置完成..."; sleep 2; fi
+if [ "$1" = "rep" ]; then cleandel; rm -rf "$HOME/agsb"/{sb.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,cdnym,name,short_id,cdn_host,hy_sni,vl_sni}; echo "重置完成..."; sleep 2; fi
 if [ "$1" = "list" ]; then cip; exit; fi
 if [ "$1" = "ups" ]; then kill -15 $(pgrep -f 'agsb/sing-box' 2>/dev/null); upsingbox && sbrestart && echo "Sing-box内核更新完成" && sleep 2 && cip; exit; fi
 if [ "$1" = "res" ]; then sbrestart; argorestart; sleep 5 && echo "重启完成" && sleep 3 && cip; exit; fi
