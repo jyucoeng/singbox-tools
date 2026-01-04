@@ -16,7 +16,7 @@ else
     fi
 fi
 
-
+# Install dependencies
 install_deps() {
     echo "🔍 正在检测系统依赖…"
 
@@ -114,6 +114,7 @@ export vl_sni=${vl_sni:-"www.ua.edu"}   # Default SNI for vless protocol   www.u
 export tu_sni=${tu_sni:-"www.bing.com"}    # Default SNI for hy2 protocol
 
 
+# Environment variables for ports and other settings
 export uuid=${uuid:-''}; 
 export port_vm_ws=${vmpt:-''}; 
 export port_tr=${trpt:-''}; 
@@ -158,6 +159,7 @@ gradient() {
 VERSION="1.0.3(2026-01-03)"
 AUTHOR="littleDoraemon"
 
+# Show script mode
 showmode(){
     blue "===================================================="
     gradient "       agsb 一键脚本（vmess/trojan Argo选1,vless+hy2直连）"
@@ -184,10 +186,12 @@ hostname=$(uname -a | awk '{print $2}');
 op=$(cat /etc/redhat-release 2>/dev/null || cat /etc/os-release 2>/dev/null | grep -i pretty_name | cut -d \" -f2); 
 case $(uname -m) in aarch64) cpu=arm64;; x86_64) cpu=amd64;; *) echo "目前脚本不支持$(uname -m)架构" && exit; esac;
  mkdir -p "$HOME/agsb"
+# Check and set IP version
 v4v6(){
     v4=$( (curl -s4m5 -k "$v46url" 2>/dev/null) || (wget -4 -qO- --tries=2 "$v46url" 2>/dev/null) )
     v6=$( (curl -s6m5 -k "$v46url" 2>/dev/null) || (wget -6 -qO- --tries=2 "$v46url" 2>/dev/null) )
 }
+# Set up name for nodes and IP version preference
 set_sbyx(){
     if [ -n "$name" ]; then sxname=$name-; echo "$sxname" > "$HOME/agsb/name"; echo; yellow "所有节点名称前缀：$name"; fi
     v4v6
@@ -202,6 +206,7 @@ set_sbyx(){
     else sbyx='prefer_ipv6'; 
     fi
 }
+# download Sing-box
 upsingbox(){
     url="https://github.com/jyucoeng/singbox-tools/releases/download/singbox/sing-box-$cpu"
     out="$HOME/agsb/sing-box"
@@ -210,6 +215,7 @@ upsingbox(){
     sbcore=$("$HOME/agsb/sing-box" version 2>/dev/null | awk '/version/{print $NF}')
     echo "已安装Sing-box正式版内核：$sbcore"
 }
+# Generate UUID and save to file
 insuuid(){
     if [ ! -e "$HOME/agsb/sing-box" ]; then 
         upsingbox;
@@ -226,7 +232,7 @@ insuuid(){
 }
 
 
-
+# Install and configure Sing-box
 installsb(){
     echo; echo "=========启用Sing-box内核========="
 
@@ -329,6 +335,7 @@ EOF
 EOF
     fi
 }
+#  Generate Sing-box configuration file
 sbbout(){
     if [ -e "$HOME/agsb/sb.json" ]; then
         sed -i '${s/,\s*$//}' "$HOME/agsb/sb.json"
@@ -369,6 +376,8 @@ EOF
         fi
     fi
 }
+
+# Install and configure Sing-box
 ins(){
     installsb; set_sbyx; sbbout
     if [ -n "$argo" ] && [ -n "$vmag" ]; then
@@ -444,6 +453,7 @@ EOF
     fi
 }
 
+# Write environment variables to files for persistence
 write2AgsbFolders(){
     # Write environment variables to files for persistence
     echo "${vl_sni}" > "$HOME/agsb/vl_sni"
@@ -452,7 +462,7 @@ write2AgsbFolders(){
     echo "${cdn_host}" > "$HOME/agsb/cdn_host"
 }
 
-
+#   show status
 agsbstatus(){
     purple "=========当前内核运行状态========="
     procs=$(find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null)
@@ -460,6 +470,7 @@ agsbstatus(){
     if echo "$procs" | grep -Eq 'agsb/sing-box' || pgrep -f 'agsb/sing-box' >/dev/null 2>&1; then echo "Sing-box (版本V$("$HOME/agsb/sing-box" version 2>/dev/null | awk '/version/{print $NF}'))：运行中"; else echo "Sing-box：未启用"; fi
     if echo "$procs" | grep -Eq 'agsb/c' || pgrep -f 'agsb/c' >/dev/null 2>&1; then echo "cloudflared Argo (版本V$("$HOME/agsb/cloudflared" version 2>/dev/null | awk '{print $3}'))：运行中"; else echo "Argo：未启用"; fi
 }
+# show nodes
 cip(){
     ipbest(){ serip=$( (curl -s4m5 -k "$v46url") || (wget -4 -qO- --tries=2 "$v46url") ); if echo "$serip" | grep -q ':'; then server_ip="[$serip]"; else server_ip="$serip"; fi; echo "$server_ip" > "$HOME/agsb/server_ip.log"; }
     ipchange(){
@@ -547,16 +558,63 @@ cip(){
     fi
     echo; yellow "聚合节点: cat $HOME/agsb/jh.txt"; yellow "========================================================="; purple "相关快捷方式如下："; showmode
 }
-cleandel(){
-    # Remove agsb，所以要切到home目录
-    cd $HOME  
 
-    for P in /proc/[0-9]*; do if [ -L "$P/exe" ]; then TARGET=$(readlink -f "$P/exe" 2>/dev/null); if echo "$TARGET" | grep -qE '/agsb/c|/agsb/sing-box'; then kill "$(basename "$P")" 2>/dev/null; fi; fi; done
+# Remove agsb folder
+cleandel() {
+    # Check if $HOME exists and is accessible
+    if [ ! -d "$HOME" ]; then
+        echo "Error: $HOME directory is not accessible."
+        return 1  # Exit the function if $HOME is not accessible
+    fi
+
+    # Ensure we're working from the home directory
+    cd $HOME  # Safely change to the home directory
+
+    # Stop any running processes related to agsb or sing-box
+    for P in /proc/[0-9]*; do
+        if [ -L "$P/exe" ]; then
+            TARGET=$(readlink -f "$P/exe" 2>/dev/null)
+            if echo "$TARGET" | grep -qE '/agsb/c|/agsb/sing-box'; then
+                kill "$(basename "$P")" 2>/dev/null
+            fi
+        fi
+    done
+
+    # Kill any remaining agsb or sing-box processes
     kill -15 $(pgrep -f 'agsb/c' 2>/dev/null) $(pgrep -f 'agsb/sing-box' 2>/dev/null) >/dev/null 2>&1
-    sed -i '/agsb/d' ~/.bashrc; sed -i '/export PATH="\$HOME\/bin:\$PATH"/d' ~/.bashrc; . ~/.bashrc 2>/dev/null
-    crontab -l > /tmp/crontab.tmp 2>/dev/null; sed -i '/agsb/d' /tmp/crontab.tmp; crontab /tmp/crontab.tmp >/dev/null 2>&1; rm /tmp/crontab.tmp; rm -rf "$HOME/bin/agsb"
-    if pidof systemd >/dev/null 2>&1; then for svc in sb argo; do systemctl stop "$svc" >/dev/null 2>&1; systemctl disable "$svc" >/dev/null 2>&1; done; rm -f /etc/systemd/system/{sb.service,argo.service}; elif command -v rc-service >/dev/null 2>&1; then for svc in sing-box argo; do rc-service "$svc" stop >/dev/null 2>&1; rc-update del "$svc" default >/dev/null 2>&1; done; rm -f /etc/init.d/{sing-box,argo}; fi
+
+    # Clean up .bashrc and remove PATH related to agsb
+    sed -i '/agsb/d' ~/.bashrc
+    sed -i '/export PATH="\$HOME\/bin:\$PATH"/d' ~/.bashrc
+    . ~/.bashrc 2>/dev/null
+
+    # Remove agsb-related cron jobs
+    crontab -l > /tmp/crontab.tmp 2>/dev/null
+    sed -i '/agsb/d' /tmp/crontab.tmp
+    crontab /tmp/crontab.tmp >/dev/null 2>&1
+    rm /tmp/crontab.tmp
+
+    # Remove agsb from the $HOME/bin directory
+    rm -rf "$HOME/bin/agsb"
+
+    # Stop and disable services if systemd is used
+    if pidof systemd >/dev/null 2>&1; then
+        for svc in sb argo; do
+            systemctl stop "$svc" >/dev/null 2>&1
+            systemctl disable "$svc" >/dev/null 2>&1
+        done
+        rm -f /etc/systemd/system/{sb.service,argo.service}
+    # If using OpenRC or another init system
+    elif command -v rc-service >/dev/null 2>&1; then
+        for svc in sing-box argo; do
+            rc-service "$svc" stop >/dev/null 2>&1
+            rc-update del "$svc" default >/dev/null 2>&1
+        done
+        rm -f /etc/init.d/{sing-box,argo}
+    fi
 }
+
+# Restart sing-box
 sbrestart(){
     kill -15 $(pgrep -f 'agsb/sing-box' 2>/dev/null) >/dev/null 2>&1
     if pidof systemd >/dev/null 2>&1; then
@@ -567,6 +625,8 @@ sbrestart(){
         nohup "$HOME/agsb/sing-box" run -c "$HOME/agsb/sb.json" >/dev/null 2>&1 &
     fi
 }
+
+# Restart argo
 argorestart(){
     kill -15 $(pgrep -f 'agsb/c' 2>/dev/null) >/dev/null 2>&1
     if pidof systemd >/dev/null 2>&1; then
