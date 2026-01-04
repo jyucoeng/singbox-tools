@@ -548,6 +548,9 @@ cip(){
     echo; yellow "聚合节点: cat $HOME/agsb/jh.txt"; yellow "========================================================="; purple "相关快捷方式如下："; showmode
 }
 cleandel(){
+    # Remove agsb，所以要切到home目录
+    cd $HOME  
+
     for P in /proc/[0-9]*; do if [ -L "$P/exe" ]; then TARGET=$(readlink -f "$P/exe" 2>/dev/null); if echo "$TARGET" | grep -qE '/agsb/c|/agsb/sing-box'; then kill "$(basename "$P")" 2>/dev/null; fi; fi; done
     kill -15 $(pgrep -f 'agsb/c' 2>/dev/null) $(pgrep -f 'agsb/sing-box' 2>/dev/null) >/dev/null 2>&1
     sed -i '/agsb/d' ~/.bashrc; sed -i '/export PATH="\$HOME\/bin:\$PATH"/d' ~/.bashrc; . ~/.bashrc 2>/dev/null
