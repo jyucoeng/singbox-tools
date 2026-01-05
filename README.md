@@ -117,7 +117,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ```bash
 ippz=4 \
-trpt=31003 \
+trpt=41003 \
 argo=trpt \
 agn="test-trojan.xxxx.xyz" \
 agk="eyJhIjoiYTg2NTc2M21111wdsdwdwdwWRiZmMxYzJkYzRlYTYiLCJ0IjoiZDgyYzk3MmItZGNlNy00ODJkLWI2NjgtYmJlNDgyZDMxNTNhIiwicyI6IlkyRmhNbVkxTURVdFlUZ3lPQzAwTVRBMExUbGhNakV0TUdNd1pXVmlORFF4WWpobCJ9" \
@@ -129,7 +129,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ```bash
 ippz=4 \
-trpt=31003 \
+trpt=41003 \
 argo=trpt \
 agn="test-trojan.xxxx.xyz" \
 agk="eyJhIjoiYTg2NTc2M21111wdsdwdwdwWRiZmMxYzJkYzRlYTYiLCJ0IjoiZDgyYzk3MmItZGNlNy00ODJkLWI2NjgtYmJlNDgyZDMxNTNhIiwicyI6IlkyRmhNbVkxTURVdFlUZ3lPQzAwTVRBMExUbGhNakV0TUdNd1pXVmlORFF4WWpobCJ9" \
@@ -141,7 +141,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ```bash
 ippz=4 \
-trpt=31003 \
+trpt=41003 \
 argo=trpt \
 agn="test-vmess.xxxx.xyz" \
 agk="eyJhIjoiYTg2NTc2M20000wdsdwdwdwWRiZmMxYzJkYzRlYTYiLCJ0IjoiZDgyYzk3MmItZGNlNy00ODJkLWI2NjgtYmJlNDgyZDMxNTNhIiwicyI6IlkyRmhNbVkxTURVdFlUZ3lPQzAwTVRBMExUbGhNakV0TUdNd1pXVmlORFF4WWpobCJ9" \
@@ -153,9 +153,9 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ```bash
 ippz=4 \
-hypt=31001 \
-vlrt=31002 \
-vmpt=31003 \
+hypt=41001 \
+vlrt=41002 \
+vmpt=41003 \
 argo=vmpt \
 agn="test-vmess.xxxx.xyz" \
 agk="eyJhIjoiYTg2NTc2M2YxOGEwOTZhOWI3MWRiZmMxYzJkYzRlYTYiLCJ0IjoiOTQzNzM0ZGUtOGQ5Ni00MmNkLThhMTQtNzE0O9897DJjMTg2ODlmIiwicyI6IlltRXhNakk1WXpVdE56TXhaQzAwWVRrd0xUa3dNR1l0T0dNek9HWXpZekk1TCJ9" \
@@ -170,10 +170,10 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 ```bash
 uuid=0631a7f3-09f8-4144-acf2-a4f5bd9ed281 \
 ippz=4 \
-trpt=31003 \
-hypt=31001 \
-vlrt=31002 \
-tupt=31005 \
+trpt=41003 \
+hypt=41001 \
+vlrt=41002 \
+tupt=41005 \
 argo=trpt \
 agn="test-tr.xxxx.xyz" \
 agk="eyJhIjoiYTg2NTc2M2YxOGEwOTZhOWI3MWRiZmMxYzJkYzRlYTYiLCJ0IjoiZDgyYzk3MmItZGNlNy00ODJkLWI2NjgtYmJlNDgyZDMxNTNhIiwicyI6IlkyRmhNbVkxTURVdFlUZ3lPQzAwTVRBMExUbGhNakV0TUdNd1pXVmlO4000WWpobCJ9" \
@@ -192,10 +192,10 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 ```bash
 uuid=0631a7f3-09f8-4144-acf2-a4f5bd9ed281 \
 ippz=4 \
-trpt=31002 \
-vlrt=31003 \
-hypt=31004 \
-tupt=31005 \
+trpt=41002 \
+vlrt=41003 \
+hypt=41004 \
+tupt=41005 \
 argo="trpt" \
 agn="northCarolina.xxxx.xyz" \
 agk='{"AccountTag":"8613e14ac32cfd5dacd9debe88c79a8d","TunnelSecret":"InQ+rnQaEenH3YrdhMwCaH4lCwInDWw8sCBhJRWOIQ4=","TunnelID":"e769caf0-4e73-4113-8513-6c897799bbd3","Endpoint":""}' \
@@ -215,10 +215,10 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
  3、 端口
    ```bash
-   trpt=31003 \
-   hypt=31001 \
-   vlrt=31002 \
-   tupt=31005 \
+   trpt=41003 \
+   hypt=41001 \
+   vlrt=41002 \
+   tupt=41005 \
    ```
      这4个分别为trojan、hy2、vless、tuic的端口
 
