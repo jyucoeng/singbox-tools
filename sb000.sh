@@ -195,7 +195,69 @@ showmode(){
     yellow "卸载脚本命令：agsb del"
     echo "---------------------------------------------------------"
 }
+# ================== 处理tunnel的json ==================
 
+
+# 用法：
+# prepare_argo_credentials "<ARGO_AUTH>" "<ARGO_DOMAIN>" "<LOCAL_PORT>"
+prepare_argo_credentials() {
+    local auth="$1"
+    local domain="$2"
+    local local_port="$3"
+
+    ARGO_MODE="none"
+
+    [ -z "$auth" ] && return
+
+    # ---------- JSON 凭据 ----------
+    if echo "$auth" | grep -q 'TunnelSecret'; then
+        yellow "检测到 Argo JSON 凭据，使用 credentials-file 模式"
+
+        if [ -z "$local_port" ]; then
+            red "❌ prepare_argo_credentials: LOCAL_PORT 为空"
+            return 1
+        fi
+
+        mkdir -p "$HOME/agsb"
+
+        # 写入 tunnel.json
+        echo "$auth" > "$HOME/agsb/tunnel.json"
+
+        # 提取 TunnelID
+        local tunnel_id
+        tunnel_id=$(echo "$auth" | sed -n 's/.*"TunnelID"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+
+        if [ -z "$tunnel_id" ]; then
+            red "❌ Argo JSON 中未找到 TunnelID"
+            return 1
+        fi
+
+        # 生成 tunnel.yml（对齐 s4.sh）
+        cat > "$HOME/agsb/tunnel.yml" <<EOF
+tunnel: $tunnel_id
+credentials-file: $HOME/agsb/tunnel.json
+protocol: http2
+
+ingress:
+  - hostname: ${domain}
+    service: http://localhost:${local_port}
+    originRequest:
+      noTLSVerify: true
+  - service: http_status:404
+EOF
+
+        ARGO_MODE="json"
+    else
+        # token 模式
+        ARGO_MODE="token"
+    fi
+
+    export ARGO_MODE
+}
+
+
+
+# ================== 系统bashrc函数 ==================
 
 
 echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"; 
@@ -399,81 +461,332 @@ EOF
     fi
 }
 
-# Install and configure Sing-box
-ins(){
-    installsb; set_sbyx; sbbout
-    if [ -n "$argo" ] && [ -n "$vmag" ]; then
-        echo; echo "=========启用Cloudflared-argo内核========="
-        if [ ! -e "$HOME/agsb/cloudflared" ]; then 
-            argocore=$({ curl -Ls https://data.jsdelivr.com/v1/package/gh/cloudflare/cloudflared || wget -qO- https://data.jsdelivr.com/v1/package/gh/cloudflare/cloudflared; } | grep -Eo '"[0-9.]+"' | sed -n 1p | tr -d '",'); 
-            echo "下载Cloudflared-argo最新正式版内核：$argocore"; 
 
-            # 下面为备用链接，里面的版本为2025.11.1，当有latest问题在切回我的仓库去
-            # url="https://github.com/jyucoeng/singbox-tools/releases/download/cloudflared/cloudflared-linux-$cpu"; 
+ensure_cloudflared() {
+    if [ -x "$HOME/agsb/cloudflared" ]; then
+        return
+    fi
 
-            #latest
-            url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$cpu"; 
-            out="$HOME/agsb/cloudflared"; 
-            (curl -Lo "$out" -# --retry 2 "$url") || (wget -O "$out" --tries=2 "$url"); 
-            chmod +x "$HOME/agsb/cloudflared";
-        fi
+    echo "下载 Cloudflared Argo 内核中…"
+    # 下面为备用链接，里面的版本为2025.11.1，当有latest问题在切回我的仓库去
+     # url="https://github.com/jyucoeng/singbox-tools/releases/download/cloudflared/cloudflared-linux-$cpu";
 
-        if [ "$argo" = "vmpt" ]; then argoport=$(cat "$HOME/agsb/port_vm_ws" 2>/dev/null); echo "Vmess" > "$HOME/agsb/vlvm"; elif [ "$argo" = "trpt" ]; then argoport=$(cat "$HOME/agsb/port_tr" 2>/dev/null); echo "Trojan" > "$HOME/agsb/vlvm"; fi; echo "$argoport" > "$HOME/agsb/argoport.log"
-        if [ -n "${ARGO_DOMAIN}" ] && [ -n "${ARGO_AUTH}" ]; then
-            argoname='固定'
-            if pidof systemd >/dev/null 2>&1 && [ "$EUID" -eq 0 ]; then
-                cat > /etc/systemd/system/argo.service <<EOF
+    url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$cpu"
+    out="$HOME/agsb/cloudflared"
+
+    (curl -Lo "$out" -# --retry 2 "$url") || (wget -O "$out" --tries=2 "$url")
+    chmod +x "$out"
+}
+
+calc_argo_port() {
+    case "$argo" in
+        vmpt)
+            echo "Vmess" > "$HOME/agsb/vlvm"
+            cat "$HOME/agsb/port_vm_ws"
+            ;;
+        trpt)
+            echo "Trojan" > "$HOME/agsb/vlvm"
+            cat "$HOME/agsb/port_tr"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+install_argo_service_systemd() {
+    local mode="$1"
+    local token="$2"
+
+    if [ "$mode" = "json" ]; then
+        cat > /etc/systemd/system/argo.service <<'EOF'
 [Unit]
 Description=argo service
 After=network.target
+
 [Service]
 Type=simple
 NoNewPrivileges=yes
-ExecStart=/root/agsb/cloudflared tunnel --no-autoupdate --edge-ip-version auto run --token "${ARGO_AUTH}"
+ExecStart=/root/agsb/cloudflared tunnel --edge-ip-version auto --config /root/agsb/tunnel.yml run
 Restart=on-failure
 RestartSec=5s
+
 [Install]
 WantedBy=multi-user.target
 EOF
-                systemctl daemon-reload; systemctl enable argo; systemctl start argo
-            elif command -v rc-service >/dev/null 2>&1 && [ "$EUID" -eq 0 ]; then
-                cat > /etc/init.d/argo <<EOF
+    else
+        cat > /etc/systemd/system/argo.service <<EOF
+[Unit]
+Description=argo service
+After=network.target
+
+[Service]
+Type=simple
+NoNewPrivileges=yes
+ExecStart=/root/agsb/cloudflared tunnel --no-autoupdate --edge-ip-version auto run --token ${token}
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    fi
+
+    systemctl daemon-reload
+    systemctl enable argo
+    systemctl start argo
+}
+
+
+install_argo_service_openrc() {
+    local mode="$1"
+    local token="$2"
+
+    if [ "$mode" = "json" ]; then
+        args="tunnel --edge-ip-version auto --config /root/agsb/tunnel.yml run"
+    else
+        args="tunnel --no-autoupdate --edge-ip-version auto run --token ${token}"
+    fi
+
+    cat > /etc/init.d/argo <<EOF
 #!/sbin/openrc-run
 description="argo service"
-command="/root/agsb/cloudflared tunnel"
-command_args="--no-autoupdate --edge-ip-version auto run --token ${ARGO_AUTH}"
+command="/root/agsb/cloudflared"
+command_args="${args}"
 command_background=yes
 pidfile="/run/argo.pid"
 depend() { need net; }
 EOF
-                chmod +x /etc/init.d/argo; rc-update add argo default; rc-service argo start
-            else
-                nohup "$HOME/agsb/cloudflared" tunnel --no-autoupdate --edge-ip-version auto run --token "${ARGO_AUTH}" >/dev/null 2>&1 &
-            fi
-            echo "${ARGO_DOMAIN}" > "$HOME/agsb/sbargoym.log"; echo "${ARGO_AUTH}" > "$HOME/agsb/sbargotoken.log"
-        else
-            argoname='临时'
-            nohup "$HOME/agsb/cloudflared" tunnel --url http://localhost:$(cat $HOME/agsb/argoport.log) --edge-ip-version auto --no-autoupdate > $HOME/agsb/argo.log 2>&1 &
-        fi
-        yellow "申请Argo$argoname隧道中……请稍等"; sleep 8
-        if [ -n "${ARGO_DOMAIN}" ] && [ -n "${ARGO_AUTH}" ]; then argodomain=$(cat "$HOME/agsb/sbargoym.log" 2>/dev/null); else argodomain=$(grep -a trycloudflare.com "$HOME/agsb/argo.log" 2>/dev/null | awk 'NR==2{print}' | awk -F// '{print $2}' | awk '{print $1}'); fi
-        if [ -n "${argodomain}" ]; then green "Argo$argoname隧道申请成功"; else purple "Argo$argoname隧道申请失败"; fi
-    fi
-    sleep 5; echo
-    if find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -Eq 'agsb/(sing-box|c)' || pgrep -f 'agsb/(sing-box|c)' >/dev/null 2>&1 ; then
-        [ -f ~/.bashrc ] || touch ~/.bashrc; sed -i '/agsb/d' ~/.bashrc; SCRIPT_PATH="$HOME/bin/agsb"; mkdir -p "$HOME/bin"; (curl -sL "$agsburl" -o "$SCRIPT_PATH") || (wget -qO "$SCRIPT_PATH" "$agsburl"); chmod +x "$SCRIPT_PATH"
-        if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then echo "if ! pgrep -f 'agsb/sing-box' >/dev/null 2>&1; then export  vl_sni=\"${vl_sni}\"  tu_sni=\"${tu_sni}\"  hy_sni=\"${hy_sni}\"  cdn_host=\"${cdn_host}\"  shord_id=\"${shord_id}\" cdnym=\"${cdnym}\" name=\"${name}\" ippz=\"${ippz}\" argo=\"${argo}\" uuid=\"${uuid}\" $vmp=\"${port_vm_ws}\" $trp=\"${port_tr}\"  $hyp=\"${port_hy2}\" $tup=\"${port_tu}\" $vlr=\"${port_vlr}\" agn=\"${ARGO_DOMAIN}\" agk=\"${ARGO_AUTH}\"; bash "$HOME/bin/agsb"; fi" >> ~/.bashrc; fi
-        sed -i '/export PATH="\$HOME\/bin:\$PATH"/d' ~/.bashrc; echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.bashrc"; grep -qxF 'source ~/.bashrc' ~/.bash_profile 2>/dev/null || echo 'source ~/.bashrc' >> ~/.bash_profile; . ~/.bashrc 2>/dev/null
-        crontab -l > /tmp/crontab.tmp 2>/dev/null
-        if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then sed -i '/agsb\/sing-box/d' /tmp/crontab.tmp; echo '@reboot sleep 10 && nohup $HOME/agsb/sing-box run -c $HOME/agsb/sb.json >/dev/null 2>&1 &' >> /tmp/crontab.tmp; fi
-        sed -i '/agsb\/cloudflared/d' /tmp/crontab.tmp
-        if [ -n "$argo" ] && [ -n "$vmag" ]; then if [ -n "${ARGO_DOMAIN}" ] && [ -n "${ARGO_AUTH}" ]; then if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then echo '@reboot sleep 10 && nohup $HOME/agsb/cloudflared tunnel --no-autoupdate --edge-ip-version auto run --token $(cat $HOME/agsb/sbargotoken.log) >/dev/null 2>&1 &' >> /tmp/crontab.tmp; fi; else echo '@reboot sleep 10 && nohup $HOME/agsb/cloudflared tunnel --url http://localhost:$(cat $HOME/agsb/argoport.log) --edge-ip-version auto --no-autoupdate > $HOME/agsb/argo.log 2>&1 &' >> /tmp/crontab.tmp; fi; fi
-        crontab /tmp/crontab.tmp >/dev/null 2>&1; rm /tmp/crontab.tmp
-        green "agsb脚本进程启动成功，安装完毕" && sleep 2
+
+    chmod +x /etc/init.d/argo
+    rc-update add argo default
+    rc-service argo start
+}
+
+
+start_argo_no_daemon() {
+    local mode="$1"
+    local token="$2"
+    local port="$3"
+
+    if [ "$mode" = "json" ]; then
+        nohup "$HOME/agsb/cloudflared" tunnel \
+          --edge-ip-version auto \
+          --config "$HOME/agsb/tunnel.yml" run \
+          > "$HOME/agsb/argo.log" 2>&1 &
+    elif [ -n "$token" ]; then
+        nohup "$HOME/agsb/cloudflared" tunnel \
+          --no-autoupdate \
+          --edge-ip-version auto run \
+          --token "$token" \
+          > "$HOME/agsb/argo.log" 2>&1 &
     else
-        echo "agsb脚本进程未启动，安装失败" && exit
+        nohup "$HOME/agsb/cloudflared" tunnel \
+          --url "http://localhost:${port}" \
+          --edge-ip-version auto \
+          --no-autoupdate \
+          > "$HOME/agsb/argo.log" 2>&1 &
     fi
 }
+
+
+wait_and_check_argo() {
+    local argoname="$1"
+    local argodomain=""
+
+    yellow "申请Argo${argoname}隧道中……请稍等"
+    sleep 8
+
+    if [ -n "${ARGO_DOMAIN}" ] && [ -n "${ARGO_AUTH}" ]; then
+        # 固定 Argo：直接读取保存的域名
+        argodomain=$(cat "$HOME/agsb/sbargoym.log" 2>/dev/null)
+    else
+        # 临时 Argo：从日志中解析 trycloudflare 域名
+        argodomain=$(grep -a trycloudflare.com "$HOME/agsb/argo.log" 2>/dev/null \
+            | awk 'NR==2{print}' \
+            | awk -F// '{print $2}' \
+            | awk '{print $1}')
+    fi
+
+    if [ -n "${argodomain}" ]; then
+        green "Argo${argoname}隧道申请成功"
+    else
+        purple "Argo${argoname}隧道申请失败"
+    fi
+}
+
+
+
+# 开机自启argo
+append_argo_cron_legacy() {
+    # 只在启用了 argo + vmag 的情况下处理
+    [ -z "$argo" ] || [ -z "$vmag" ] && return
+
+    # 仅用于无 systemd / openrc 的系统
+    if pidof systemd >/dev/null 2>&1 || command -v rc-service >/dev/null 2>&1; then
+        return
+    fi
+
+    # 固定 Argo（token / JSON）
+    if [ -n "${ARGO_DOMAIN}" ] && [ -n "${ARGO_AUTH}" ]; then
+        if [ "$ARGO_MODE" = "json" ]; then
+            echo '@reboot sleep 10 && nohup $HOME/agsb/cloudflared tunnel --edge-ip-version auto --config $HOME/agsb/tunnel.yml run >/dev/null 2>&1 &' \
+                >> /tmp/crontab.tmp
+        else
+            echo '@reboot sleep 10 && nohup $HOME/agsb/cloudflared tunnel --no-autoupdate --edge-ip-version auto run --token $(cat $HOME/agsb/sbargotoken.log) >/dev/null 2>&1 &' \
+                >> /tmp/crontab.tmp
+        fi
+
+    # 临时 Argo
+    else
+        echo '@reboot sleep 10 && nohup $HOME/agsb/cloudflared tunnel --url http://localhost:$(cat $HOME/agsb/argoport.log) --edge-ip-version auto --no-autoupdate > $HOME/agsb/argo.log 2>&1 &' \
+            >> /tmp/crontab.tmp
+    fi
+}
+
+post_install_finalize_legacy() {
+    # =====================================================
+    # 等待进程启动（原版行为）
+    # =====================================================
+    sleep 5
+    echo
+
+    # =====================================================
+    # 原版“总闸门”：检测 agsb 相关进程
+    # =====================================================
+    if find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' \
+        | xargs -r readlink 2>/dev/null \
+        | grep -Eq 'agsb/(sing-box|c)' \
+        || pgrep -f 'agsb/(sing-box|c)' >/dev/null 2>&1
+    then
+        # =================================================
+        # bashrc 注入（原版逻辑）
+        # =================================================
+        [ -f ~/.bashrc ] || touch ~/.bashrc
+        sed -i '/agsb/d' ~/.bashrc
+
+        SCRIPT_PATH="$HOME/bin/agsb"
+        mkdir -p "$HOME/bin"
+        (curl -sL "$agsburl" -o "$SCRIPT_PATH") || (wget -qO "$SCRIPT_PATH" "$agsburl")
+        chmod +x "$SCRIPT_PATH"
+
+        # 仅在无 systemd / openrc 时写 bashrc 自启
+        if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then
+            echo "if ! pgrep -f 'agsb/sing-box' >/dev/null 2>&1; then export  \
+vl_sni=\"${vl_sni}\"  tu_sni=\"${tu_sni}\"  hy_sni=\"${hy_sni}\"  \
+cdn_host=\"${cdn_host}\"  shord_id=\"${shord_id}\" cdnym=\"${cdnym}\" \
+name=\"${name}\" ippz=\"${ippz}\" argo=\"${argo}\" uuid=\"${uuid}\" \
+$vmp=\"${port_vm_ws}\" $trp=\"${port_tr}\" $hyp=\"${port_hy2}\" \
+$tup=\"${port_tu}\" $vlr=\"${port_vlr}\" \
+agn=\"${ARGO_DOMAIN}\" agk=\"${ARGO_AUTH}\"; \
+bash \"$HOME/bin/agsb\"; fi" >> ~/.bashrc
+        fi
+
+        # PATH 注入（原版逻辑）
+        sed -i '/export PATH="\$HOME\/bin:\$PATH"/d' ~/.bashrc
+        echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.bashrc"
+        grep -qxF 'source ~/.bashrc' ~/.bash_profile 2>/dev/null \
+            || echo 'source ~/.bashrc' >> ~/.bash_profile
+        . ~/.bashrc 2>/dev/null
+
+        # =================================================
+        # crontab 处理（原版逻辑 + JSON 兼容）
+        # =================================================
+        crontab -l > /tmp/crontab.tmp 2>/dev/null
+
+        # sing-box cron（仅无 systemd / openrc）
+        if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then
+            sed -i '/agsb\/sing-box/d' /tmp/crontab.tmp
+            echo '@reboot sleep 10 && nohup $HOME/agsb/sing-box run -c $HOME/agsb/sb.json >/dev/null 2>&1 &' \
+                >> /tmp/crontab.tmp
+        fi
+
+        # 清理旧的 cloudflared cron
+        sed -i '/agsb\/cloudflared/d' /tmp/crontab.tmp
+
+        # 👉 写入 Argo cron（token / JSON / 临时三态）
+        append_argo_cron_legacy
+
+        crontab /tmp/crontab.tmp >/dev/null 2>&1
+        rm /tmp/crontab.tmp
+
+        green "agsb脚本进程启动成功，安装完毕"
+        sleep 2
+    else
+        echo "agsb脚本进程未启动，安装失败"
+        exit
+    fi
+}
+
+
+
+
+ins(){
+    # =====================================================
+    # 1. 安装并启动 sing-box
+    # =====================================================
+    installsb
+    set_sbyx
+    sbbout
+
+    # =====================================================
+    # 2. Argo 相关逻辑（仅在启用 argo + vmag 时）
+    # =====================================================
+    if [ -n "$argo" ] && [ -n "$vmag" ]; then
+        echo
+        echo "=========启用Cloudflared-argo内核========="
+
+        # 2.1 确保 cloudflared 内核存在
+        ensure_cloudflared
+
+        # 2.2 计算 Argo 本地端口
+        argoport=$(calc_argo_port) || {
+            red "无法确定 Argo 本地端口"
+            exit 1
+        }
+        echo "$argoport" > "$HOME/agsb/argoport.log"
+
+        # 2.3 生成 Argo 凭据（JSON / token）
+        # 仅用于“当前启动流程”，不用于重启判断
+        prepare_argo_credentials "$ARGO_AUTH" "$ARGO_DOMAIN" "$argoport"
+
+        # 2.4 启动 Argo（固定 / 临时）
+        if [ -n "$ARGO_DOMAIN" ] && [ -n "$ARGO_AUTH" ]; then
+            argoname="固定"
+
+            if pidof systemd >/dev/null 2>&1 && [ "$EUID" -eq 0 ]; then
+                install_argo_service_systemd "$ARGO_MODE" "$ARGO_AUTH"
+            elif command -v rc-service >/dev/null 2>&1 && [ "$EUID" -eq 0 ]; then
+                install_argo_service_openrc "$ARGO_MODE" "$ARGO_AUTH"
+            else
+                # 无 systemd / openrc，直接后台启动
+                start_argo_no_daemon "$ARGO_MODE" "$ARGO_AUTH" "$argoport"
+            fi
+
+            # 与原版一致：固定 Argo 域名直接落盘
+            echo "$ARGO_DOMAIN" > "$HOME/agsb/sbargoym.log"
+            # token 模式下才会有 sbargotoken.log
+            [ "$ARGO_MODE" = "token" ] && echo "$ARGO_AUTH" > "$HOME/agsb/sbargotoken.log"
+        else
+            # 临时 Argo（trycloudflare）
+            argoname="临时"
+            start_argo_no_daemon "temp" "" "$argoport"
+        fi
+
+        # 2.5 等待并检查 Argo 申请结果（原版 sleep + grep 逻辑）
+        wait_and_check_argo "$argoname"
+    fi
+
+    # =====================================================
+    # 3. 安装完成后的 legacy 收尾逻辑
+    #    （进程检测 / bashrc / cron / 自启）
+    # =====================================================
+    post_install_finalize_legacy
+}
+
+
+
+
 
 # Write environment variables to files for persistence
 write2AgsbFolders(){
