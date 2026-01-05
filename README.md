@@ -120,7 +120,7 @@ ippz=4 \
 trpt=41003 \
 argo=trpt \
 agn="test-trojan.xxxx.xyz" \
-agk="eyJhIjoiYTg2NTc2M21111wdsdwdwdwWRiZmMxYzJkYzRlYTYiLCJ0IjoiZDgyYzk3MmItZGNlNy00ODJkLWI2NjgtYmJlNDgyZDMxNTNhIiwicyI6IlkyRmhNbVkxTURVdFlUZ3lPQzAwTVRBMExUbGhNakV0TUdNd1pXVmlORFF4WWpobCJ9" \
+agk="ey开头的那一串" \
 name="小叮当-韩国春川"  \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)
 ```
@@ -132,7 +132,7 @@ ippz=4 \
 trpt=41003 \
 argo=trpt \
 agn="test-trojan.xxxx.xyz" \
-agk="eyJhIjoiYTg2NTc2M21111wdsdwdwdwWRiZmMxYzJkYzRlYTYiLCJ0IjoiZDgyYzk3MmItZGNlNy00ODJkLWI2NjgtYmJlNDgyZDMxNTNhIiwicyI6IlkyRmhNbVkxTURVdFlUZ3lPQzAwTVRBMExUbGhNakV0TUdNd1pXVmlORFF4WWpobCJ9" \
+agk="ey开头的那一串" \
 name="小叮当-韩国春川"  \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) 
 ```
@@ -144,7 +144,7 @@ ippz=4 \
 trpt=41003 \
 argo=trpt \
 agn="test-vmess.xxxx.xyz" \
-agk="eyJhIjoiYTg2NTc2M20000wdsdwdwdwWRiZmMxYzJkYzRlYTYiLCJ0IjoiZDgyYzk3MmItZGNlNy00ODJkLWI2NjgtYmJlNDgyZDMxNTNhIiwicyI6IlkyRmhNbVkxTURVdFlUZ3lPQzAwTVRBMExUbGhNakV0TUdNd1pXVmlORFF4WWpobCJ9" \
+agk="ey开头的那一串" \
 name="小叮当-韩国春川"  \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) 
 ```
@@ -158,7 +158,7 @@ vlrt=41002 \
 vmpt=41003 \
 argo=vmpt \
 agn="test-vmess.xxxx.xyz" \
-agk="eyJhIjoiYTg2NTc2M2YxOGEwOTZhOWI3MWRiZmMxYzJkYzRlYTYiLCJ0IjoiOTQzNzM0ZGUtOGQ5Ni00MmNkLThhMTQtNzE0O9897DJjMTg2ODlmIiwicyI6IlltRXhNakk1WXpVdE56TXhaQzAwWVRrd0xUa3dNR1l0T0dNek9HWXpZekk1TCJ9" \
+agk="ey开头的那一串" \
 name="小叮当-韩国春川"  \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) 
 ```
@@ -176,7 +176,7 @@ vlrt=41002 \
 tupt=41005 \
 argo=trpt \
 agn="test-tr.xxxx.xyz" \
-agk="eyJhIjoiYTg2NTc2M2YxOGEwOTZhOWI3MWRiZmMxYzJkYzRlYTYiLCJ0IjoiZDgyYzk3MmItZGNlNy00ODJkLWI2NjgtYmJlNDgyZDMxNTNhIiwicyI6IlkyRmhNbVkxTURVdFlUZ3lPQzAwTVRBMExUbGhNakV0TUdNd1pXVmlO4000WWpobCJ9" \
+agk="ey开头的那一串" \
 name="小叮当-韩国春川"  \
 cdn_host="www.visa.com" \
 hy_sni="time.js" \
@@ -198,7 +198,7 @@ hypt=41004 \
 tupt=41005 \
 argo="trpt" \
 agn="northCarolina.xxxx.xyz" \
-agk='{"AccountTag":"8613e14ac32cfd5dacd9debe88c79a8d","TunnelSecret":"InQ+rnQaEenH3YrdhMwCaH4lCwInDWw8sCBhJRWOIQ4=","TunnelID":"e769caf0-4e73-4113-8513-6c897799bbd3","Endpoint":""}' \
+agk='{"AccountTag":"xxxxxxxxxxxxxx","TunnelSecret":"xxxxxxxxxxxxxx","TunnelID":"xxxxxxxxxxxxxx","Endpoint":""}' \
 name="小叮当-美国北卡"  \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb000.sh) rep
 ```
