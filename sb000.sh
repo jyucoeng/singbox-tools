@@ -964,19 +964,59 @@ sbrestart(){
 
 # Restart argo
 argorestart(){
+    # 先尽力停止现有 cloudflared 进程（原版行为）
     kill -15 $(pgrep -f 'agsb/c' 2>/dev/null) >/dev/null 2>&1
+
+    # ===============================
+    # systemd 管理
+    # ===============================
     if pidof systemd >/dev/null 2>&1; then
         systemctl restart argo
-    elif command -v rc-service >/dev/null 2>&1; then
+        return
+    fi
+
+    # ===============================
+    # openrc 管理
+    # ===============================
+    if command -v rc-service >/dev/null 2>&1; then
         rc-service argo restart
-    else
-        if [ -e "$HOME/agsb/sbargotoken.log" ]; then
-            nohup "$HOME/agsb/cloudflared" tunnel --no-autoupdate --edge-ip-version auto run --token $(cat $HOME/agsb/sbargotoken.log) >/dev/null 2>&1 &
-        else
-            nohup "$HOME/agsb/cloudflared" tunnel --url http://localhost:$(cat $HOME/agsb/argoport.log) --edge-ip-version auto --no-autoupdate > $HOME/agsb/argo.log 2>&1 &
-        fi
+        return
+    fi
+
+    # ===============================
+    # 无 init 系统（nohup 启动）
+    # 判断顺序非常重要！
+    # ===============================
+
+    # 1️⃣ JSON 固定隧道（最高优先级）
+    if [ -f "$HOME/agsb/tunnel.yml" ]; then
+        nohup "$HOME/agsb/cloudflared" tunnel \
+          --edge-ip-version auto \
+          --config "$HOME/agsb/tunnel.yml" run \
+          >/dev/null 2>&1 &
+        return
+    fi
+
+    # 2️⃣ token 固定隧道
+    if [ -f "$HOME/agsb/sbargotoken.log" ]; then
+        nohup "$HOME/agsb/cloudflared" tunnel \
+          --no-autoupdate \
+          --edge-ip-version auto run \
+          --token "$(cat "$HOME/agsb/sbargotoken.log")" \
+          >/dev/null 2>&1 &
+        return
+    fi
+
+    # 3️⃣ 临时 Argo（trycloudflare）
+    if [ -f "$HOME/agsb/argoport.log" ]; then
+        nohup "$HOME/agsb/cloudflared" tunnel \
+          --url "http://localhost:$(cat "$HOME/agsb/argoport.log")" \
+          --edge-ip-version auto \
+          --no-autoupdate \
+          > "$HOME/agsb/argo.log" 2>&1 &
     fi
 }
+
 if [ "$1" = "del" ]; then cleandel; rm -rf "$HOME/agsb"; echo "卸载完成"; showmode; exit; fi
 if [ "$1" = "rep" ]; then cleandel; rm -rf "$HOME/agsb"/{sb.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,cdnym,name,short_id,cdn_host,hy_sni,vl_sni,tu_sni}; echo "重置完成..."; sleep 2; fi
 if [ "$1" = "list" ]; then cip; exit; fi
