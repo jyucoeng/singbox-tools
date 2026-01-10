@@ -10,7 +10,7 @@ export INTERACTIVE_FLAG
 export INSTALL_MODE="${INSTALL_MODE:-'go'}"
 
 if [[ "$INSTALL_MODE" != "go" && "$INSTALL_MODE" != "py" ]]; then
-    echo -e "${RED}无效的安装模式: $INSTALL_MODE。默认使用 'go' 模式.${PLAIN}"
+    echo -e "${YELLOW}无效的安装模式: $INSTALL_MODE。默认使用 'go' 模式.${PLAIN}"
     INSTALL_MODE="go"
 fi
 
