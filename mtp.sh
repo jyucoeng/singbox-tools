@@ -1002,16 +1002,24 @@ non_interactive_init() {
 }
 
 
+interactive_install_quick(){
+    # call menu
+    menu
+}
+
+# Default INSTALL_MODE to 'go' if not set
+export INSTALL_MODE="${INSTALL_MODE:-'go'}"
+
 # Function for non-interactive installation
 non_interactive_install_quick() {
     echo -e "${GREEN}开始无交互式安装...${PLAIN}"
     install_base_deps
 
-
-    if [ "$INSTALL_MODE" == "go" ]; then
-        install_mtp_go
-    elif [ "$INSTALL_MODE" == "py" ]; then
-        install_mtp_python
+    # Check INSTALL_MODE and proceed accordingly
+    if [[ "$INSTALL_MODE" == "go" ]]; then
+        install_mtp_go  # Install Go version
+    elif [[ "$INSTALL_MODE" == "py" ]]; then
+        install_mtp_python  # Install Python version
     else
         echo -e "${RED}无效的安装模式: $INSTALL_MODE${PLAIN}"
         exit 1
@@ -1020,17 +1028,23 @@ non_interactive_install_quick() {
     echo -e "${GREEN}无交互式安装完成！${PLAIN}"
 }
 
-interactive_install_quick(){
-    # call menu
-    menu
-}
-
 # Main function to parse arguments and perform actions
 main() {
     check_sys
 
-    # Check if a command (del, list, start, stop) is provided
-    if [[ -n "$1" ]]; then
+    # If no argument is provided, proceed with installation
+    if [[ -z "$1" ]]; then
+        if [[ -z "$PORT" ]]; then
+            echo -e "${GREEN}未指定PORT，进入交互式安装模式...${PLAIN}"
+            INTERACTIVE_FLAG=1  # Interactive mode
+            menu  # Call the menu for interactive installation
+        else
+            echo -e "${GREEN}已指定PORT，进入非交互式安装模式...${PLAIN}"
+            INTERACTIVE_FLAG=0  # Non-interactive mode
+            non_interactive_install_quick  # Proceed with non-interactive installation
+        fi
+    else
+        # Handle commands like del, list, start, stop
         case "$1" in
             del)
                 delete_all
@@ -1052,21 +1066,7 @@ main() {
                 exit 1
                 ;;
         esac
-    else
-        # If no argument is provided, proceed with the installation (default behavior)
-        if [[ -z "$PORT" ]]; then
-            # If PORT is not set, it will be interactive installation
-            echo -e "${GREEN}未指定PORT，进入交互式安装模式...${PLAIN}"
-            INTERACTIVE_FLAG=1  # Interactive mode
-            menu  # Call the menu for interactive installation
-        else
-            # If PORT is set, it will be non-interactive installation
-            echo -e "${GREEN}已指定PORT，进入非交互式安装模式...${PLAIN}"
-            INTERACTIVE_FLAG=0  # Non-interactive mode
-            non_interactive_install_quick  # Proceed with non-interactive installation
-        fi
     fi
 }
-
 
 main "$@"
