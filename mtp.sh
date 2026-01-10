@@ -9,6 +9,8 @@ export IP_MODE="${IP_MODE:-v4}"
 
 export INSTALL_MODE="${INSTALL_MODE:-'py'}"
 
+export INTERACTIVE_FLAG
+
 
 # 全局配置
 WORKDIR="/opt/mtproxy"
@@ -177,7 +179,7 @@ install_mtp_python() {
     fi
     chmod +x "$BIN_DIR/mtp-python"
 
-    if [ "$IS_NON_INTERACTIVE" == "1" ]; then
+    if [ "$INTERACTIVE_FLAG" == 1 ]; then
         # Non-interactive installation: use default values or environment variables
         echo -e "Using domain: $DOMAIN"
         echo -e "Using port: $PORT"
@@ -192,10 +194,10 @@ install_mtp_python() {
             [ -z "$PORT" ] && PORT=443
             [ -z "$PORT_V6" ] && PORT_V6="$PORT"
 
-        elseif [[ "$IP_MODE" == "v4" ]]; then
+        elif [[ "$IP_MODE" == "v4" ]]; then
             [ -z "$PORT" ] && PORT=443
             PORT_V6=""
-        elseif [[ "$IP_MODE" == "v6" ]]; then
+        elif [[ "$IP_MODE" == "v6" ]]; then
             [ -z "$PORT" ] && PORT=443
             PORT_V6=""    
         else
@@ -270,13 +272,8 @@ EOF
 
 
 # --- Go 版安装逻辑 ---
-install_mtg_go() {
+install_mtp_go() {
     # Use environment variables for domain, port, and other settings
-    DOMAIN="${DOMAIN:-www.apple.com}"
-    PORT="${PORT:-443}"
-    PORT_V6="${PORT_V6:-443}"
-    SECRET="${SECRET:-$(generate_secret)}"
-    IP_MODE="${IP_MODE:-v4}"
 
     ARCH=$(uname -m)
     case $ARCH in
@@ -309,7 +306,7 @@ install_mtg_go() {
     fi
     chmod +x "$BIN_DIR/mtg-go"
 
-   if [ "$IS_NON_INTERACTIVE" == "1" ]; then
+   if [ "$INTERACTIVE_FLAG" == 1 ]; then
         # Non-interactive installation: use default values or environment variables
         echo -e "Using domain: $DOMAIN"
         echo -e "Using port: $PORT"
@@ -324,10 +321,10 @@ install_mtg_go() {
             [ -z "$PORT" ] && PORT=443
             [ -z "$PORT_V6" ] && PORT_V6="$PORT"
 
-        elseif [[ "$IP_MODE" == "v4" ]]; then
+        elif [[ "$IP_MODE" == "v4" ]]; then
             [ -z "$PORT" ] && PORT=443
             PORT_V6=""
-        elseif [[ "$IP_MODE" == "v6" ]]; then
+        elif [[ "$IP_MODE" == "v6" ]]; then
             [ -z "$PORT" ] && PORT=443
             PORT_V6=""    
         else
@@ -961,7 +958,7 @@ menu() {
     read -p "请选择: " choice
     
     case $choice in
-        1) install_base_deps; install_mtg_go; back_to_menu ;;
+        1) install_base_deps; install_mtp_go; back_to_menu ;;
         2) install_base_deps; install_mtp_python; back_to_menu ;;
         3) show_detail_info ;;
         4) modify_config ;;
@@ -978,7 +975,8 @@ menu() {
 
 # Function to check if the required environment variable is set
 is_non_interactive() {
-    if [ -n "$DOMAIN" ] || [ -n "$PORT" ] || [ -n "$SECRET" ]; then
+    # 端口号不为空代表是非交互式安装
+    if [ [ -n "$PORT" ]  ]; then
         return 0  # Non-interactive installation (at least one variable is set)
     else
         return 1  # Interactive installation (none of the variables are set)
@@ -988,18 +986,18 @@ is_non_interactive() {
 
 non_interactive_init() {
     # Correct the variable assignment
-    local value="$is_interactive_mode"
+    local value="$is_non_interactive"
 
     # Use [[ ... ]] for string comparison
-    if [[ "$value" == "0" ]]; then
+    if is_non_interactive; then
         echo -e "${GREEN}非交互式安装模式已启用${PLAIN}"
-        IS_NON_INTERACTIVE=0
+        INTERACTIVE_FLAG=0
         non_interactive_install_quick
 
     else
         echo -e "${GREEN}交互式安装模式已启用${PLAIN}"
-        IS_NON_INTERACTIVE=1
-        interactive_install_quick
+        INTERACTIVE_FLAG=1
+        menu
     fi
 }
 
@@ -1011,7 +1009,7 @@ non_interactive_install_quick() {
 
 
     if [ "$INSTALL_MODE" == "go" ]; then
-        install_mtg_go
+        install_mtp_go
     elif [ "$INSTALL_MODE" == "py" ]; then
         install_mtp_python
     else
@@ -1030,7 +1028,7 @@ interactive_install_quick(){
 
 main(){
     check_sys
-    non_interactive_init
+
 
     if [ "$1" == "list" ]; then
         show_detail_info
