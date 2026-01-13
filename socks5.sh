@@ -271,12 +271,20 @@ EOF
 write_openrc_service() {
   cat > "$SERVICE_OPENRC" <<EOF
 #!/sbin/openrc-run
+
 command="$BIN_FILE"
 command_args="run -c $CONFIG_FILE"
-depend() { need net; }
+
+command_background="yes"
+pidfile="/run/${SERVICE_NAME}.pid"
+
+depend() {
+  need net
+}
 EOF
   chmod +x "$SERVICE_OPENRC"
 }
+
 
 start_service() {
   detect_init_system
