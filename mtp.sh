@@ -1,7 +1,7 @@
 #!/bin/bash
 
 SCRIPT_VERSION="1.0.1(2026-01-10)"
-AUTHOR="LittleDoraemon"
+SCRIPT_AUTHOR="LittleDoraemon"
 
 # 颜色定义
 RED='\033[31m'
@@ -1109,7 +1109,7 @@ menu() {
     AUTHOR
     echo -e "=================================="
     echo -e "     MTProxy 部署管理脚本"
-    echo -e "     Author: ${GREEN}$AUTHOR${PLAIN}"
+    echo -e "     Author: ${GREEN}$SCRIPT_AUTHOR${PLAIN}"
     echo -e "     Version: ${YELLOW}$SCRIPT_VERSION${PLAIN}"
     echo -e "=================================="
     echo -e "Go     版: $(get_service_status_str mtg)"
