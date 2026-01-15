@@ -1,4 +1,4 @@
-#  singbox一键安装脚本、socks5一键脚本、mtp一键脚本
+#  singbox一键安装脚本、socks5一键脚本、mtp一键脚本（占位中）
 
 ## 请点击跳转对应的readme
 
