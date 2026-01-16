@@ -674,7 +674,7 @@ post_install_finalize_legacy() {
         if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then
             echo "if ! pgrep -f 'agsb/sing-box' >/dev/null 2>&1; then export  \
 vl_sni=\"${vl_sni}\"  tu_sni=\"${tu_sni}\"  hy_sni=\"${hy_sni}\"  \
-cdn_host=\"${cdn_host}\"  shord_id=\"${shord_id}\" cdnym=\"${cdnym}\" \
+cdn_host=\"${cdn_host}\"  short_id=\"${short_id}\" cdnym=\"${cdnym}\" \
 name=\"${name}\" ippz=\"${ippz}\" argo=\"${argo}\" uuid=\"${uuid}\" \
 $vmp=\"${port_vm_ws}\" $trp=\"${port_tr}\" $hyp=\"${port_hy2}\" \
 $tup=\"${port_tu}\" $vlr=\"${port_vlr}\" \
