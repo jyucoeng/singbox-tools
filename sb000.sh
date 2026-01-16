@@ -986,7 +986,8 @@ agsbstatus() {
     purple "=========当前内核运行状态========="
 
     cloudflared_version=$("$HOME/agsb/cloudflared" version 2>/dev/null | grep -oP '\d+\.\d+\.\d+')
-    singbox_version=$("$HOME/agsb/sing-box" version 2>/dev/null | grep -oP '\d+\.\d+\.\d+')
+    singbox_version=$("$HOME/agsb/sing-box" version 2>/dev/null | grep -oP '(?<=V)\d+\.\d+\.\d+')
+
 
     if [ -n "$cloudflared_version" ]; then
       echo "cloudflared Argo (版本V$cloudflared_version)：$(green "运行中")" 
@@ -1222,7 +1223,12 @@ if [ "$1" = "rep" ]; then
     sleep 2; 
 fi
 
+if [ "$1" = "sta" ]; then 
+    agsbstatus
+    exit; 
+fi
 if [ "$1" = "list" ]; then 
+    agsbstatus
     cip; 
     exit; 
 fi
