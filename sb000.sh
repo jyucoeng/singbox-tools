@@ -202,8 +202,23 @@ export ippz=${ippz:-''};
 export name=${name:-''}; 
 export oap=${oap:-''}
 
-#自动安装依赖
-install_deps
+# 检查是否需要安装依赖
+check_and_install_deps() {
+    # 获取第一个参数作为操作类型
+    local operation="$1"
+
+    # 如果没有传递参数或是传递了 install 参数，执行安装依赖
+    if [ -z "$operation" ] || [ "$operation" = "install" ]; then
+        echo -e "${YELLOW}正在安装依赖...${RESET}"
+        install_deps
+    else
+        # 否则跳过安装依赖
+        echo -e "${YELLOW}跳过依赖安装，执行其他操作...${RESET}"
+    fi
+}
+
+# 在脚本的适当位置调用这个函数
+check_and_install_deps "$1"
 
 v46url="https://icanhazip.com"
 agsburl="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb000.sh"
