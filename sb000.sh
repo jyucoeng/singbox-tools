@@ -207,6 +207,8 @@ check_and_install_deps() {
     # 获取第一个参数作为操作类型
     local operation="$1"
 
+    echo -e "${YELLOW}check_and_install_deps 函数开始执行...${RESET}"
+
     # 如果没有传递参数或是传递了 install 参数，执行安装依赖
     if [ -z "$operation" ] || [ "$operation" = "install" ]; then
         echo -e "${YELLOW}正在安装依赖...${RESET}"
