@@ -60,8 +60,6 @@ else
 fi
 
 
-
-
 install_deps() {
 
 
@@ -80,8 +78,13 @@ install_deps() {
     # =========================
     # 公共依赖（各发行版基本一致）
     local COMMON_PKGS=(
-        curl wget jq openssl
-        iptables bc lsof
+        curl 
+        wget 
+        jq 
+        openssl
+        iptables 
+        bc 
+        lsof
         psmisc
     )
 
@@ -212,31 +215,11 @@ export ARGO_DOMAIN=${agn:-''};
 export ARGO_AUTH=${agk:-''}; 
 export ippz=${ippz:-''}; 
 export name=${name:-''}; 
-export oap=${oap:-''}
 
-# 检查是否需要安装依赖
-check_and_install_deps() {
-    # 获取第一个参数作为操作类型
-    local operation="$1"
 
-    yellow "check_and_install_deps 函数开始执行..."
-
-    # 如果没有传递参数或是传递了 install 参数，执行安装依赖
-    if [ -z "$operation" ] || [ "$operation" = "install" ]; then
-        white "正在安装依赖..."
-        install_deps
-    else
-        # 否则跳过安装依赖
-        yellow "跳过依赖安装，执行其他操作..."
-    fi
-}
-
-# 在脚本的适当位置调用这个函数
-check_and_install_deps "$1"
 
 v46url="https://icanhazip.com"
-agsburl="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb111.sh"
-
+agsburl="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh"
 
 
 #彩虹打印
@@ -269,7 +252,7 @@ create_bashrc_if_missing() {
 create_bashrc_if_missing
 
 # ================== 系统bashrc函数 ==================
-VERSION="1.0.3(2026-01-16)"
+VERSION="1.0.2(2026-01-16)"
 AUTHOR="littleDoraemon"
 
 # Show script mode
@@ -986,19 +969,20 @@ write2AgsbFolders(){
 agsbstatus() {
     purple "=========当前内核运行状态========="
 
-    cloudflared_version=$("$HOME/agsb/cloudflared" version 2>/dev/null | grep -oP '\d+\.\d+\.\d+')
-    singbox_version=$("$HOME/agsb/sing-box" version 2>/dev/null | grep -oP '\d+\.\d+\.\d+')
-
-    if [ -n "$cloudflared_version" ]; then
-      echo "cloudflared Argo (版本V$cloudflared_version)：$(green "运行中")" 
-    else
-        echo "Argo：$(red "未启用")"
-    fi
+    #singbox 的版本格式为r.1.12.13 这样，返回1.12.13
+   singbox_version=$("$HOME/agsb/sing-box" version 2>/dev/null | sed -n 's/.*r\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')
+   cloudflared_version=$("$HOME/agsb/cloudflared" version 2>/dev/null | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')
 
     if [ -n "$singbox_version" ]; then
          echo "Sing-box (版本V$singbox_version)：$(green "运行中")"
     else
          echo "Sing-box：$(red "未启用")" 
+    fi
+
+    if [ -n "$cloudflared_version" ]; then
+      echo "cloudflared Argo (版本V$cloudflared_version)：$(green "运行中")" 
+    else
+        echo "Argo：$(red "未启用")"
     fi
 
 }
@@ -1152,6 +1136,9 @@ sbrestart(){
     fi
 }
 
+
+
+
 # Restart argo
 argorestart(){
     # 先尽力停止现有 cloudflared 进程（原版行为）
@@ -1224,6 +1211,7 @@ if [ "$1" = "rep" ]; then
 fi
 
 if [ "$1" = "list" ]; then 
+    
     cip; 
     exit; 
 fi
@@ -1241,24 +1229,39 @@ fi
 if ! pgrep -f 'agsb/sing-box' >/dev/null 2>&1 && [ "$1" != "rep" ]; then
     cleandel
 fi
+ # 如果没有运行sing-box或者进行覆盖式安装
 if ! pgrep -f 'agsb/sing-box' >/dev/null 2>&1 || [ "$1" = "rep" ]; then
-    if [ -z "$( (curl -s4m5 -k "$v46url") || (wget -4 -qO- --tries=2 "$v46url") )" ]; then 
-        cp -f /etc/resolv.conf /etc/resolv.conf.bak.agsb 2>/dev/null
-        echo -e "nameserver 1.1.1.1\nnameserver 8.8.8.8\nnameserver 2606:4700:4700::1111\nnameserver 2001:4860:4860::8888" > /etc/resolv.conf
+#     判断是否为IPv4网络
+#     if [ -z "$( (curl -s4m5 -k "$v46url") || (wget -4 -qO- --tries=2 "$v46url") )" ]; then 
+#         cp -f /etc/resolv.conf /etc/resolv.conf.bak.agsb 2>/dev/null
+#         echo -e "nameserver 1.1.1.1\nnameserver 8.8.8.8\nnameserver 2606:4700:4700::1111\nnameserver 2001:4860:4860::8888" > /etc/resolv.conf
     
-    fi
+#     fi
+
     echo "VPS系统：$op"; 
     echo "CPU架构：$cpu"; 
     echo "agsb脚本开始安装/更新…………" && sleep 1
 
-    if [ -n "$oap" ]; then 
-        setenforce 0 >/dev/null 2>&1; 
-        iptables -F; 
-        iptables -P INPUT ACCEPT; 
+    # 获取操作系统名称
+    os_name=$(awk -F= '/^NAME/{print $2}' /etc/os-release)
+
+    # 执行iptables相关命令
+    setenforce 0 >/dev/null 2>&1; 
+    iptables -F; 
+    iptables -P INPUT ACCEPT;
+
+    # 检查是否是Debian/Ubuntu系统
+    if [[ "$os_name" == *"Debian"* || "$os_name" == *"Ubuntu"* ]]; then
         netfilter-persistent save >/dev/null 2>&1;
-        echo "iptables执行开放所有端口"; 
+        echo "iptables执行开放所有端口 (Debian/Ubuntu)"
+    elif [[ "$os_name" == *"Alpine"* ]]; then
+        # Alpine没有netfilter-persistent，可以直接保存iptables规则
+        iptables-save > /etc/iptables/rules.v4
+        echo "iptables执行开放所有端口 (Alpine)"
+    else
+        echo "不支持此操作系统"
     fi
-    ins; 
+    install_deps && ins; 
     cip
 else
     echo "agsb脚本已安装"; 
