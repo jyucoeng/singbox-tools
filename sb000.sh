@@ -60,8 +60,6 @@ else
 fi
 
 
-
-
 install_deps() {
 
 
@@ -217,27 +215,8 @@ export ARGO_DOMAIN=${agn:-''};
 export ARGO_AUTH=${agk:-''}; 
 export ippz=${ippz:-''}; 
 export name=${name:-''}; 
-export oap=${oap:-''}
 
-# 检查是否需要安装依赖
-check_and_install_deps() {
-    # 获取第一个参数作为操作类型
-    local operation="$1"
 
-    yellow "check_and_install_deps 函数开始执行..."
-
-    # 如果没有传递参数或是传递了 install 参数，执行安装依赖
-    if [ -z "$operation" ] || [ "$operation" = "install" ]; then
-        white "正在安装依赖..."
-        install_deps
-    else
-        # 否则跳过安装依赖
-        yellow "跳过依赖安装，执行其他操作..."
-    fi
-}
-
-# 在脚本的适当位置调用这个函数
-check_and_install_deps "$1"
 
 v46url="https://icanhazip.com"
 agsburl="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb000.sh"
@@ -1157,6 +1136,9 @@ sbrestart(){
     fi
 }
 
+
+
+
 # Restart argo
 argorestart(){
     # 先尽力停止现有 cloudflared 进程（原版行为）
@@ -1247,24 +1229,39 @@ fi
 if ! pgrep -f 'agsb/sing-box' >/dev/null 2>&1 && [ "$1" != "rep" ]; then
     cleandel
 fi
+ # 如果没有运行sing-box或者进行覆盖式安装
 if ! pgrep -f 'agsb/sing-box' >/dev/null 2>&1 || [ "$1" = "rep" ]; then
-    if [ -z "$( (curl -s4m5 -k "$v46url") || (wget -4 -qO- --tries=2 "$v46url") )" ]; then 
-        cp -f /etc/resolv.conf /etc/resolv.conf.bak.agsb 2>/dev/null
-        echo -e "nameserver 1.1.1.1\nnameserver 8.8.8.8\nnameserver 2606:4700:4700::1111\nnameserver 2001:4860:4860::8888" > /etc/resolv.conf
+#     判断是否为IPv4网络
+#     if [ -z "$( (curl -s4m5 -k "$v46url") || (wget -4 -qO- --tries=2 "$v46url") )" ]; then 
+#         cp -f /etc/resolv.conf /etc/resolv.conf.bak.agsb 2>/dev/null
+#         echo -e "nameserver 1.1.1.1\nnameserver 8.8.8.8\nnameserver 2606:4700:4700::1111\nnameserver 2001:4860:4860::8888" > /etc/resolv.conf
     
-    fi
+#     fi
+
     echo "VPS系统：$op"; 
     echo "CPU架构：$cpu"; 
     echo "agsb脚本开始安装/更新…………" && sleep 1
 
-    if [ -n "$oap" ]; then 
-        setenforce 0 >/dev/null 2>&1; 
-        iptables -F; 
-        iptables -P INPUT ACCEPT; 
+    # 获取操作系统名称
+    os_name=$(awk -F= '/^NAME/{print $2}' /etc/os-release)
+
+    # 执行iptables相关命令
+    setenforce 0 >/dev/null 2>&1; 
+    iptables -F; 
+    iptables -P INPUT ACCEPT;
+
+    # 检查是否是Debian/Ubuntu系统
+    if [[ "$os_name" == *"Debian"* || "$os_name" == *"Ubuntu"* ]]; then
         netfilter-persistent save >/dev/null 2>&1;
-        echo "iptables执行开放所有端口"; 
+        echo "iptables执行开放所有端口 (Debian/Ubuntu)"
+    elif [[ "$os_name" == *"Alpine"* ]]; then
+        # Alpine没有netfilter-persistent，可以直接保存iptables规则
+        iptables-save > /etc/iptables/rules.v4
+        echo "iptables执行开放所有端口 (Alpine)"
+    else
+        echo "不支持此操作系统"
     fi
-    ins; 
+    install_deps && ins; 
     cip
 else
     echo "agsb脚本已安装"; 
