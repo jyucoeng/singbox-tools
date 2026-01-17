@@ -104,7 +104,6 @@ install_deps() {
         "${COMMON_PKGS[@]}"
         util-linux
         cronie
-        bash
     )
 
     # =========================
