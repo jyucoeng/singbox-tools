@@ -1,4 +1,4 @@
-#  singbox 一键安装脚本
+#  singbox 一键安装脚本（不带nginx订阅）
 # 1、 singbox 安装以及卸载
 ## singbox 一键安装脚本（4协议，vmess argo/trojan argo +hy2+vless-Reality+tuic，这些协议可自由组合）
 
@@ -63,7 +63,7 @@ trojan://${uuid}@${cf_host}:443?...
 - name=HK
 - ➡ HK-vmess / HK-vless
 
-# 常见组合调用方式
+# 2、常见组合调用方式
 
 ## 组合1️⃣、 仅 1个直连协议（不走 Argo,hypt与vlrt、tupt这几个端口参数选一个来写）
 
@@ -237,6 +237,13 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 ```
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)  del
 ```
+
+
+## 3、Json Argo Tunnel 获取 (推荐，token版就不用说了吧)
+用户可以通过 Cloudflare Json 生成网轻松获取: https://fscarmen.cloudflare.now.cc
+
+或者直接看fscarmen的说明: https://github.com/fscarmen/sing-box/blob/main/README.md#5json-argo-tunnel-%E8%8E%B7%E5%8F%96-%E6%8E%A8%E8%8D%90
+
 ## 以此类推，最后给一下协议组合吧
 
 | 你设置了什么                   | 实际生成的节点                                          |
