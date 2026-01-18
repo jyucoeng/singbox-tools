@@ -324,17 +324,35 @@ print_manage_commands() {
 ########################
 # 节点信息
 ########################
+
 show_node() {
+  # Ensure config file exists
+  if [[ ! -f "$CONFIG_FILE" ]]; then
+    red "❌ 配置文件未找到或者未安装"
+    exit 1
+  fi
+
+  # Extract port, username, and password from the config file using jq
+  PORT=$(jq -r '.inbounds[0].listen_port' "$CONFIG_FILE")
+  USERNAME=$(jq -r '.inbounds[0].users[0].username' "$CONFIG_FILE")
+  PASSWORD=$(jq -r '.inbounds[0].users[0].password' "$CONFIG_FILE")
+
+  # Fetch IPv4 and IPv6 addresses using curl
   IP_V4=$(curl -s4 --max-time 3 ipv4.ip.sb || true)
   IP_V6=$(curl -s6 --max-time 3 ipv6.ip.sb || true)
 
   echo
   green "👉 Socks5 节点信息"
-  [[ -n "$IP_V4" ]] && blue "IPv4: socks5://$USERNAME:$PASSWORD@$IP_V4:$PORT"
-  [[ -n "$IP_V6" ]] && yellow "IPv6: socks5://$USERNAME:$PASSWORD@[$IP_V6]:$PORT"
+  if [[ -n "$IP_V4" ]]; then
+    blue "IPv4: socks5://$USERNAME:$PASSWORD@$IP_V4:$PORT"
+  fi
+  if [[ -n "$IP_V6" ]]; then
+    yellow "IPv6: socks5://$USERNAME:$PASSWORD@$IP_V6:$PORT"
+  fi
 
   print_manage_commands
 }
+
 
 ########################
 # node 子命令依赖
@@ -399,4 +417,3 @@ main() {
 }
 
 main "$@"
-
