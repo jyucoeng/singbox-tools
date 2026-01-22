@@ -249,7 +249,7 @@ create_bashrc_if_missing() {
     chmod 644 "$HOME/.bashrc"
 
     echo "$HOME/.bashrc 文件已创建并设置了权限"
-  else
+  
     # echo "$HOME/.bashrc 文件已存在"
   fi
 }
