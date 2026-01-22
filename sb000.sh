@@ -1211,21 +1211,56 @@ agsbstatus() {
 
 # 把 jh.txt 转成 base64 订阅（兼容 busybox / GNU）
 update_subscription_file() {
-  # ✅ 没开订阅就不生成
-  is_true "$(get_subscribe_flag)" || return 0
+  # ✅ 打印 subscribe 的最终生效值（不同颜色）
+  local subscribe_flag
+  subscribe_flag="$(get_subscribe_flag)"
 
-  [ -s "$HOME/agsb/jh.txt" ] || return 0
-  mkdir -p /var/www/agsb
-
-  if command -v openssl >/dev/null 2>&1; then
-    openssl base64 -A -in "$HOME/agsb/jh.txt" > "/var/www/agsb/sub.txt"
+  if is_true "$subscribe_flag"; then
+    green "📌 subscribe = true ✅（订阅已开启）"
+  else
+    purple "📌 subscribe = false ⛔（订阅未开启）"
     return 0
   fi
 
-  if command -v base64 >/dev/null 2>&1; then
-    base64 -w 0 "$HOME/agsb/jh.txt" 2>/dev/null > "/var/www/agsb/sub.txt" \
-      || base64 "$HOME/agsb/jh.txt" | tr -d '\n' > "/var/www/agsb/sub.txt"
+  # ✅ 没有节点文件就不生成
+  if [ ! -s "$HOME/agsb/jh.txt" ]; then
+    purple "⚠️ 订阅源文件不存在或为空：$HOME/agsb/jh.txt（跳过生成 sub.txt）"
+    return 0
   fi
+
+  mkdir -p /var/www/agsb
+  local out="/var/www/agsb/sub.txt"
+
+  # ✅ 优先用 openssl（更通用）
+  if command -v openssl >/dev/null 2>&1; then
+    if openssl base64 -A -in "$HOME/agsb/jh.txt" > "$out" 2>/dev/null; then
+      green "✅ sub.txt 生成成功：$out"
+      return 0
+    else
+      red "❌ sub.txt 生成失败（openssl base64）"
+      return 1
+    fi
+  fi
+
+  # ✅ fallback：base64（兼容 busybox 与 GNU）
+  if command -v base64 >/dev/null 2>&1; then
+    if base64 -w 0 "$HOME/agsb/jh.txt" 2>/dev/null > "$out"; then
+      green "✅ sub.txt 生成成功：$out"
+      return 0
+    fi
+
+    # busybox base64 没有 -w 参数
+    if base64 "$HOME/agsb/jh.txt" 2>/dev/null | tr -d '\n' > "$out"; then
+      green "✅ sub.txt 生成成功：$out"
+      return 0
+    else
+      red "❌ sub.txt 生成失败（base64）"
+      return 1
+    fi
+  fi
+
+  red "❌ sub.txt 生成失败：系统缺少 openssl/base64"
+  return 1
 }
 
 
