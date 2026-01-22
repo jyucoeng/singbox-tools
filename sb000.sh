@@ -11,6 +11,20 @@ yellow(){ echo -e "\e[1;33m$1\033[0m"; }
 blue(){ echo -e "\e[1;34m$1\033[0m"; }
 purple(){ echo -e "\e[1;35m$1\033[0m"; }
 
+is_true() {
+  [ "$(printf '%s' "${1:-}" | tr 'A-Z' 'a-z')" = "true" ]
+}
+
+get_subscribe_flag() {
+  # 优先读落盘值（避免用户不带环境变量执行 agsb sub 时失效）
+  if [ -s "$HOME/agsb/subscribe" ]; then
+    cat "$HOME/agsb/subscribe"
+  else
+    echo "${subscribe:-false}"
+  fi
+}
+
+
 # 统一判断工具：只有值严格等于 yes 才视为启用
 is_yes() { [ "${1:-}" = "yes" ]; }
 
@@ -215,10 +229,15 @@ export ARGO_DOMAIN=${agn:-''};
 export ARGO_AUTH=${agk:-''}; 
 export ippz=${ippz:-''}; 
 export name=${name:-''}; 
-export NGINX_PORT=${NGINX_PORT:-"8080"}     # 订阅服务端口（Nginx）
 
+readonly NGINX_DEFAULT_PORT=8080
+readonly ARGO_DEFAULT_PORT=8001
 
-export ARGO_PORT=${ARGO_PORT:-"8001"}     # Argo 固定入口端口（本地）
+export nginx_pt=${nginx_pt:-$NGINX_DEFAULT_PORT}   # 订阅服务端口（Nginx）
+export argo_pt=${argo_pt:-$ARGO_DEFAULT_PORT}     # Argo 回源入口端口（本地）
+
+# ✅ 新增订阅开关（默认 false = 只装 nginx 不出订阅）
+export subscribe="${subscribe:-false}"
 
 
 
@@ -250,7 +269,6 @@ create_bashrc_if_missing() {
 
     echo "$HOME/.bashrc 文件已创建并设置了权限"
   
-    # echo "$HOME/.bashrc 文件已存在"
   fi
 }
 
@@ -594,33 +612,41 @@ nginx_conf_path() {
 }
 
 setup_nginx_subscribe() {
-    local port="${NGINX_PORT:-8080}"
-    local argo_port="${ARGO_PORT:-8001}"
-    echo "$port" > "$HOME/agsb/nginx_port"
-
-    local webroot="/var/www/agsb"
-    mkdir -p "$webroot"
-    chmod 755 /var /var/www /var/www/agsb 2>/dev/null
-    # 确保订阅文件存在
-    [ -f "$webroot/sub.txt" ] || : > "$webroot/sub.txt"
+  local port="${nginx_pt:-$NGINX_DEFAULT_PORT}"
+  local argo_port="${argo_pt:-$ARGO_DEFAULT_PORT}"
+  echo "$port" > "$HOME/agsb/nginx_port"
 
 
-    # 读端口（可能还没生成）
-    local vm_port tr_port uuid
-    uuid="$(cat "$HOME/agsb/uuid" 2>/dev/null)"
-    vm_port="$(cat "$HOME/agsb/port_vm_ws" 2>/dev/null)"
-    tr_port="$(cat "$HOME/agsb/port_tr" 2>/dev/null)"
+    # ✅端口相同会导致 nginx listen 冲突
+    if [ "$port" = "$argo_port" ]; then
+        red "❌ nginx_pt($port) 和 argo_pt($argo_port) 不能相同，否则 Nginx 监听冲突"
+        return 1
+    fi
+  
 
-    local conf
-    conf="$(nginx_conf_path)"
-    mkdir -p "$(dirname "$conf")" >/dev/null 2>&1
+  local webroot="/var/www/agsb"
+  mkdir -p "$webroot"
+  chmod 755 /var /var/www /var/www/agsb 2>/dev/null
 
-    
-    cat > "$conf" <<EOF
+  local vm_port tr_port uuid
+  uuid="$(cat "$HOME/agsb/uuid" 2>/dev/null)"
+  vm_port="$(cat "$HOME/agsb/port_vm_ws" 2>/dev/null)"
+  tr_port="$(cat "$HOME/agsb/port_tr" 2>/dev/null)"
+
+  local conf
+  conf="$(nginx_conf_path)"
+  mkdir -p "$(dirname "$conf")" >/dev/null 2>&1
+
+  cat > "$conf" <<EOF
 server {
     listen ${port};
     listen 127.0.0.1:${argo_port};
     server_name _;
+EOF
+
+  # ✅ 订阅仅在 subscribe=true 才开放
+  if is_true "$(get_subscribe_flag)" && [ -n "$uuid" ]; then
+    cat >> "$conf" <<EOF
 
     # 订阅输出（base64）
     location ^~ /sub/${uuid} {
@@ -628,14 +654,18 @@ server {
         alias /var/www/agsb/sub.txt;
         add_header Cache-Control "no-store";
     }
+EOF
+    # 确保订阅文件存在（只在开启订阅时需要）
+    [ -f "$webroot/sub.txt" ] || : > "$webroot/sub.txt"
+  fi
 
-    # --------- ws 反代（让固定 Argo 域名同域名下既能代理节点，又能访问 /sub） ---------
+  cat >> "$conf" <<EOF
 
+    # --------- ws 反代（固定 Argo 同域名下可代理节点） ---------
 EOF
 
-    # vmess ws 反代
-    if [ -n "$vm_port" ] && [ -n "$uuid" ]; then
-        cat >> "$conf" <<EOF
+  if [ -n "$vm_port" ] && [ -n "$uuid" ]; then
+    cat >> "$conf" <<EOF
     location /${uuid}-vm {
         proxy_pass http://127.0.0.1:${vm_port};
         proxy_http_version 1.1;
@@ -645,11 +675,10 @@ EOF
     }
 
 EOF
-    fi
+  fi
 
-    # trojan ws 反代
-    if [ -n "$tr_port" ] && [ -n "$uuid" ]; then
-        cat >> "$conf" <<EOF
+  if [ -n "$tr_port" ] && [ -n "$uuid" ]; then
+    cat >> "$conf" <<EOF
     location /${uuid}-tr {
         proxy_pass http://127.0.0.1:${tr_port};
         proxy_http_version 1.1;
@@ -659,21 +688,22 @@ EOF
     }
 
 EOF
-    fi
+  fi
 
-    cat >> "$conf" <<EOF
+  cat >> "$conf" <<EOF
     location / {
         return 404;
     }
 }
 EOF
 
-nginx -t >/dev/null 2>&1 || {
-  red "❌ Nginx 配置检查失败，请运行 nginx -t 查看原因"
-  nginx -t
+  nginx -t >/dev/null 2>&1 || {
+    red "❌ Nginx 配置检查失败，请运行 nginx -t 查看原因"
+    nginx -t
+    return 1
+  }
 }
 
-}
 
 start_nginx_service() {
     # systemd
@@ -774,21 +804,6 @@ ensure_cloudflared() {
     chmod +x "$out"
 }
 
-calc_argo_port() {
-    case "$argo" in
-        vmpt)
-            echo "Vmess" > "$HOME/agsb/vlvm"
-            cat "$HOME/agsb/port_vm_ws"
-            ;;
-        trpt)
-            echo "Trojan" > "$HOME/agsb/vlvm"
-            cat "$HOME/agsb/port_tr"
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-}
 
 install_argo_service_systemd() {
     local mode="$1"
@@ -1018,6 +1033,8 @@ if ! pgrep -f 'agsb/sing-box' >/dev/null 2>&1; then
     hypt="${port_hy2}" \
     tupt="${port_tu}" \
     vlrt="${port_vlr}" \
+    nginx_pt="${nginx_pt}" \
+    argo_pt="${argo_pt}" \
     agn="${ARGO_DOMAIN}" \
     agk="${ARGO_AUTH}"
   bash "\$HOME/bin/agsb"
@@ -1070,8 +1087,9 @@ ins(){
     sbbout
 
     # 订阅服务：生成订阅文件 + 启动 nginx
-    setup_nginx_subscribe
-    : > /var/www/agsb/sub.txt
+    setup_nginx_subscribe || exit 1
+    is_true "$(get_subscribe_flag)" && : > /var/www/agsb/sub.txt
+
     start_nginx_service
 
 
@@ -1086,7 +1104,7 @@ ins(){
         ensure_cloudflared
 
          # 2.2 计算 Argo 本地端口
-        argoport="${ARGO_PORT:-8001}"
+        argoport="${argo_pt:-$ARGO_DEFAULT_PORT}"
         echo "$argoport" > "$HOME/agsb/argoport.log"    
 
 
@@ -1141,14 +1159,21 @@ ins(){
 
 # Write environment variables to files for persistence
 write2AgsbFolders(){
-    # Write environment variables to files for persistence
-    echo "${vl_sni}" > "$HOME/agsb/vl_sni"
-    echo "${hy_sni}" > "$HOME/agsb/hy_sni"
-    echo "${tu_sni}" > "$HOME/agsb/tu_sni"
-    echo "${cdn_host}" > "$HOME/agsb/cdn_host"
-    echo "${NGINX_PORT}" > "$HOME/agsb/nginx_port"
+  mkdir -p "$HOME/agsb"
 
+  echo "${vl_sni}"    > "$HOME/agsb/vl_sni"
+  echo "${hy_sni}"    > "$HOME/agsb/hy_sni"
+  echo "${tu_sni}"    > "$HOME/agsb/tu_sni"
+  echo "${cdn_host}"  > "$HOME/agsb/cdn_host"
+
+  # ✅ 只写新变量
+  echo "${nginx_pt}"  > "$HOME/agsb/nginx_port"
+  echo "${argo_pt}"   > "$HOME/agsb/argo_port"
+
+  # ✅ 订阅开关落盘（默认 false）
+  echo "${subscribe}" > "$HOME/agsb/subscribe"
 }
+
 
 #   show status
 agsbstatus() {
@@ -1180,6 +1205,9 @@ agsbstatus() {
 
 # 把 jh.txt 转成 base64 订阅（兼容 busybox / GNU）
 update_subscription_file() {
+  # ✅ 没开订阅就不生成
+  is_true "$(get_subscribe_flag)" || return 0
+
   [ -s "$HOME/agsb/jh.txt" ] || return 0
   mkdir -p /var/www/agsb
 
@@ -1190,37 +1218,44 @@ update_subscription_file() {
 
   if command -v base64 >/dev/null 2>&1; then
     base64 -w 0 "$HOME/agsb/jh.txt" 2>/dev/null > "/var/www/agsb/sub.txt" \
-    || base64 "$HOME/agsb/jh.txt" | tr -d '\n' > "/var/www/agsb/sub.txt"
+      || base64 "$HOME/agsb/jh.txt" | tr -d '\n' > "/var/www/agsb/sub.txt"
   fi
 }
 
 
-# 输出订阅链接（规则：固定 Argo => https://域名/sub；否则 http://IP:NGINX_PORT/sub）
+# 输出订阅链接（规则：固定 Argo => https://域名/sub/uuid；否则 http://IP:nginx_port/sub/uuid）
+
 show_sub_url() {
-    local port="${NGINX_PORT}"
-    [ -s "$HOME/agsb/nginx_port" ] && port="$(cat "$HOME/agsb/nginx_port")"
+  # ✅ 没开订阅直接不输出
+  is_true "$(get_subscribe_flag)" || return 0
 
-    local sub_uuid
-    sub_uuid="$(cat "$HOME/agsb/uuid" 2>/dev/null)"
+  local port="${nginx_pt}"
+  [ -s "$HOME/agsb/nginx_port" ] && port="$(cat "$HOME/agsb/nginx_port")"
 
-    # 固定 Argo（JSON 或 Token）
-    if [ -n "${ARGO_DOMAIN}" ] && [ -n "${ARGO_AUTH}" ]; then
-        echo "https://${ARGO_DOMAIN}/sub/${sub_uuid}"
-        return 0
-    fi
+  local sub_uuid
+  sub_uuid="$(cat "$HOME/agsb/uuid" 2>/dev/null)"
 
-    # 普通 http：IP:PORT
-    local server_ip
-    server_ip=$(cat "$HOME/agsb/server_ip.log" 2>/dev/null)
-    [ -z "$server_ip" ] && server_ip="$( (curl -s4m5 -k https://icanhazip.com) || (wget -4 -qO- --tries=2 https://icanhazip.com) )"
+  [ -z "$sub_uuid" ] && return 0
 
-    # 兼容 v6
-    if echo "$server_ip" | grep -q ':' && ! echo "$server_ip" | grep -q '^\['; then
-        server_ip="[$server_ip]"
-    fi
+  # 固定 Argo（JSON 或 Token）
+  if [ -n "${ARGO_DOMAIN}" ] && [ -n "${ARGO_AUTH}" ]; then
+    echo "https://${ARGO_DOMAIN}/sub/${sub_uuid}"
+    return 0
+  fi
 
-    echo "http://${server_ip}:${port}/sub/${sub_uuid}"
+  # 普通 http：IP:PORT
+  local server_ip
+  server_ip=$(cat "$HOME/agsb/server_ip.log" 2>/dev/null)
+  [ -z "$server_ip" ] && server_ip="$( (curl -s4m5 -k https://icanhazip.com) || (wget -4 -qO- --tries=2 https://icanhazip.com) )"
+
+  # IPv6 加中括号
+  if echo "$server_ip" | grep -q ':' && ! echo "$server_ip" | grep -q '^\['; then
+    server_ip="[$server_ip]"
+  fi
+
+  echo "http://${server_ip}:${port}/sub/${sub_uuid}"
 }
+
 
 
 
@@ -1523,13 +1558,24 @@ if [ "$1" = "res" ]; then
     sleep 5 && echo "重启完成" && sleep 3 && cip; 
     exit; 
 fi
+
 if [ "$1" = "sub" ]; then
-    # 确保订阅文件存在
-    [ -s "$HOME/agsb/jh.txt" ] || cip >/dev/null 2>&1
-    update_subscription_file
-    echo "$(show_sub_url)"
-    exit
+  if ! is_true "$(get_subscribe_flag)"; then
+    yellow "订阅未启用（subscribe=false），如需订阅请在脚本前加：subscribe=true 并执行 rep"
+    exit 0
+  fi
+
+  update_subscription_file
+
+  u="$(show_sub_url)"
+  if [ -n "$u" ]; then
+    echo "$u"
+  else
+    red "❌ 订阅链接为空（可能 uuid 未生成）"
+  fi
+  exit 0
 fi
+
 
 if ! pgrep -f 'agsb/sing-box' >/dev/null 2>&1 && [ "$1" != "rep" ]; then
     cleandel
@@ -1556,6 +1602,8 @@ if ! pgrep -f 'agsb/sing-box' >/dev/null 2>&1 || [ "$1" = "rep" ]; then
     setenforce 0 >/dev/null 2>&1
     iptables -F
     iptables -P INPUT ACCEPT
+    iptables -P FORWARD ACCEPT
+    iptables -P OUTPUT ACCEPT
     fi
 
 
