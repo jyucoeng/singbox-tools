@@ -224,7 +224,7 @@ export ARGO_PORT=${ARGO_PORT:-"8001"}     # Argo 固定入口端口（本地）
 
 
 v46url="https://icanhazip.com"
-agsburl="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh"
+agsburl="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb000.sh"
 
 
 #彩虹打印
