@@ -1385,10 +1385,10 @@ agsbstatus() {
   else
     echo "Nginx：❌ $(red "未运行")（${sub_desc}，端口：${nginx_port}）"
     if is_true "$subscribe_flag"; then
-      yellow "⚠️ 订阅已开启，但 Nginx 未运行：请执行 agsb start 或重启 nginx"
+      yellow "❗ 订阅已开启，但 Nginx 未运行：请执行 agsb start 或重启 nginx"
     fi
     if $argo_needed; then
-      yellow "⚠️ 已启用 Argo，但 Nginx 未运行：cloudflared 回源将无法工作"
+      yellow "❗ 已启用 Argo，但 Nginx 未运行：cloudflared 回源将无法工作"
     fi
   fi
 }
@@ -1412,7 +1412,7 @@ update_subscription_file() {
 
   # ✅ 没有节点文件就不生成
   if [ ! -s "$HOME/agsb/jh.txt" ]; then
-    purple "⚠️ 订阅源文件不存在或为空：$HOME/agsb/jh.txt（跳过生成 sub.txt）"
+    purple "❗ 订阅源文件不存在或为空：$HOME/agsb/jh.txt（跳过生成 sub.txt）"
     return 0
   fi
 
@@ -1557,7 +1557,10 @@ cip(){
     #argodomain=$(cat "$HOME/agsb/sbargoym.log" 2>/dev/null); [ -z "$argodomain" ] && argodomain=$(grep -a trycloudflare.com "$HOME/agsb/argo.log" 2>/dev/null | awk 'NR==2{print}' | awk -F// '{print $2}' | awk '{print $1}')
    
     argodomain=$(cat "$HOME/agsb/sbargoym.log" 2>/dev/null)
-    [ -z "$argodomain" ] && argodomain=$(grep -aoE '[a-zA-Z0-9.-]+trycloudflare\.com' "$HOME/agsb/argo.log" | tail -n1)
+    
+    if need_argo && [ -z "$argodomain" ] && [ -s "$HOME/agsb/argo.log" ]; then
+        argodomain=$(grep -aoE '[a-zA-Z0-9.-]+trycloudflare\.com' "$HOME/agsb/argo.log" 2>/dev/null | tail -n1)
+    fi
 
     cdn_host=$(cat "$HOME/agsb/cdn_host")
 
