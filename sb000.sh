@@ -935,7 +935,13 @@ wait_and_check_argo() {
     else
         # 临时 Argo：从日志中解析 trycloudflare 域名
         #argodomain=$(grep -a trycloudflare.com "$HOME/agsb/argo.log" 2>/dev/null  | awk 'NR==2{print}' | awk -F// '{print $2}' | awk '{print $1}')
-        argodomain=$(grep -aoE '[a-zA-Z0-9.-]+trycloudflare\.com' "$HOME/agsb/argo.log" | tail -n1)
+       
+       # 临时 Argo：从日志中解析 trycloudflare 域名
+        if [ -s "$HOME/agsb/argo.log" ]; then
+            argodomain=$(grep -aoE '[a-zA-Z0-9.-]+trycloudflare\.com' "$HOME/agsb/argo.log" 2>/dev/null | tail -n1)
+        else
+            argodomain=""
+        fi
     fi
 
     if [ -n "${argodomain}" ]; then
@@ -1096,7 +1102,7 @@ ins(){
     # =====================================================
     # 2. Argo 相关逻辑（仅在启用 argo + vmag 时）
     # =====================================================
-    if [ -n "$argo" ] && [ -n "$vmag" ]; then
+   if { [ "$argo" = "vmpt" ] || [ "$argo" = "trpt" ]; } && [ -n "$vmag" ]; then
         echo
         echo "=========启用Cloudflared-argo内核========="
 
