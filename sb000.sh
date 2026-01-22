@@ -241,7 +241,16 @@ export argo_pt=${argo_pt:-$ARGO_DEFAULT_PORT}     # Argo 回源入口端口（�
 # ✅ 新增订阅开关（默认 false = 只装 nginx 不出订阅）
 export subscribe="${subscribe:-false}"
 
+# ✅ Reality 私钥环境变量（仅使用你指定的命名）
+# 只需要传私钥即可：脚本会自动计算/复用公钥，保证节点输出一致
+export reality_private="${reality_private:-""}"
+export reality_public="${reality_public:-""}"
 
+# ✅ Argo 优选端口白名单（仅 https 系端口）
+HTTPS_CDN_PORTS=(443 2053 2083 2087 2096 8443)
+
+cdn_pt="${cdn_pt:-443}"
+vl_sni_pt="${vl_sni_pt:-443}"
 
 
 v46url="https://icanhazip.com"
@@ -331,6 +340,43 @@ install_nginx_pkg() {
   green "✅ Nginx 安装完成"
   return 0
 }
+
+
+# Check if the given port is in the list of HTTPS CDN ports
+is_https_cdn_port() {
+  local p="${1:-}"
+  local x
+  for x in "${HTTPS_CDN_PORTS[@]}"; do
+    [ "$p" = "$x" ] && return 0
+  done
+  return 1
+}
+
+# ✅规范化 cdn_pt：非法就回退到默认端口（默认 443）
+normalize_cdn_pt() {
+  local p="${1:-}"
+  local fallback="${2:-443}"
+
+  # 空值直接回退
+  [ -z "$p" ] && { echo "$fallback"; return 0; }
+
+  # 非法端口回退
+  if ! is_https_cdn_port "$p"; then
+    yellow "⚠️ cdn_pt=$p 非法，仅支持 ${HTTPS_CDN_PORTS[*]}，已回退为 ${fallback}"
+    echo "$fallback"
+    return 0
+  fi
+
+  echo "$p"
+}
+
+# 调用规范化函数
+# ✅ 规范化 cdn_pt（让后续写入文件/输出节点都统一）
+cdn_pt="$(normalize_cdn_pt "$cdn_pt" 443)"
+vl_sni_pt="$(normalize_cdn_pt "$vl_sni_pt" 443)"
+export vl_sni_pt
+export cdn_pt
+
 
 # ================== 处理tunnel的json ==================
 
@@ -478,6 +524,236 @@ insuuid(){
     yellow "UUID密码：$uuid"
 }
 
+# Generate short_id
+get_short_id() {
+  # 用法：get_short_id [short_id_file_path]
+  # 返回：echo 输出 short_id
+  #
+  # 优先级：
+  # 1) 传了 reality_private → 直接由 reality_private 稳定推导 short_id（并写入文件）
+  # 2) 否则                → 读文件；文件无效/不存在则随机生成并落盘
+  local sid_file="${1:-$HOME/agsb/short_id}"
+  local sid=""
+
+  # 兼容：如果脚本里没有 yellow/green，就用 echo
+  command -v yellow >/dev/null 2>&1 || yellow(){ echo -e "$*"; }
+  command -v green  >/dev/null 2>&1 || green(){ echo -e "$*"; }
+
+  _is_hex() { echo "$1" | grep -qiE '^[0-9a-f]{8}$'; }
+
+  # 由 reality_private 推导一个稳定的 short_id
+  # 仅使用 reality_private 推导（更可控、更干净）
+  local rp="${reality_private:-}"
+  if [ -n "${rp:-}" ]; then
+    # 推导方式：sha256(reality_private) 取前 8 位 hex
+    if command -v sha256sum >/dev/null 2>&1; then
+      sid="$(printf "%s" "$rp" | sha256sum | awk '{print $1}' | cut -c1-8)"
+    elif command -v openssl >/dev/null 2>&1; then
+      sid="$(printf "%s" "$rp" | openssl dgst -sha256 2>/dev/null | awk '{print $NF}' | cut -c1-8)"
+    elif command -v md5sum >/dev/null 2>&1; then
+      sid="$(printf "%s" "$rp" | md5sum | awk '{print $1}' | cut -c1-8)"
+    else
+      # 兜底：仍然随机生成，但会落盘保持后续稳定
+      sid="$(head -c 4 /dev/urandom 2>/dev/null | od -An -tx1 | tr -d ' \n' | cut -c1-8)"
+    fi
+
+    sid="${sid,,}"
+    if _is_hex "$sid"; then
+      # 如果文件存在但不一致，覆盖以保证“只传 reality_private 也稳定一致”
+      if [ -f "$sid_file" ]; then
+        local old_sid
+        old_sid="$(cat "$sid_file" 2>/dev/null | tr -d ' \r\n')"
+        if [ -n "$old_sid" ] && [ "${old_sid,,}" != "$sid" ]; then
+          yellow "⚠️ 检测到 short_id 文件与 reality_private 推导值不同，已按 reality_private 覆盖以保证稳定"
+        fi
+      fi
+      echo "$sid" > "$sid_file"
+      green "✅ short_id 已由 reality_private 稳定推导, 值: $sid"
+      echo "$sid"
+      return 0
+    fi
+  fi
+
+  # 3) 没传 short_id 且未传 reality_private → 文件优先
+  if [ -f "$sid_file" ]; then
+    sid="$(cat "$sid_file" 2>/dev/null | tr -d ' \r\n')"
+    sid="${sid,,}"
+    if _is_hex "$sid"; then
+      yellow "从文件中读取 short_id, 值: $sid"
+      echo "$sid"
+      return 0
+    else
+      yellow "⚠️ short_id 文件内容无效（必须是8位hex），将重新生成"
+      rm -f "$sid_file" 2>/dev/null
+    fi
+  fi
+
+  # 4) 随机生成（8位 hex，等价 openssl rand -hex 4）
+  if command -v openssl >/dev/null 2>&1; then
+    sid="$(openssl rand -hex 4 2>/dev/null)"
+  else
+    sid=""
+  fi
+  if [ -z "$sid" ]; then
+    sid="$(head -c 4 /dev/urandom 2>/dev/null | od -An -tx1 | tr -d ' \n' | cut -c1-8)"
+  fi
+
+  sid="${sid,,}"
+  echo "$sid" > "$sid_file"
+  green "随机生成 short_id, 值: $sid"
+  echo "$sid"
+  return 0
+}
+
+derive_reality_public_key() {
+  # 用法：derive_reality_public_key "<privateKey(base64url)>"
+  # 输出：echo publicKey(base64url)；失败返回非0
+  local priv="$1"
+  local pub=""
+
+  # 1) 优先本地计算（需要 xxd + openssl）
+  if command -v xxd >/dev/null 2>&1 && command -v openssl >/dev/null 2>&1; then
+    local tmp_dir="${HOME}/agsb/.tmp_reality"
+    mkdir -p "$tmp_dir"
+
+    # base64url -> base64，并补 padding
+    local b64
+    b64="$(printf '%s' "$priv" | tr '_-' '/+')"
+    local mod=$(( ${#b64} % 4 ))
+    if [ $mod -eq 2 ]; then
+      b64="${b64}=="
+    elif [ $mod -eq 3 ]; then
+      b64="${b64}="
+    elif [ $mod -eq 1 ]; then
+      return 1
+    fi
+
+    # decode -> 32 bytes raw private key
+    echo "$b64" | base64 -d > "$tmp_dir/_x25519_priv_raw" 2>/dev/null || return 1
+
+    # 长度校验：必须 32 bytes
+    local priv_len
+    priv_len=$(stat -c%s "$tmp_dir/_x25519_priv_raw" 2>/dev/null || stat -f%z "$tmp_dir/_x25519_priv_raw" 2>/dev/null)
+    [ "$priv_len" != "32" ] && return 1
+
+    # DER prefix for PKCS#8 X25519 private key
+    local prefix_hex="302e020100300506032b656e04220420"
+    local priv_hex
+    priv_hex="$(xxd -p -c 256 "$tmp_dir/_x25519_priv_raw" | tr -d '\n')"
+    printf "%s%s" "$prefix_hex" "$priv_hex" | xxd -r -p > "$tmp_dir/_x25519_priv_der" || return 1
+
+    # DER PKCS8 -> PEM
+    openssl pkcs8 -inform DER -in "$tmp_dir/_x25519_priv_der" -nocrypt -out "$tmp_dir/_x25519_priv_pem" 2>/dev/null || return 1
+
+    # extract public key DER
+    openssl pkey -in "$tmp_dir/_x25519_priv_pem" -pubout -outform DER > "$tmp_dir/_x25519_pub_der" 2>/dev/null || return 1
+
+    # last 32 bytes are raw public key
+    tail -c 32 "$tmp_dir/_x25519_pub_der" > "$tmp_dir/_x25519_pub_raw" 2>/dev/null || return 1
+
+    # encode to base64url (no padding)
+    pub="$(cat "$tmp_dir/_x25519_pub_raw" | _reality_b64_encode_nowrap | tr '+/' '-_' | sed -E 's/=+$//')"
+    [ -n "$pub" ] && { echo "$pub"; return 0; }
+  fi
+
+  # 2) 兜底：在线换算（curl/wget 任意一种可用即可）
+  if command -v curl >/dev/null 2>&1; then
+    pub="$(curl -s --max-time 2 "https://realitykey.cloudflare.now.cc/?privateKey=${priv}" | awk -F '"' '/publicKey/{print $4}')"
+  elif command -v wget >/dev/null 2>&1; then
+    pub="$(wget --no-check-certificate -qO- --tries=3 --timeout=2 "https://realitykey.cloudflare.now.cc/?privateKey=${priv}" | awk -F '"' '/publicKey/{print $4}')"
+  fi
+
+  [ -n "$pub" ] && { echo "$pub"; return 0; }
+  return 1
+}
+# ================== Reality Keypair BEGIN ==================
+
+print_reality_keypair_hint() {
+  [ "${1:-0}" = "1" ] || return 0
+  [ -n "${reality_private:-}" ] || return 0
+
+  echo
+  yellow "🔐 Reality 私钥（请保存，后续可将此参数值放在安装参数里，可保持reality协议节点一致）"
+  green "reality_private=${reality_private}"
+  echo
+}
+
+
+init_reality_keypair() {
+  # 输出：导出 reality_private / reality_public；并写入 $HOME/agsb/reality.key
+  local key_file="$HOME/agsb/reality.key"
+  mkdir -p "$HOME/agsb"
+
+  local env_priv="${reality_private:-}"
+  local file_priv="" file_pub="" priv="" pub=""
+
+  # 是否打印 reality_private 提示（只在“首次生成新 keypair”时打印，避免刷屏）
+  local print_reality_private=0
+
+  # 读取文件现有 keypair（如果存在）
+  if [ -s "$key_file" ]; then
+    file_priv="$(awk '/PrivateKey/{print $NF; exit}' "$key_file" 2>/dev/null)"
+    file_pub="$(awk '/PublicKey/{print $NF; exit}' "$key_file" 2>/dev/null)"
+  fi
+
+  # A) 用户指定了私钥：优先用它，并确保公钥匹配
+  if [ -n "$env_priv" ]; then
+    priv="$env_priv"
+
+    # 若文件私钥一致，直接复用文件里的公钥（保证输出一致）
+    if [ -n "$file_priv" ] && [ "$file_priv" = "$priv" ] && [ -n "$file_pub" ]; then
+      pub="$file_pub"
+    else
+      pub="$(derive_reality_public_key "$priv" 2>/dev/null)" || pub=""
+    fi
+
+    # 推导失败：回退为 sing-box 生成（避免配置不可用）
+    if [ -z "$pub" ]; then
+      yellow "⚠️ 无法从指定 Reality 私钥推导公钥，已回退为自动生成一对新的 Reality Keypair"
+      local kp
+      kp=$("$HOME/agsb/sing-box" generate reality-keypair 2>/dev/null)
+      priv="$(awk '/PrivateKey/{print $NF}' <<< "$kp")"
+      pub="$(awk '/PublicKey/{print $NF}' <<< "$kp")"
+      print_reality_private=1
+    fi
+
+    printf "PrivateKey: %s\nPublicKey: %s\n" "$priv" "$pub" > "$key_file"
+    chmod 600 "$key_file" 2>/dev/null
+
+    export reality_private="$priv" reality_public="$pub"
+
+    # ✅ 仅当生成了新 keypair 才提示（避免刷屏）
+    print_reality_keypair_hint "$print_reality_private"
+    return 0
+  fi
+
+  # B) 没传私钥：能复用文件就复用文件（保持稳定）
+  if [ -n "$file_priv" ] && [ -n "$file_pub" ]; then
+    export reality_private="$file_priv" reality_public="$file_pub"
+    return 0
+  fi
+
+  # C) 文件也没有：生成一对新的（首次生成）
+  local kp
+  kp=$("$HOME/agsb/sing-box" generate reality-keypair 2>/dev/null)
+  priv="$(awk '/PrivateKey/{print $NF}' <<< "$kp")"
+  pub="$(awk '/PublicKey/{print $NF}' <<< "$kp")"
+
+  printf "PrivateKey: %s\nPublicKey: %s\n" "$priv" "$pub" > "$key_file"
+  chmod 600 "$key_file" 2>/dev/null
+
+  export reality_private="$priv" reality_public="$pub"
+
+  # ✅ 首次生成新 keypair → 打印一次提示
+  print_reality_private=1
+  print_reality_keypair_hint "$print_reality_private"
+  return 0
+}
+
+# ================== Reality Keypair END ==================
+
+
+
 
 # Install and configure Sing-box
 installsb(){
@@ -576,20 +852,15 @@ EOF
             "$HOME/agsb/sing-box" generate reality-keypair > "$HOME/agsb/reality.key"; 
         fi
 
-        private_key=$(sed -n '1p' "$HOME/agsb/reality.key" | awk '{print $2}')
+          # ✅ Reality Keypair：只传私钥即可（自动算公钥/或复用文件），节点输出保持一致
+        init_reality_keypair
+        private_key="${reality_private}"
+        short_id="$(get_short_id "$HOME/agsb/short_id")"
 
-        if [ -f "$HOME/agsb/short_id" ]; then
-            short_id=$(cat "$HOME/agsb/short_id")
-            yellow "从文件中读取short_id,值: $short_id"
-        else
-            short_id=$(openssl rand -hex 4)
-            echo "$short_id" > "$HOME/agsb/short_id"
-            green "随机生成short_id,值: $short_id"
-        fi
 
         # www.ua.edu
         cat >> "$HOME/agsb/sb.json" <<EOF
-{"type": "vless", "tag": "vless-reality-vision-sb", "listen": "::", "listen_port": ${port_vlr},"sniff": true,"users": [{"uuid": "${uuid}","flow": "xtls-rprx-vision"}],"tls": {"enabled": true,"server_name": "${vl_sni}","reality": {"enabled": true,"handshake": {"server": "${vl_sni}","server_port": 443},"private_key": "${private_key}","short_id": ["${short_id}"]}}},
+{"type": "vless", "tag": "vless-reality-vision-sb", "listen": "::", "listen_port": ${port_vlr},"sniff": true,"users": [{"uuid": "${uuid}","flow": "xtls-rprx-vision"}],"tls": {"enabled": true,"server_name": "${vl_sni}","reality": {"enabled": true,"handshake": {"server": "${vl_sni}","server_port": ${vl_sni_pt}},"private_key": "${private_key}","short_id": ["${short_id}"]}}},
 EOF
     fi
 }
@@ -1289,6 +1560,7 @@ write2AgsbFolders(){
   echo "${hy_sni}"    > "$HOME/agsb/hy_sni"
   echo "${tu_sni}"    > "$HOME/agsb/tu_sni"
   echo "${cdn_host}"  > "$HOME/agsb/cdn_host"
+  echo "${cdn_pt}"   > "$HOME/agsb/cdn_pt"
 
   # ✅ 只写新变量
   echo "${nginx_pt}"  > "$HOME/agsb/nginx_port"
@@ -1486,6 +1758,27 @@ show_sub_url() {
 }
 
 
+ensure_and_print_reality_private_for_cip() {
+  local want_print="${1:-0}"
+  [ "$want_print" = "1" ] || return 0
+
+  if [ -z "$reality_private" ] && [ -s "$HOME/agsb/reality.key" ]; then
+    reality_private="$(awk '/PrivateKey/{print $NF; exit}' "$HOME/agsb/reality.key" 2>/dev/null)"
+    reality_public="$(awk '/PublicKey/{print $NF; exit}' "$HOME/agsb/reality.key" 2>/dev/null)"
+  fi
+
+  if [ -n "$reality_private" ]; then
+    print_reality_keypair_hint 1
+  fi
+}
+
+print_reality_key(){
+    case "${1:-}" in
+    key|rp|showkey)
+        ensure_and_print_reality_private_for_cip 1
+        ;;
+    esac
+}
 
 
 append_jh() {
@@ -1553,6 +1846,9 @@ cip(){
         green "$vless_link"
         append_jh "$vless_link"
         echo;
+
+        # 查看节点时提示用户保存私钥（方便下次保持节点一致）,一般这里的$1值为"key"
+         print_reality_key "$1"
     fi
     #argodomain=$(cat "$HOME/agsb/sbargoym.log" 2>/dev/null); [ -z "$argodomain" ] && argodomain=$(grep -a trycloudflare.com "$HOME/agsb/argo.log" 2>/dev/null | awk 'NR==2{print}' | awk -F// '{print $2}' | awk '{print $1}')
    
@@ -1563,15 +1859,17 @@ cip(){
     fi
 
     cdn_host=$(cat "$HOME/agsb/cdn_host")
+    cdn_pt=$(cat "$HOME/agsb/cdn_pt" 2>/dev/null)
+    cdn_pt="$(normalize_cdn_pt "$cdn_pt" 443)"
 
     if [ -n "$argodomain" ]; then
         vlvm=$(cat $HOME/agsb/vlvm 2>/dev/null); uuid=$(cat "$HOME/agsb/uuid")
         if [ "$vlvm" = "Vmess" ]; then
-            vmatls_link1="vmess://$(echo "{\"v\":\"2\",\"ps\":\"${sxname}vmess-ws-tls-argo-$hostname-443\",\"add\":\"${cdn_host}\",\"port\":\"443\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":\"$argodomain\",\"path\":\"/${uuid}-vm\",\"tls\":\"tls\",\"sni\":\"$argodomain\"}" | base64 | tr -d '\n\r')"
+            vmatls_link1="vmess://$(echo "{\"v\":\"2\",\"ps\":\"${sxname}vmess-ws-tls-argo-$hostname-${cdn_pt}\",\"add\":\"${cdn_host}\",\"port\":\"${cdn_pt}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":\"$argodomain\",\"path\":\"/${uuid}-vm\",\"tls\":\"tls\",\"sni\":\"$argodomain\"}" | base64 | tr -d '\n\r')"
            
             tratls_link1=""
         elif [ "$vlvm" = "Trojan" ]; then
-            tratls_link1="trojan://${uuid}@${cdn_host}:443?security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-tr&sni=${argodomain}&fp=chrome#${sxname}trojan-ws-tls-argo-$hostname-443"
+            tratls_link1="trojan://${uuid}@${cdn_host}:${cdn_pt}?security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-tr&sni=${argodomain}&fp=chrome#${sxname}trojan-ws-tls-argo-$hostname-${cdn_pt}"
             vmatls_link1=""
         fi
 
@@ -1588,7 +1886,7 @@ cip(){
         fi
 
         green ""
-        green "💣 443端口 Argo-TLS 节点 (优选IP可替换):"
+        green "💣 ${cdn_pt}端口 Argo-TLS 节点 (优选IP可替换):"
         green "${vmatls_link1}${tratls_link1}" 
         append_jh "${vmatls_link1}${tratls_link1}"
         yellow "---------------------------------------------------------"
@@ -1782,7 +2080,7 @@ fi
 
 if [ "$1" = "list" ]; then 
     
-    cip; 
+    cip "$2"
     exit; 
 fi
 if [ "$1" = "ups" ]; then 
@@ -1860,7 +2158,8 @@ if ! pgrep -f 'agsb/sing-box' >/dev/null 2>&1 || [ "$1" = "rep" ]; then
         echo "不支持此操作系统"
     fi
     ins; 
-    cip
+    # 显示节点信息 这里的key是一个定值，为了打印私钥
+    cip "key"
 else
     echo "agsb脚本已安装"; 
     echo; 
