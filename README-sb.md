@@ -113,7 +113,9 @@ trojan://${uuid}@${cf_host}:443?...
 ## ⚠️注意：nginx_pt与argo_pt的值不能同时为8001，不然会导致监听混乱。
 
 
-## 以下为 红框里面为一般要传的变量
+## 以下为 参数上面有红线代表可以不传的变量
+<img width="1020" height="428" alt="CleanShot 2026-01-23 at 10 30 19" src="https://github.com/user-attachments/assets/bb336e89-df63-493d-8ee3-6c821870b36c" />
+
 
 # 2、常见组合调用方式
 
