@@ -2170,7 +2170,7 @@ cip(){
     yellow "========================================================="; 
     purple "相关快捷方式如下："; 
     showmode
-    ensure_agsb_shortcut
+    
 }
 
 # Remove agsb folder
