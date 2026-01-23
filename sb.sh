@@ -289,10 +289,128 @@ create_bashrc_if_missing
 VERSION="1.0.2(2026-01-23)"
 AUTHOR="littleDoraemon"
 
+
+# Ensure agsb shortcut
+
+ensure_agsb_shortcut() {
+  local wrapper="$HOME/agsb/agsb"
+  local link_sys1="/usr/local/bin/agsb"
+  local link_sys2="/usr/bin/agsb"
+  local link_home="$HOME/bin/agsb"
+
+  mkdir -p "$HOME/agsb" "$HOME/bin"
+
+  # ✅ Alpine 最小系统可能没有 bash，提前检查
+  if ! command -v bash >/dev/null 2>&1; then
+    yellow "⚠️ 检测到系统未安装 bash，agsb 快捷命令需要 bash 才能运行"
+    yellow "👉 Alpine 请先执行：apk add --no-cache bash"
+    # 不直接 exit，继续创建文件（用户装好 bash 后立刻可用）
+  fi
+
+  # wrapper：优先本地脚本，否则在线拉取 agsburl
+  cat > "$wrapper" <<EOF
+#!/usr/bin/env bash
+set -e
+LOCAL_SCRIPT="$HOME/agsb/sb000.sh"
+
+if [ -s "\$LOCAL_SCRIPT" ]; then
+  exec bash "\$LOCAL_SCRIPT" "\$@"
+else
+  exec bash <(curl -Ls "$agsburl") "\$@"
+fi
+EOF
+  chmod +x "$wrapper"
+
+  # home 链接兜底
+  ln -sf "$wrapper" "$link_home"
+  chmod +x "$link_home"
+
+  # ✅关键：系统目录（立刻生效）
+  if [ "$(id -u)" -eq 0 ]; then
+    # Alpine 有时 /usr/local/bin 不存在，创建它
+    [ -d "/usr/local/bin" ] || mkdir -p /usr/local/bin 2>/dev/null
+
+    if [ -d "/usr/local/bin" ] && [ -w "/usr/local/bin" ]; then
+      ln -sf "$wrapper" "$link_sys1"
+      chmod +x "$link_sys1"
+    elif [ -d "/usr/bin" ] && [ -w "/usr/bin" ]; then
+      ln -sf "$wrapper" "$link_sys2"
+      chmod +x "$link_sys2"
+    fi
+  fi
+
+  # 脚本进程内刷新 PATH（让脚本内部后续也能直接调用 agsb）
+  export PATH="/usr/local/bin:/usr/bin:$HOME/bin:$PATH"
+  hash -r 2>/dev/null || true
+
+  # 写入 bashrc（下次登录兜底）
+  if ! grep -qs 'export PATH="\$HOME/bin:\$PATH"' "$HOME/.bashrc" 2>/dev/null; then
+    echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.bashrc"
+  fi
+
+  # ✅你要求的“用代码实现 source ~/.bashrc”
+  if [ -n "$BASH_VERSION" ] && [ -f "$HOME/.bashrc" ]; then
+    # shellcheck disable=SC1090
+    source "$HOME/.bashrc" 2>/dev/null || true
+  fi
+
+  # 输出状态
+  if command -v agsb >/dev/null 2>&1; then
+    green "✅ 已创建快捷命令：agsb（已可用：$(command -v agsb)）"
+    echo -e "👉 例如：agsb list / agsb rep / agsb del"
+  else
+    yellow "⚠️ 已创建快捷命令 agsb，但当前环境未识别到命令"
+    yellow "👉 若 Alpine 未装 bash：apk add --no-cache bash"
+  fi
+}
+
+cleanup_agsb_shortcut() {
+  local wrapper="$HOME/agsb/agsb"
+  local link_sys1="/usr/local/bin/agsb"
+  local link_sys2="/usr/bin/agsb"
+  local link_home="$HOME/bin/agsb"
+
+  # 1) 删除快捷命令入口（系统级 + 用户级）
+  rm -f "$link_sys1" "$link_sys2" "$link_home" 2>/dev/null
+  rm -f "$wrapper" 2>/dev/null
+
+  # 2) bashrc 清理（下次登录也不再出现）
+  if [ -f "$HOME/.bashrc" ]; then
+    # 清理：export PATH="$HOME/bin:$PATH"
+    sed -i '/export PATH="\$HOME\/bin:\$PATH"/d' "$HOME/.bashrc" 2>/dev/null || true
+  fi
+
+  # 3) 立刻失效：刷新 shell 命令缓存（Debian/Alpine 都适用）
+  # hash -r 是 bash 内建，command -v hash 成功说明当前shell支持
+  hash -r 2>/dev/null || true
+  command -v rehash >/dev/null 2>&1 && rehash 2>/dev/null || true
+
+  # 4) 你要求的：用代码实现 “source ~/.bashrc”
+  # 注意：只有当脚本是 source 执行时，才会影响当前终端环境；否则仅影响脚本进程本身
+  if [ -n "$BASH_VERSION" ] && [ -f "$HOME/.bashrc" ]; then
+    # shellcheck disable=SC1090
+    source "$HOME/.bashrc" 2>/dev/null || true
+    hash -r 2>/dev/null || true
+  fi
+
+  # 5) 输出确认：确保“当前进程内”已经不可用
+  if command -v agsb >/dev/null 2>&1; then
+    yellow "⚠️ 已执行清理，但当前环境仍能找到 agsb：$(command -v agsb)"
+    yellow "👉 可能是你当前终端 PATH 里还有别的 agsb（例如你自己手动放过）"
+    yellow "👉 你可以执行：which -a agsb 查看残留来源"
+  else
+    green "✅ 快捷命令 agsb 已清理（当前环境已立即失效）"
+  fi
+}
+
+
+
+
+
 # Show script mode
 showmode(){
     blue "===================================================="
-    gradient "       agsb 一键脚本（vmess/trojan Argo选1,vless+hy2+tuic 3个直连）"
+    gradient "       singbox 一键脚本（vmess/trojan Argo选1,vless+hy2+tuic 3个直连）"
     green    "       作者：$AUTHOR"
     yellow   "       版本：$VERSION"
     blue "===================================================="
@@ -1687,6 +1805,8 @@ ins(){
     #    （进程检测 / bashrc / cron / 自启）
     # =====================================================
     post_install_finalize_legacy
+
+    ensure_agsb_shortcut
 }
 
 
@@ -2036,7 +2156,6 @@ cip(){
     fi
 
     update_subscription_file
-    
     echo
     yellow "📌 节点订阅地址："
     if ! is_true "$(get_subscribe_flag)"; then
@@ -2051,6 +2170,7 @@ cip(){
     yellow "========================================================="; 
     purple "相关快捷方式如下："; 
     showmode
+    
 }
 
 # Remove agsb folder
@@ -2108,6 +2228,7 @@ cleandel(){
         rc-update del nginx default >/dev/null 2>&1
     fi
 
+  cleanup_agsb_shortcut
 
 }
 
