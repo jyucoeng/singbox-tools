@@ -309,7 +309,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 ```
 
 
-## 3、Json Argo Tunnel 获取 (推荐，token版就不用说了吧)
+# 3、Json Argo Tunnel 获取 (推荐，token版就不用说了吧)
 用户可以通过 Cloudflare Json 生成网轻松获取: https://fscarmen.cloudflare.now.cc
 
 或者直接看fscarmen的说明: https://github.com/fscarmen/sing-box/blob/main/README.md#5json-argo-tunnel-%E8%8E%B7%E5%8F%96-%E6%8E%A8%E8%8D%90
