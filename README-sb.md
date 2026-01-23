@@ -6,7 +6,7 @@ cloudflared和nginx 用不到的时候就不会下载，只有配置了相关参
 举🌰说明：
 
 
-```bash
+```
 
 uuid=0631a7f3-09f8-4144-acf2-a4f5bd9ed281 \
 cdn_host="cdns.doon.eu.org" \
