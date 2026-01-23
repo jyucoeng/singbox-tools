@@ -343,18 +343,18 @@ cleanup_agsb_shortcut() {
 # Show script mode
 showmode(){
     blue "===================================================="
-    gradient "       agsb 一键脚本（vmess/trojan Argo选1,vless+hy2+tuic 3个直连）"
+    gradient "       ag 一键脚本（vmess/trojan Argo选1,vless+hy2+tuic 3个直连）"
     green    "       作者：$AUTHOR"
     yellow   "       版本：$VERSION"
     blue "===================================================="
  
     yellow "主脚本：bash <(curl -Ls ${agsburl}) 或 bash <(wget -qO- ${agsburl})"
-    yellow "显示节点信息：agsb list"
-    yellow "覆盖式安装的： agsb rep"
-    yellow "更新Singbox内核：agsb ups"
-    yellow "重启脚本：agsb res"
-    yellow "卸载脚本：agsb del"
-    yellow "Nginx相关：agsb nginx_start | nginx_stop | nginx_restart | nginx_status"
+    yellow "显示节点信息：ag list"
+    yellow "覆盖式安装的： ag rep"
+    yellow "更新Singbox内核：ag ups"
+    yellow "重启脚本：ag res"
+    yellow "卸载脚本：ag del"
+    yellow "Nginx相关：ag nginx_start | nginx_stop | nginx_restart | nginx_status"
     echo "---------------------------------------------------------"
 }
 
@@ -2324,7 +2324,7 @@ if ! pgrep -f 'agsb/sing-box' >/dev/null 2>&1 || [ "$1" = "rep" ]; then
 
     echo "VPS系统：$op"; 
     echo "CPU架构：$cpu"; 
-    echo "agsb脚本开始安装/更新…………" && sleep 1
+    echo "ag脚本开始安装/更新…………" && sleep 1
 
     # 获取操作系统名称
     os_name=$(awk -F= '/^NAME/{print $2}' /etc/os-release)
@@ -2358,7 +2358,7 @@ if ! pgrep -f 'agsb/sing-box' >/dev/null 2>&1 || [ "$1" = "rep" ]; then
     # 显示节点信息 这里的key是一个定值，为了打印私钥
     cip "key"
 else
-    echo "agsb脚本已安装"; 
+    echo "ag脚本已安装"; 
     echo; 
     agsbstatus; 
     echo; 
