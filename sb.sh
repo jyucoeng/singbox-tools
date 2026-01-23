@@ -2036,6 +2036,8 @@ cip(){
     fi
 
     update_subscription_file
+    
+    echo
     yellow "📌 节点订阅地址："
     if ! is_true "$(get_subscribe_flag)"; then
         purple "⛔ 未开启订阅"
