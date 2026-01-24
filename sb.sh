@@ -1498,7 +1498,7 @@ wait_and_check_argo() {
   local ym_log="$HOME/agsb/sbargoym.log"
   local argodomain=""
   local i=0
-  local max_wait=25
+  local max_wait=5
 
   # ✅ 没启用 argo：直接跳过
   if ! need_argo; then
