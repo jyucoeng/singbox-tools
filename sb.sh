@@ -293,7 +293,7 @@ create_bashrc_if_missing() {
 create_bashrc_if_missing
 
 # ================== 系统bashrc函数 ==================
-VERSION="1.0.4(2026-01-25)"
+VERSION="1.0.4(2026-01-26)"
 AUTHOR="littleDoraemon"
 
 
