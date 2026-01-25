@@ -604,7 +604,7 @@ v4v6(){
 # Set up name for nodes and IP version preference
 set_sbyx(){
     if [ -n "$name" ]; then sxname=$name-; echo "$sxname" > "$HOME/agsb/name"; echo; yellow "所有节点名称前缀：$name"; fi
-    echo "Checking IPv4 and IPv6 connectivity..."
+    echo "Checking IPv4 and IPv6 connectivity,ready to get ip..."
     v4v6
     echo "Connectivity check completed."
     if (curl -s4m5 -k "$v46url" >/dev/null 2>&1) || (wget -4 -qO- --tries=2 "$v46url" >/dev/null 2>&1); then v4_ok=true; fi
