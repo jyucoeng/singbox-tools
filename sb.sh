@@ -2504,6 +2504,7 @@ fi
 
 # 安装步骤(不带参数或者参数为 ins)
 if [ -z "$1" ] || [ "$1" = "ins" ]; then
+    yellow "开始安装流程..."; 
     install_step
 fi
 
