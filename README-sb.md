@@ -184,6 +184,12 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ```
 
+### 如何根据运行状态判断是否正常安装和启动了？看下图
+<img width="448" height="111" alt="CleanShot 2026-01-25 at 19 18 41" src="https://github.com/user-attachments/assets/3c474b11-9913-4343-bd8d-eb69d4283314" />
+
+### 如果全协议，正常安装会出现上图的运行状态，如果不开订阅和argo，就相应减少要看的对应服务的状态就行。
+
+
 # 2、常见组合调用方式
 
 ## 组合1️⃣、 仅 1个直连协议（不走 Argo,hypt与vlrt、tupt这几个端口参数选一个来写）
