@@ -2178,40 +2178,6 @@ cip(){
     
 }
 
-cleanup_nginx() {
-  # 提示用户是否卸载 nginx
-  read -p "是否卸载 nginx？（输入Y确认卸载,直接回车或者输入N视为不卸载）: " uninstall_nginx
-  if [[ "$uninstall_nginx" =~ ^(YES|yes|y|Y)$ ]]; then
-    yellow "正在卸载 nginx..."
-
-    # 停止 nginx 服务
-    pkill -15 nginx >/dev/null 2>&1
-    if pidof systemd >/dev/null 2>&1; then
-        systemctl stop nginx >/dev/null 2>&1
-        systemctl disable nginx >/dev/null 2>&1
-    elif command -v rc-service >/dev/null 2>&1; then
-        rc-service nginx stop >/dev/null 2>&1
-        rc-update del nginx default >/dev/null 2>&1
-    fi
-    
-    # 清理 nginx 配置文件
-    rm -f "$(nginx_conf_path)" 2>/dev/null
-
-    yellow "Nginx 已被卸载并禁用自启。"
-  else
-    yellow "Nginx 将不会被卸载，正在停止 nginx..."
-
-    # 停止 nginx 服务
-    pkill -15 nginx >/dev/null 2>&1
-    if pidof systemd >/dev/null 2>&1; then
-        systemctl stop nginx >/dev/null 2>&1
-    elif command -v rc-service >/dev/null 2>&1; then
-        rc-service nginx stop >/dev/null 2>&1
-    fi
-    yellow "Nginx 已停止运行。"
-  fi
-}
-
 
 # Remove agsb folder
 cleandel(){
@@ -2256,7 +2222,17 @@ cleandel(){
     fi
 
   # 清理 nginx
-  cleanup_nginx
+    pkill -15 nginx >/dev/null 2>&1
+    rm -f "$(nginx_conf_path)" 2>/dev/null
+
+    # 禁用 nginx 自启（避免卸载后 nginx 仍然起来）
+    if pidof systemd >/dev/null 2>&1; then
+        systemctl stop nginx >/dev/null 2>&1
+        systemctl disable nginx >/dev/null 2>&1
+    elif command -v rc-service >/dev/null 2>&1; then
+        rc-service nginx stop >/dev/null 2>&1
+        rc-update del nginx default >/dev/null 2>&1
+    fi
 
   cleanup_agsb_shortcut
 
