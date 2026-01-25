@@ -1,3 +1,4 @@
+
 #!/usr/bin/env bash
 export LANG=en_US.UTF-8
 
@@ -225,6 +226,9 @@ export port_hy2=${hypt:-''};
 export port_vlr=${vlrt:-''}; 
 export port_tu=${tupt:-''}; 
 
+# 获取到的IP和出口ip不一样的时候，优先使用出口ip也就是out_ip
+export out_ip=${out_ip:-''};
+
 export argo=${argo:-''}; 
 export ARGO_DOMAIN=${agn:-''}; 
 export ARGO_AUTH=${agk:-''}; 
@@ -289,7 +293,7 @@ create_bashrc_if_missing() {
 create_bashrc_if_missing
 
 # ================== 系统bashrc函数 ==================
-VERSION="1.0.3(2026-01-25)"
+VERSION="1.0.4(2026-01-25)"
 AUTHOR="littleDoraemon"
 
 
@@ -2081,17 +2085,121 @@ append_jh() {
   echo -e "$1" >> "$HOME/agsb/jh.txt"
 }
 
+# 定义验证 IP 地址是否合法的函数
+is_valid_ip() {
+    local ip="$1"
+    
+    # 如果 IP 为空，视为无效 IP
+    if [ -z "$ip" ]; then
+        return 1  # 返回 1 表示无效的 IP 地址
+    fi
+
+    # 检查是否是有效的 IPv4 地址
+    if echo "$ip" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+        return 0  # 返回 0 表示是有效的 IPv4 地址
+    # 检查是否是有效的 IPv6 地址
+    elif echo "$ip" | grep -qE '^([a-fA-F0-9:]+:+)+[a-fA-F0-9]+$'; then
+        return 0  # 返回 0 表示是有效的 IPv6 地址
+    else
+        return 1  # 返回 1 表示无效的 IP 地址
+    fi
+}
+
+
+ipbest(){
+    # Fetch the IP address using curl or wget
+    serip=$( (curl -s4m5 -k "$v46url") || (wget -4 -qO- --tries=2 "$v46url") )
+    
+    # Check if it's an IPv6 address or IPv4 and set server_ip accordingly
+    if echo "$serip" | grep -q ':'; then
+        server_ip="[$serip]"  # For IPv6, wrap the IP in brackets
+    else
+        server_ip="$serip"    # For IPv4, use the IP as is
+    fi
+
+    # Check if out_ip is valid and not equal to server_ip, if so, update server_ip
+    if [ -n "$out_ip" ] && is_valid_ip "$out_ip" && [ "$server_ip" != "$out_ip" ]; then
+        if echo "$out_ip" | grep -q ':'; then
+            server_ip="[$out_ip]"  # For IPv6, wrap the IP in brackets
+        else
+            server_ip="$out_ip"    # For IPv4, use the IP as is
+        fi
+    fi
+
+    # Save the server_ip to the log
+    echo "$server_ip" > "$HOME/agsb/server_ip.log"
+}
+
+
+
+ipchange(){
+    v4v6
+    v4dq=$( (curl -s4m5 -k https://ip.fm 2>/dev/null | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/') || (wget -4 -qO- --tries=2 https://ip.fm 2>/dev/null | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/') )
+    v6dq=$( (curl -s6m5 -k https://ip.fm 2>/dev/null | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/') || (wget -6 -qO- --tries=2 https://ip.fm 2>/dev/null | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/') )
+    
+    # Check if out_ip is non-empty and is a valid IP (IPv4 or IPv6)
+    if [ -n "$out_ip" ] && is_valid_ip "$out_ip"; then
+        # Check if out_ip is IPv6 or IPv4
+        if echo "$out_ip" | grep -q ':'; then
+            # If out_ip is IPv6 and different from server_ip, update server_ip
+            if [ "$server_ip" != "[$out_ip]" ]; then
+                server_ip="[$out_ip]"
+                echo "$server_ip" > "$HOME/agsb/server_ip.log"
+            fi
+        else
+            # If out_ip is IPv4 and different from server_ip, update server_ip
+            if [ "$server_ip" != "$out_ip" ]; then
+                server_ip="$out_ip"
+                echo "$server_ip" > "$HOME/agsb/server_ip.log"
+            fi
+        fi
+    fi
+
+    # If out_ip is not set or is invalid, proceed with default IP logic
+    if [ -z "$v4" ]; then 
+        vps_ipv4='无IPV4'
+        vps_ipv6="$v6"
+        location=$v6dq
+    elif [ -n "$v4" ] && [ -n "$v6" ]; then 
+        vps_ipv4="$v4"
+        vps_ipv6="$v6"
+        location=$v4dq
+    else 
+        vps_ipv4="$v4"
+        vps_ipv6='无IPV6'
+        location=$v4dq
+    fi
+    
+    echo; agsbstatus; echo; 
+    green "=========当前服务器本地IP情况========="
+    yellow "本地IPV4地址：$vps_ipv4"
+    purple "本地IPV6地址：$vps_ipv6"
+    green "服务器地区：$location"
+    echo; sleep 2
+    
+    # Continue with ippz-based IP assignment logic
+    if [ "$ippz" = "4" ]; then 
+        if [ -z "$v4" ]; then 
+            ipbest
+        else
+            server_ip="$v4"
+            echo "$server_ip" > "$HOME/agsb/server_ip.log"
+        fi
+    elif [ "$ippz" = "6" ]; then 
+        if [ -z "$v6" ]; then 
+            ipbest
+        else
+            server_ip="[$v6]"
+            echo "$server_ip" > "$HOME/agsb/server_ip.log"
+        fi
+    else 
+        ipbest
+    fi
+}
+
 # show nodes
 cip(){
-    ipbest(){ serip=$( (curl -s4m5 -k "$v46url") || (wget -4 -qO- --tries=2 "$v46url") ); if echo "$serip" | grep -q ':'; then server_ip="[$serip]"; else server_ip="$serip"; fi; echo "$server_ip" > "$HOME/agsb/server_ip.log"; }
-    ipchange(){
-        v4v6
-        v4dq=$( (curl -s4m5 -k https://ip.fm 2>/dev/null | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/') || (wget -4 -qO- --tries=2 https://ip.fm 2>/dev/null | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/') )
-        v6dq=$( (curl -s6m5 -k https://ip.fm 2>/dev/null | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/') || (wget -6 -qO- --tries=2 https://ip.fm 2>/dev/null | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/') )
-        if [ -z "$v4" ]; then vps_ipv4='无IPV4'; vps_ipv6="$v6"; location=$v6dq; elif [ -n "$v4" ] && [ -n "$v6" ]; then vps_ipv4="$v4"; vps_ipv6="$v6"; location=$v4dq; else vps_ipv4="$v4"; vps_ipv6='无IPV6'; location=$v4dq; fi
-        echo; agsbstatus; echo; green "=========当前服务器本地IP情况========="; yellow "本地IPV4地址：$vps_ipv4"; purple "本地IPV6地址：$vps_ipv6"; green "服务器地区：$location"; echo; sleep 2
-        if [ "$ippz" = "4" ]; then if [ -z "$v4" ]; then ipbest; else server_ip="$v4"; echo "$server_ip" > "$HOME/agsb/server_ip.log"; fi; elif [ "$ippz" = "6" ]; then if [ -z "$v6" ]; then ipbest; else server_ip="[$v6]"; echo "$server_ip" > "$HOME/agsb/server_ip.log"; fi; else ipbest; fi
-    }
+    
     ipchange; 
     rm -rf "$HOME/agsb/jh.txt"; 
     uuid=$(cat "$HOME/agsb/uuid"); 
