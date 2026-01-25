@@ -593,17 +593,19 @@ v4v6(){
     # v4=$( (curl -s4m5 -k "$v46url" 2>/dev/null) || (wget -4 -qO- --tries=2 "$v46url" 2>/dev/null) )
     # v6=$( (curl -s6m5 -k "$v46url" 2>/dev/null) || (wget -6 -qO- --tries=2 "$v46url" 2>/dev/null) )
 
-    echo "Checking IPv4  connectivity..."
-   v4=$( (curl -s4 -m5 --connect-timeout 5 -k "$v46url" 2>/dev/null) || (wget -4 -qO- --tries=2 --timeout=5 "$v46url" 2>/dev/null) )
-
-    echo "IPv4 connectivity check completed. ipv4=	$v4"
+    echo "Checking IPv4 connectivity..."
+    v4=$( (curl -s4 -m5 --connect-timeout 5 -k "$v46url" 2>/dev/null) || (wget -4 -qO- --tries=2 --timeout=5 "$v46url" 2>/dev/null) )
+    if [ -z "$v4" ]; then
+        v4=""  # If no IPv4 address is retrieved, leave it empty
+    fi
+    echo "IPv4 connectivity check completed. ipv4=$v4"
 
     echo "Checking IPv6 connectivity..."
-
-    v6=$( (curl -s6 -m5 --connect-timeout 5 -4 -k "$v46url" 2>/dev/null) || (wget -6 -qO- --tries=2 --timeout=5 -4 "$v46url" 2>/dev/null) )
-
-
-     echo "IPv6 connectivity check completed. ipv6=	$v6"
+    v6=$( (curl -s6 -m5 --connect-timeout 5 -k "$v46url" 2>/dev/null) || (wget -6 -qO- --tries=2 --timeout=5 "$v46url" 2>/dev/null) )
+    if [ -z "$v6" ]; then
+        v6=""  # If no IPv6 address is retrieved, leave it empty
+    fi
+    echo "IPv6 connectivity check completed. ipv6=$v6"
 
 }
 # Set up name for nodes and IP version preference
