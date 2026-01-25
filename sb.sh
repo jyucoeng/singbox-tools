@@ -594,6 +594,7 @@ case $(uname -m) in aarch64) cpu=arm64;; x86_64) cpu=amd64;; *) echo "目前脚�
 # Check and set IP version
 v4v6(){
     # Check IPv4 connectivity
+    echo "Checking IPv4 and IPv6 connectivity, ready to get IP..."
     echo "Checking IPv4 connectivity..."
     v4=$(curl -s4 -m5 --connect-timeout 5 -k "$v46url" 2>/dev/null || wget -4 -qO- --tries=2 --timeout=5 "$v46url" 2>/dev/null)
     if [ -n "$v4" ]; then
@@ -601,6 +602,7 @@ v4v6(){
     else
         v4_ok=false
     fi
+
     echo "IPv4 connectivity check completed. ipv4=$v4"
 
     # Check IPv6 connectivity
@@ -612,6 +614,7 @@ v4v6(){
         v6_ok=false
     fi
     echo "IPv6 connectivity check completed. ipv6=$v6"
+    echo "IP connectivity check completed. ipv4=$v4, ipv6=$v6"
 }
 
 # Set up name for nodes and IP version preference
@@ -622,10 +625,8 @@ set_sbyx(){
         echo
         yellow "所有节点名称前缀：$name"
     fi
-
-    echo "Checking IPv4 and IPv6 connectivity, ready to get IP..."
     v4v6  # This now sets both v4_ok and v6_ok
-    echo "Connectivity check completed."
+    
 
     # Determine which connection to prefer based on the availability of IPv4 and IPv6
     if [ "$v4_ok" = true ] && [ "$v6_ok" = true ]; then
