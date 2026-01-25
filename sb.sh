@@ -257,6 +257,9 @@ agsburl="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/mai
 
 CN_BING="www.bing.com"
 
+v4_ok=false
+v6_ok=false
+
 #彩虹打印
 gradient() {
     local text="$1"
@@ -590,36 +593,52 @@ case $(uname -m) in aarch64) cpu=arm64;; x86_64) cpu=amd64;; *) echo "目前脚�
  mkdir -p "$HOME/agsb"
 # Check and set IP version
 v4v6(){
-    # Checking IPv4 connectivity
+    # Check IPv4 connectivity
     echo "Checking IPv4 connectivity..."
     v4=$(curl -s4 -m5 --connect-timeout 5 -k "$v46url" 2>/dev/null || wget -4 -qO- --tries=2 --timeout=5 "$v46url" 2>/dev/null)
-
+    if [ -n "$v4" ]; then
+        v4_ok=true
+    else
+        v4_ok=false
+    fi
     echo "IPv4 connectivity check completed. ipv4=$v4"
 
-    # Checking IPv6 connectivity
+    # Check IPv6 connectivity
     echo "Checking IPv6 connectivity..."
     v6=$(curl -s6 -m5 --connect-timeout 5 -k "$v46url" 2>/dev/null || wget -6 -qO- --tries=2 --timeout=5 "$v46url" 2>/dev/null)
-
+    if [ -n "$v6" ]; then
+        v6_ok=true
+    else
+        v6_ok=false
+    fi
     echo "IPv6 connectivity check completed. ipv6=$v6"
 }
 
 # Set up name for nodes and IP version preference
 set_sbyx(){
-    if [ -n "$name" ]; then sxname=$name-; echo "$sxname" > "$HOME/agsb/name"; echo; yellow "所有节点名称前缀：$name"; fi
-    echo "Checking IPv4 and IPv6 connectivity,ready to get ip..."
-    v4v6
+    if [ -n "$name" ]; then
+        sxname=$name-
+        echo "$sxname" > "$HOME/agsb/name"
+        echo
+        yellow "所有节点名称前缀：$name"
+    fi
+
+    echo "Checking IPv4 and IPv6 connectivity, ready to get IP..."
+    v4v6  # This now sets both v4_ok and v6_ok
     echo "Connectivity check completed."
-    if (curl -s4m5 -k "$v46url" >/dev/null 2>&1) || (wget -4 -qO- --tries=2 "$v46url" >/dev/null 2>&1); then v4_ok=true; fi
-    if (curl -s6m5 -k "$v46url" >/dev/null 2>&1) || (wget -6 -qO- --tries=2 "$v46url" >/dev/null 2>&1); then v6_ok=true; fi
-    if [ "$v4_ok" = true ] && [ "$v6_ok" = true ]; then 
-        sbyx='prefer_ipv6'; 
-    elif [ "$v4_ok" = true ] && [ "$v6_ok" != true ]; then 
-        sbyx='ipv4_only'; 
-    elif [ "$v4_ok" != true ] && [ "$v6_ok" = true ]; then 
-        sbyx='ipv6_only'; 
-    else sbyx='prefer_ipv6'; 
+
+    # Determine which connection to prefer based on the availability of IPv4 and IPv6
+    if [ "$v4_ok" = true ] && [ "$v6_ok" = true ]; then
+        sbyx='prefer_ipv6'
+    elif [ "$v4_ok" = true ] && [ "$v6_ok" != true ]; then
+        sbyx='ipv4_only'
+    elif [ "$v4_ok" != true ] && [ "$v6_ok" = true ]; then
+        sbyx='ipv6_only'
+    else
+        sbyx='prefer_ipv6'  # Default to prefer IPv6 if neither is available
     fi
 }
+
 # download Sing-box
 upsingbox(){
     url="https://github.com/jyucoeng/singbox-tools/releases/download/singbox/sing-box-$cpu"
