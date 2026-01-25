@@ -2498,7 +2498,7 @@ if [ "$1" = "rep" ]; then
 
     green "2、覆盖式安装开始..."; 
     install_step
-    echo "2.1、覆盖式安装已完成... 再见👋"; 
+    echo "覆盖式安装已完成... 再见👋"; 
     exit;
 fi
 
