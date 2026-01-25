@@ -2208,9 +2208,11 @@ cip(){
 
 cleanup_nginx() {
   # 提示用户是否卸载 nginx
-  read -p "如要卸载 Nginx 请按 [y]，默认不卸载: " uninstall_nginx
+  yellow "如要卸载 Nginx 请按 [y]，默认不卸载: "
+  read uninstall_nginx
+
   if [[ "$uninstall_nginx" =~ ^(YES|yes|y|Y)$ ]]; then
-    yellow "正在卸载 nginx..."
+    purple "正在卸载 nginx..."
 
     # 停止 nginx 服务
     pkill -15 nginx >/dev/null 2>&1
@@ -2225,9 +2227,9 @@ cleanup_nginx() {
     # 清理 nginx 配置文件
     rm -f "$(nginx_conf_path)" 2>/dev/null
 
-    yellow "Nginx 已被卸载并禁用自启。"
+    green "Nginx 已被卸载并禁用自启。"
   else
-    yellow "Nginx 将不会被卸载，正在停止 nginx..."
+    purple "Nginx 将不会被卸载，正在停止 nginx..."
 
     # 停止 nginx 服务
     pkill -15 nginx >/dev/null 2>&1
@@ -2236,7 +2238,7 @@ cleanup_nginx() {
     elif command -v rc-service >/dev/null 2>&1; then
         rc-service nginx stop >/dev/null 2>&1
     fi
-    yellow "Nginx 已停止运行。"
+    green "Nginx 已停止运行。"
   fi
 }
 
