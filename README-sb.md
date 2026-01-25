@@ -163,6 +163,10 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
 ## 以下为 参数上面有红线代表可以不传的变量
 <img width="1020" height="428" alt="CleanShot 2026-01-23 at 10 30 19" src="https://github.com/user-attachments/assets/bb336e89-df63-493d-8ee3-6c821870b36c" />
 
+### 13、 如何根据运行状态判断是否正常安装和启动了？看下图
+<img width="448" height="111" alt="CleanShot 2026-01-25 at 19 18 41" src="https://github.com/user-attachments/assets/3c474b11-9913-4343-bd8d-eb69d4283314" />
+
+### 如果全协议，正常安装会出现上图的运行状态，如果不开订阅和argo，就相应减少要看的对应服务的状态就行。
 
 
 ### 这里给列出一些基础变量
@@ -184,10 +188,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ```
 
-### 如何根据运行状态判断是否正常安装和启动了？看下图
-<img width="448" height="111" alt="CleanShot 2026-01-25 at 19 18 41" src="https://github.com/user-attachments/assets/3c474b11-9913-4343-bd8d-eb69d4283314" />
 
-### 如果全协议，正常安装会出现上图的运行状态，如果不开订阅和argo，就相应减少要看的对应服务的状态就行。
 
 
 # 2、常见组合调用方式
