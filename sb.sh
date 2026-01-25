@@ -420,9 +420,10 @@ showmode(){
  
     yellow "主脚本：bash <(curl -Ls ${agsburl}) 或 bash <(wget -qO- ${agsburl})"
     yellow "显示节点信息：agsb list"
-    yellow "覆盖式安装的： agsb rep"
-    yellow "更新Singbox内核：agsb ups"
-    yellow "重启脚本：agsb res"
+    yellow "安装命令： agsb或者 agsb ins（命令前面需要带上环境变量）"
+    yellow "覆盖式安装命令： agsb rep（命令前面需要带上环境变量）"
+    yellow "更新Singbox内核：agsb ups(属于预留命令)"
+    yellow "重启脚本：agsb res(重启singbox和argo)"
     yellow "卸载脚本：agsb del"
     yellow "Nginx相关：agsb nginx_start | nginx_stop | nginx_restart | nginx_status"
     echo "---------------------------------------------------------"
@@ -2248,6 +2249,7 @@ cleandel(){
     # Change to $HOME to avoid issues when deleting directories
    cd "$HOME" || exit 1
 
+    yellow "开始卸载sing-box/cloudflared流程..."; 
     # Continue with the cleanup
     for P in /proc/[0-9]*; do
         if [ -L "$P/exe" ]; then
@@ -2289,8 +2291,10 @@ cleandel(){
   #  pkill -15 nginx >/dev/null 2>&1
   #  rm -f "$(nginx_conf_path)" 2>/dev/null
 
+  yellow "开始卸载或者清理nginx流程..."; 
   cleanup_nginx
 
+  yellow "开始卸载或者清理快捷方式流程..."; 
   cleanup_agsb_shortcut
 
 }
@@ -2367,92 +2371,8 @@ argorestart(){
 }
 
 
-if [ "$1" = "nginx_start" ]; then
-    nginx_start
-    nginx_status
-    exit
-fi
-
-if [ "$1" = "nginx_stop" ]; then
-    nginx_stop
-    nginx_status
-    exit
-fi
-
-if [ "$1" = "nginx_restart" ]; then
-    nginx_restart
-    nginx_status
-    exit
-fi
-
-if [ "$1" = "nginx_status" ]; then
-    nginx_status
-    exit
-fi
-
-
-if [ "$1" = "del" ]; then 
-    cleandel; 
-    rm -rf "$HOME/agsb"; 
-    echo "卸载完成"; 
-    showmode; 
-    exit;
- fi
-if [ "$1" = "rep" ]; then 
-    cleandel; 
-    rm -rf "$HOME/agsb"/{sb.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,name,short_id,cdn_host,hy_sni,vl_sni,tu_sni,vl_sni_pt,cdn_pt}; 
-    echo "重置完成..."; 
-    sleep 2; 
-fi
-
-if [ "$1" = "list" ]; then 
-    
-    cip "$2"
-    exit; 
-fi
-if [ "$1" = "ups" ]; then 
-    pkill -15 -f "$HOME/agsb/sing-box" 2>/dev/null
-
-    upsingbox && sbrestart && echo "Sing-box内核更新完成" && sleep 2 && cip; 
-    exit; 
-fi
-if [ "$1" = "res" ]; then 
-    sbrestart; argorestart; 
-    sleep 5 && echo "重启完成" && sleep 3 && cip; 
-    exit; 
-fi
-
-if [ "$1" = "sub" ]; then
-  # 生成/更新订阅文件 sub.txt（函数内部会打印 subscribe 状态 + 生成结果）
-  update_subscription_file
-
-  echo -e "📌 节点订阅地址："
-  if ! is_true "$(get_subscribe_flag)"; then
-    purple "⛔ 未开启订阅"
-  else
-    u="$(show_sub_url)"
-    green "$u"
-    echo
-  fi
-
-  exit;
-fi
-
-
-
-if ! pgrep -f 'agsb/sing-box' >/dev/null 2>&1 && [ "$1" != "rep" ]; then
-    cleandel
-fi
- # 如果没有运行sing-box或者进行覆盖式安装
-if ! pgrep -f 'agsb/sing-box' >/dev/null 2>&1 || [ "$1" = "rep" ]; then
-#     判断是否为IPv4网络
-#     if [ -z "$( (curl -s4m5 -k "$v46url") || (wget -4 -qO- --tries=2 "$v46url") )" ]; then 
-#         cp -f /etc/resolv.conf /etc/resolv.conf.bak.agsb 2>/dev/null
-#         echo -e "nameserver 1.1.1.1\nnameserver 8.8.8.8\nnameserver 2606:4700:4700::1111\nnameserver 2001:4860:4860::8888" > /etc/resolv.conf
-    
-#     fi
-
-    echo "VPS系统：$op"; 
+install_step(){
+  echo "VPS系统：$op"; 
     echo "CPU架构：$cpu"; 
     echo "agsb脚本开始安装/更新…………" && sleep 1
 
@@ -2487,12 +2407,106 @@ if ! pgrep -f 'agsb/sing-box' >/dev/null 2>&1 || [ "$1" = "rep" ]; then
     ins; 
     # 显示节点信息 这里的key是一个定值，为了打印私钥
     cip "key"
-else
-    echo "agsb脚本已安装"; 
-    echo; 
-    agsbstatus; 
-    echo; 
-    echo "相关快捷方式如下："; 
-    showmode; 
+}
+
+main(){
+
+# 启动 nginx
+if [ "$1" = "nginx_start" ]; then
+    nginx_start
+    nginx_status
     exit
 fi
+
+# 停止 nginx
+if [ "$1" = "nginx_stop" ]; then
+    nginx_stop
+    nginx_status
+    exit
+fi
+
+# 重启 nginx
+if [ "$1" = "nginx_restart" ]; then
+    nginx_restart
+    nginx_status
+    exit
+fi
+
+# 查看 nginx 状态
+if [ "$1" = "nginx_status" ]; then
+    nginx_status
+    exit
+fi
+
+
+# 卸载服务
+if [ "$1" = "del" ]; then 
+    cleandel; 
+    rm -rf "$HOME/agsb"; 
+    echo "卸载完成"; 
+    showmode; 
+    exit;
+ fi
+
+
+
+# 查看可用的节点
+if [ "$1" = "list" ]; then 
+    
+    cip "$2"
+    exit; 
+fi
+# 更新sing-box内核
+if [ "$1" = "ups" ]; then 
+    pkill -15 -f "$HOME/agsb/sing-box" 2>/dev/null
+
+    upsingbox && sbrestart && echo "Sing-box内核更新完成" && sleep 2 && cip; 
+    exit; 
+fi
+# 重启sing-box和cloudflared
+if [ "$1" = "res" ]; then 
+    sbrestart; argorestart; 
+    sleep 5 && echo "重启完成" && sleep 3 && cip; 
+    exit; 
+fi
+
+# 生成/更新/查看订阅文件
+if [ "$1" = "sub" ]; then
+  # 生成/更新订阅文件 sub.txt（函数内部会打印 subscribe 状态 + 生成结果）
+  update_subscription_file
+
+  echo -e "📌 节点订阅地址："
+  if ! is_true "$(get_subscribe_flag)"; then
+    purple "⛔ 未开启订阅"
+  else
+    u="$(show_sub_url)"
+    green "$u"
+    echo
+  fi
+
+  exit;
+fi
+
+# 覆盖式安装
+if [ "$1" = "rep" ]; then 
+    green "开始覆盖式安装流程..."; 
+    green "1、即将开始清理操作..."; 
+    cleandel; 
+    rm -rf "$HOME/agsb"/{sb.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,name,short_id,cdn_host,hy_sni,vl_sni,tu_sni,vl_sni_pt,cdn_pt}; 
+    green "1.1、清理操作完成..."; 
+    sleep 2; 
+
+    green "2、覆盖式安装开始..."; 
+    install_step
+    green "2.1、覆盖式安装已完成..."; 
+    exit;
+fi
+
+# 安装步骤(不带参数或者参数为 ins)
+if [ -z "$1" ] || [ "$1" = "ins" ]; then
+    install_step
+fi
+
+}
+
+main "$@"
