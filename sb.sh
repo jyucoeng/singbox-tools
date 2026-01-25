@@ -286,7 +286,7 @@ create_bashrc_if_missing() {
 create_bashrc_if_missing
 
 # ================== 系统bashrc函数 ==================
-VERSION="1.0.2(2026-01-23)"
+VERSION="1.0.2(2026-01-25)"
 AUTHOR="littleDoraemon"
 
 
@@ -590,8 +590,11 @@ case $(uname -m) in aarch64) cpu=arm64;; x86_64) cpu=amd64;; *) echo "目前脚�
  mkdir -p "$HOME/agsb"
 # Check and set IP version
 v4v6(){
-    v4=$( (curl -s4m5 -k "$v46url" 2>/dev/null) || (wget -4 -qO- --tries=2 "$v46url" 2>/dev/null) )
-    v6=$( (curl -s6m5 -k "$v46url" 2>/dev/null) || (wget -6 -qO- --tries=2 "$v46url" 2>/dev/null) )
+    # v4=$( (curl -s4m5 -k "$v46url" 2>/dev/null) || (wget -4 -qO- --tries=2 "$v46url" 2>/dev/null) )
+    # v6=$( (curl -s6m5 -k "$v46url" 2>/dev/null) || (wget -6 -qO- --tries=2 "$v46url" 2>/dev/null) )
+    v4=$( (curl -s4m10 -k "$v46url" 2>/dev/null) || (wget -4 -qO- --tries=5 "$v46url" 2>/dev/null) )
+    v6=$( (curl -s6m10 -k "$v46url" 2>/dev/null) || (wget -6 -qO- --tries=5 "$v46url" 2>/dev/null) )
+
 }
 # Set up name for nodes and IP version preference
 set_sbyx(){
@@ -2173,6 +2176,41 @@ cip(){
     
 }
 
+cleanup_nginx() {
+  # 提示用户是否卸载 nginx
+  read -p "是否卸载 nginx？（输入Y确认卸载,直接回车或者输入N视为不卸载）: " uninstall_nginx
+  if [[ "$uninstall_nginx" =~ ^(YES|yes|y|Y)$ ]]; then
+    yellow "正在卸载 nginx..."
+
+    # 停止 nginx 服务
+    pkill -15 nginx >/dev/null 2>&1
+    if pidof systemd >/dev/null 2>&1; then
+        systemctl stop nginx >/dev/null 2>&1
+        systemctl disable nginx >/dev/null 2>&1
+    elif command -v rc-service >/dev/null 2>&1; then
+        rc-service nginx stop >/dev/null 2>&1
+        rc-update del nginx default >/dev/null 2>&1
+    fi
+    
+    # 清理 nginx 配置文件
+    rm -f "$(nginx_conf_path)" 2>/dev/null
+
+    yellow "Nginx 已被卸载并禁用自启。"
+  else
+    yellow "Nginx 将不会被卸载，正在停止 nginx..."
+
+    # 停止 nginx 服务
+    pkill -15 nginx >/dev/null 2>&1
+    if pidof systemd >/dev/null 2>&1; then
+        systemctl stop nginx >/dev/null 2>&1
+    elif command -v rc-service >/dev/null 2>&1; then
+        rc-service nginx stop >/dev/null 2>&1
+    fi
+    yellow "Nginx 已停止运行。"
+  fi
+}
+
+
 # Remove agsb folder
 cleandel(){
     # Change to $HOME to avoid issues when deleting directories
@@ -2215,18 +2253,8 @@ cleandel(){
         rm -f /etc/init.d/{sing-box,argo}
     fi
 
-    # 清理 nginx
-    pkill -15 nginx >/dev/null 2>&1
-    rm -f "$(nginx_conf_path)" 2>/dev/null
-
-    # 禁用 nginx 自启（避免卸载后 nginx 仍然起来）
-    if pidof systemd >/dev/null 2>&1; then
-        systemctl stop nginx >/dev/null 2>&1
-        systemctl disable nginx >/dev/null 2>&1
-    elif command -v rc-service >/dev/null 2>&1; then
-        rc-service nginx stop >/dev/null 2>&1
-        rc-update del nginx default >/dev/null 2>&1
-    fi
+  # 清理 nginx
+  cleanup_nginx
 
   cleanup_agsb_shortcut
 
@@ -2433,7 +2461,3 @@ else
     showmode; 
     exit
 fi
-
-
-
-
