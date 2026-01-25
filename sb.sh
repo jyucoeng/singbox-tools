@@ -2128,6 +2128,7 @@ ipbest(){
 
     # Save the server_ip to the log
     echo "$server_ip" > "$HOME/agsb/server_ip.log"
+    echo "$server_ip=${server_ip},out_ip=$out_ip" 
 }
 
 
@@ -2145,12 +2146,16 @@ ipchange(){
             if [ "$server_ip" != "[$out_ip]" ]; then
                 server_ip="[$out_ip]"
                 echo "$server_ip" > "$HOME/agsb/server_ip.log"
+                echo "$server_ip=${server_ip},out_ip=$out_ip" 
+                
             fi
         else
             # If out_ip is IPv4 and different from server_ip, update server_ip
             if [ "$server_ip" != "$out_ip" ]; then
                 server_ip="$out_ip"
                 echo "$server_ip" > "$HOME/agsb/server_ip.log"
+
+                echo "$server_ip=${server_ip},out_ip=$out_ip" 
             fi
         fi
     fi
