@@ -2324,7 +2324,7 @@ ipchange() {
             ipbest  # 如果没有 v4 地址，则调用 ipbest 获取公网 IP
         else
             # 使用 update_server_ip 函数更新 server_ip
-            server_ip=$(update_server_ip "$v4" "$server_ip")
+            server_ip=$(update_server_ip "$v4" "$out_ip")
             server_ip=$(add_ipv6_brackets "$server_ip")  # 确保 IPv6 地址加上中括号
             echo "$server_ip" > "$HOME/agsb/server_ip.log"
         fi
@@ -2333,7 +2333,7 @@ ipchange() {
             ipbest  # 如果没有 v6 地址，则调用 ipbest 获取公网 IP
         else
             # 使用 update_server_ip 函数更新 server_ip
-            server_ip=$(update_server_ip "$v6" "$server_ip")
+            server_ip=$(update_server_ip "$v6" "$out_ip")
             server_ip=$(add_ipv6_brackets "$server_ip")  # 确保 IPv6 地址加上中括号
             echo "$server_ip" > "$HOME/agsb/server_ip.log"
         fi
