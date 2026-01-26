@@ -2225,8 +2225,8 @@ get_location_from_ip_service() {
 
     # Try extracting the location using curl and sed
     location=$(echo "$response" | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/' || \
-               wget -4 -qO- --tries=2 "$ip_service_url" 2>/dev/null | grep -F '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/')
-    
+               wget -4 -qO- --tries=2 "$ip_service_url" 2>/dev/null | grep -oP 'Location: \K[^<]+' | tail -n1)
+
     # Return the location (or empty if not found)
     echo "$location"
 }
