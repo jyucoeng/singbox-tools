@@ -599,8 +599,8 @@ case $(uname -m) in aarch64) cpu=arm64;; x86_64) cpu=amd64;; *) echo "目前脚�
 # Check and set IP version
 v4v6(){
     # Check IPv4 connectivity
-    echo "Checking IPv4 and IPv6 connectivity, ready to get IP..."
-    echo "Checking IPv4 connectivity..."
+    # echo "Checking IPv4 and IPv6 connectivity, ready to get IP..."
+    # echo "Checking IPv4 connectivity..."
     v4=$(curl -s4 -m5 --connect-timeout 5 -k "$v46url" 2>/dev/null || wget -4 -qO- --tries=2 --timeout=5 "$v46url" 2>/dev/null)
     if [ -n "$v4" ]; then
         v4_ok=true
@@ -608,18 +608,18 @@ v4v6(){
         v4_ok=false
     fi
 
-    echo "IPv4 connectivity check completed. ipv4=$v4"
+    # echo "IPv4 connectivity check completed. ipv4=$v4"
 
     # Check IPv6 connectivity
-    echo "Checking IPv6 connectivity..."
+    # echo "Checking IPv6 connectivity..."
     v6=$(curl -s6 -m5 --connect-timeout 5 -k "$v46url" 2>/dev/null || wget -6 -qO- --tries=2 --timeout=5 "$v46url" 2>/dev/null)
     if [ -n "$v6" ]; then
         v6_ok=true
     else
         v6_ok=false
     fi
-    echo "IPv6 connectivity check completed. ipv6=$v6"
-    echo "IP connectivity check completed. ipv4=$v4, ipv6=$v6"
+   #  echo "IPv6 connectivity check completed. ipv6=$v6"
+   #   echo "IP connectivity check completed. ipv4=$v4, ipv6=$v6"
 
     
 }
@@ -2216,9 +2216,21 @@ check_ip_connectivity() {
 # 从 IP 服务中提取位置
 get_location_from_ip_service() {
     local ip_service_url="$1"
-    echo $(curl -s4m5 -k "$ip_service_url" 2>/dev/null | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/' || \
-          wget -4 -qO- --tries=2 "$ip_service_url" 2>/dev/null | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/')
+    local response=$(curl -s4m5 -k "$ip_service_url" 2>/dev/null)
+    
+    # Check if the response is empty or invalid
+    if [[ -z "$response" ]]; then
+        return  # Return empty (function ends here)
+    fi
+
+    # Try extracting the location using curl and sed
+    location=$(echo "$response" | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/' || \
+               wget -4 -qO- --tries=2 "$ip_service_url" 2>/dev/null | grep -F '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/')
+    
+    # Return the location (or empty if not found)
+    echo "$location"
 }
+
 
 # 如果 out_ip 是有效的且与 current_server_ip 不同，则更新 current_server_ip
 update_server_ip_if_valid() {
