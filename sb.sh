@@ -2251,12 +2251,10 @@ ipchange() {
     v4=$(echo "$v4v6_result" | awk '{print $1}')
     v6=$(echo "$v4v6_result" | awk '{print $2}')
 
-    echo "v4=$v4, v6=$v6"
+  
     # 第二步：获取 IPv4 和 IPv6 地址的位置信息
     v4dq=$( (curl -s4m5 -k https://ip.fm 2>/dev/null | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/') || (wget -4 -qO- --tries=2 https://ip.fm 2>/dev/null | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/') )
     v6dq=$( (curl -s6m5 -k https://ip.fm 2>/dev/null | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/') || (wget -6 -qO- --tries=2 https://ip.fm 2>/dev/null | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/') )
-
-    echo "v4dq=$v4dq, v6dq=$v6dq"
 
     # 第三步：根据连通性设置 vps 的 IPv4 和 IPv6 地址以及位置
     if [ -z "$v4" ]; then
@@ -2282,7 +2280,6 @@ ipchange() {
     purple "本地IPV6地址：$vps_ipv6"
     green "服务器地区：$location"
     echo
-    sleep 2
 
     
     # 第四步：根据 ippz 值更新 server_ip
@@ -2314,7 +2311,7 @@ ipchange() {
     # 当out_ip 不为空时，并且是有小的ip时
     if [ -n "$out_ip" ] && is_valid_ip "$out_ip"; then
         if [ -z"$current_server_ip" ]; then
-            yellow "  👉  由于你设置了单独的出口ip,出口IP已变更为：$current_server_ip   👈"  # 仅在出口 IP 发生变化时输出变更后的 IP
+            yellow " 👉  由于你设置了单独的出口ip,出口IP已变更为：$current_server_ip   👈"  # 仅在出口 IP 发生变化时输出变更后的 IP
         fi
     fi
 }
