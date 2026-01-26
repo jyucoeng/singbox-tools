@@ -689,6 +689,12 @@ get_short_id() {
   # 优先级：
   # 1) 传了 reality_private → 直接由 reality_private 稳定推导 short_id（并写入文件）
   # 2) 否则                → 读文件；文件无效/不存在则随机生成并落盘
+
+  # 日志：只输出到 stderr，不污染 stdout
+    _rk_log() {
+      [ "${DEBUG_REALITY:-0}" = "1" ] && echo -e "$*" >&2
+    }
+
   local sid_file="${1:-$HOME/agsb/short_id}"
   local sid=""
 
@@ -725,7 +731,9 @@ get_short_id() {
         fi
       fi
       echo "$sid" > "$sid_file"
-      green "✅ short_id 已由 reality_private 稳定推导, 值: $sid" >&2
+
+      _rk_log "✅ short_id 已由 reality_private 稳定推导, 值: $sid"
+
       echo "$sid"
       return 0
     fi
@@ -1976,9 +1984,9 @@ update_subscription_file() {
   subscribe_flag="$(get_subscribe_flag)"
 
   if is_true "$subscribe_flag"; then
-    green "📌 subscribe = true ✅（订阅已开启）"
+    green "📌  subscribe = true ✅（订阅已开启）"
   else
-    purple "📌 subscribe = false ⛔（订阅未开启）"
+    purple "📌  subscribe = false ⛔（订阅未开启）"
     return 0
   fi
 
@@ -2005,13 +2013,13 @@ update_subscription_file() {
   # ✅ fallback：base64（兼容 busybox 与 GNU）
   if command -v base64 >/dev/null 2>&1; then
     if base64 -w 0 "$HOME/agsb/jh.txt" 2>/dev/null > "$out"; then
-      purple "✅ sub.txt 生成成功：$out"
+      purple "✅  sub.txt 生成成功：$out"
       return 0
     fi
 
     # busybox base64 没有 -w 参数
     if base64 "$HOME/agsb/jh.txt" 2>/dev/null | tr -d '\n' > "$out"; then
-      purple "✅ sub.txt 生成成功：$out"
+      purple "✅  sub.txt 生成成功：$out"
       return 0
     else
       red "❌ sub.txt 生成失败（base64）"
@@ -2320,6 +2328,11 @@ ipchange() {
 
 # show nodes
 cip(){
+
+    # 日志：只输出到 stderr，不污染 stdout
+    _rk_log() {
+      [ "${DEBUG_REALITY:-0}" = "1" ] && echo -e "$*" >&2
+    }
     
     ipchange; 
     rm -rf "$HOME/agsb/jh.txt"; 
@@ -2360,7 +2373,8 @@ cip(){
         public_key=$(sed -n '2p' "$HOME/agsb/reality.key" | awk '{print $2}')
         short_id=$(cat "$HOME/agsb/short_id")
         vl_sni=$(cat "$HOME/agsb/vl_sni")
-        white "cip函数中的short_id,值为:$short_id"
+
+        _rk_log "cip函数中的short_id,值为:$short_id"
 
        # vless_link="vless://${uuid}@${server_ip}:${port_vlr}?encryption=none&security=reality&sni=www.yahoo.com&fp=chrome&flow=xtls-rprx-vision&publicKey=${public_key}&shortId=${short_id}#${sxname}vless-reality-$hostname"
         
