@@ -692,7 +692,7 @@ get_short_id() {
 
   # 日志：只输出到 stderr，不污染 stdout
     _rk_log() {
-      [ "${DEBUG_REALITY:-0}" = "1" ] && echo -e "$*" >&2
+      [ "${DEBUG_FLAG:-0}" = "1" ] && echo -e "$*" >&2
     }
 
   local sid_file="${1:-$HOME/agsb/short_id}"
@@ -777,7 +777,7 @@ derive_reality_public_key() {
 
   # 只输出到 stderr，不污染 stdout（stdout 必须保持纯公钥）
   _rk_log() {
-    [ "${DEBUG_REALITY:-0}" = "1" ] && echo -e "$*" >&2
+    [ "${DEBUG_FLAG:-0}" = "1" ] && echo -e "$*" >&2
   }
 
   # 私钥为空直接失败
@@ -919,7 +919,7 @@ init_reality_keypair() {
 
   # 日志：只输出到 stderr，不污染 stdout
   _rk_log() {
-    [ "${DEBUG_REALITY:-0}" = "1" ] && echo -e "$*" >&2
+    [ "${DEBUG_FLAG:-0}" = "1" ] && echo -e "$*" >&2
   }
 
   _rk_log "🔑 init_reality_keypair: 开始初始化 Reality Keypair..."
@@ -2126,7 +2126,7 @@ is_valid_ip() {
 update_server_ip() {
     # 定义调试日志函数
     _rk_log() {
-        [ "${DEBUG_REALITY:-0}" = "1" ] && echo -e "$*" >&2  # 如果 DEBUG_REALITY 为 1，则打印日志
+        [ "${DEBUG_FLAG:-0}" = "1" ] && echo -e "$*" >&2  # 如果 DEBUG_FLAG 为 1，则打印日志
     }
 
     local current_server_ip="$1"
@@ -2331,7 +2331,7 @@ cip(){
 
     # 日志：只输出到 stderr，不污染 stdout
     _rk_log() {
-      [ "${DEBUG_REALITY:-0}" = "1" ] && echo -e "$*" >&2
+      [ "${DEBUG_FLAG:-0}" = "1" ] && echo -e "$*" >&2
     }
     
     ipchange; 
