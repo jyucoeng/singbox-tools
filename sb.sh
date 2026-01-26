@@ -2300,10 +2300,12 @@ ipchange() {
     v4=$(echo "$v4v6_result" | awk '{print $1}')
     v6=$(echo "$v4v6_result" | awk '{print $2}')
 
+    echo "v4=$v4, v6=$v6"
     # 第二步：获取 IPv4 和 IPv6 地址的位置信息
     v4dq=$( (curl -s4m5 -k https://ip.fm 2>/dev/null | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/') || (wget -4 -qO- --tries=2 https://ip.fm 2>/dev/null | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/') )
     v6dq=$( (curl -s6m5 -k https://ip.fm 2>/dev/null | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/') || (wget -6 -qO- --tries=2 https://ip.fm 2>/dev/null | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/') )
 
+    echo "v4dq=$v4dq, v6dq=$v6dq"
 
     # 第三步：根据连通性设置 vps 的 IPv4 和 IPv6 地址以及位置
     if [ -z "$v4" ]; then
@@ -2331,6 +2333,7 @@ ipchange() {
     echo
     sleep 2
 
+    echo "===========根据 ippz 值更新 server_ip================"
     # 第四步：根据 ippz 值更新 server_ip
     if [ "$ippz" = "4" ]; then
         if [ -z "$v4" ]; then
