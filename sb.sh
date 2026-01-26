@@ -212,10 +212,10 @@ install_deps() {
 
 
 # Environment variables for controlling CDN host and SNI values
-export cdn_host=${cdn_host:-"cdn.7zz.cn"}  # Default CDN host for vmess or trojan  www.visa.com
-export hy_sni=${hy_sni:-"www.bing.com"}    # Default SNI for hy2 protocol
-export vl_sni=${vl_sni:-"www.ua.edu"}   # Default SNI for vless protocol   www.ua.edu www.yahoo.com
-export tu_sni=${tu_sni:-"www.bing.com"}    # Default SNI for hy2 protocol
+export cdn_host=${cdn_host:-"saas.sin.fan"}  # Default CDN host for vmess or trojan  cdn.7zz.cn 
+export hy_sni=${hy_sni:-"www.microsoft.com"}    # Default SNI for hy2 protocol
+export vl_sni=${vl_sni:-"www.microsoft.com"}   # Default SNI for vless protocol   www.ua.edu www.yahoo.com
+export tu_sni=${tu_sni:-"www.microsoft.com"}    # Default SNI for hy2 protocol
 
 
 # Environment variables for ports and other settings
