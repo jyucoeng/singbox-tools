@@ -2358,6 +2358,8 @@ ipchange() {
     else
         echo "===========根据 ippz 值更新 server_ip,ippz=$ippz================"
         ipbest  # 如果 ippz 值不是 4 或 6，则直接调用 ipbest 获取公网 IP
+
+         echo "===========根据 ippz 值更新 server_ip,11111,ippz=$ippz================"
     fi
 
     echo "===========输出变更后的出口IP================"
