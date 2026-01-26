@@ -2733,7 +2733,7 @@ fi
 
 # 覆盖式安装
 if [ "$1" = "rep" ]; then 
-    green "outip =	$ou_ip"; 
+    green "out_ip =	$out_ip"; 
     sleep 2; 
     green "开始覆盖式安装流程..."; 
     green "1、即将开始清理操作..."; 
