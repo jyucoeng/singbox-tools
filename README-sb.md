@@ -16,6 +16,7 @@ vl_sni="www.yahoo.com" \
 vl_sni_pt=443 \
 tu_sni="time.js" \
 ippz=4 \
+out_ip='你的特殊出口ip(仅当你的出口ip和服务器ip不一致时有效，需配合ipzz使用，一般情况下留空或者不传值)' \
 trpt=41002 \
 vlrt=41003 \
 hypt=41004 \
@@ -77,16 +78,26 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
 <img width="1514" height="621" alt="CleanShot 2026-01-25 at 12 50 32" src="https://github.com/user-attachments/assets/ec1d2396-4832-4b1b-9da7-cbda4e9c56f1" />
 
 
-## 4、 ippz（IP显示策略，可选）
-
-| 值 | 含义 |
-|----|-----|
-| 4  | 强制使用 IPv4 |
-| 6  | 强制使用 IPv6 |
-| 空 | 自动判断 |
+##  4、 ippz和out_ip（IP显示策略和特殊出口ip，可选）
+## 👇 👇 👇
+| ipzz值 |    含义        |
+|--------|---------------|
+| 4      | 强制使用 IPv4  |
+| 6      | 强制使用 IPv6  |
+| 空     | 自动判断       |
 
  👉 只影响 节点输出，不影响服务运行
 
+ 👉out_ip='你的特殊出口ip(仅当你的出口ip和服务器ip不一致时有效，需配合ipzz使用)' ，比如：
+
+ -出口为ipv4, out_ip='216.166.22.30',ipzz=4(当服务器ip为216.166.22.250时，你的出口ip由于某个原因被分给了216.166.22.30，正常情况下，脚本会默认使用250这个ip作为出口ip，针对你这个需求，你就可以设置这2个变量来解决这个设定出口为30的特殊要求)
+
+  -出口为ipv6, out_ip='2602:294:0:b7:1234:1234:d9d4:0001',ipzz=6 (当服务器ip为2602:294:0:b7:1234:1234:d9d4:2600时，你的出口ip由于某个原因被分给了2602:294:0:b7:1234:1234:d9d4:0001，正常情况下，脚本会默认使用2600这个ip作为出口ip，针对你这个需求，你就可以设置这2个变量来解决这个设定出口为0001的特殊要求)
+
+ ## 👆 👆 👆
+
+
+2602:294:0:b7:1234:1234:d9d4:0001
  ## 5、 各种端口
 
    ```bash
@@ -163,10 +174,6 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
 ## 以下为 参数上面有红线代表可以不传的变量
 <img width="1020" height="428" alt="CleanShot 2026-01-23 at 10 30 19" src="https://github.com/user-attachments/assets/bb336e89-df63-493d-8ee3-6c821870b36c" />
 
-### 13、 如何根据运行状态判断是否正常安装和启动了？看下图
-<img width="448" height="111" alt="CleanShot 2026-01-25 at 19 18 41" src="https://github.com/user-attachments/assets/3c474b11-9913-4343-bd8d-eb69d4283314" />
-
-### 如果全协议，正常安装会出现上图的运行状态，如果不开订阅和argo，就相应减少要看的对应服务的状态就行。
 
 
 ### 这里给列出一些基础变量
@@ -187,9 +194,6 @@ name="小叮当-美国加州"  \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 
 ```
-
-
-
 
 # 2、常见组合调用方式
 
