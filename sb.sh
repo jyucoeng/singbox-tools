@@ -620,6 +620,8 @@ v4v6(){
     fi
     echo "IPv6 connectivity check completed. ipv6=$v6"
     echo "IP connectivity check completed. ipv4=$v4, ipv6=$v6"
+
+    
 }
 
 # Set up name for nodes and IP version preference
@@ -2045,12 +2047,17 @@ show_sub_url() {
   # 普通 http：IP:PORT
   local server_ip
   server_ip=$(cat "$HOME/agsb/server_ip.log" 2>/dev/null)
-  [ -z "$server_ip" ] && server_ip="$( (curl -s4m5 -k https://icanhazip.com) || (wget -4 -qO- --tries=2 https://icanhazip.com) )"
+
+  if [ -z "$server_ip" ]; then
+    server_ip="$( (curl -s4m5 -k https://icanhazip.com) || (wget -4 -qO- --tries=2 https://icanhazip.com) )"
+    server_ip=$(update_server_ip "$server_ip" "$out_ip")
+    server_ip=$(add_ipv6_brackets "$server_ip")  # 确保 IPv6 地址加上中括号
+  fi
 
   # IPv6 加中括号
-  if echo "$server_ip" | grep -q ':' && ! echo "$server_ip" | grep -q '^\['; then
-    server_ip="[$server_ip]"
-  fi
+  # if echo "$server_ip" | grep -q ':' && ! echo "$server_ip" | grep -q '^\['; then
+  #   server_ip="[$server_ip]"
+  # fi
 
   echo "http://${server_ip}:${port}/sub/${sub_uuid}"
 }
@@ -2106,101 +2113,242 @@ is_valid_ip() {
 }
 
 
-ipbest(){
-    # Fetch the IP address using curl or wget
-    serip=$( (curl -s4m5 -k "$v46url") || (wget -4 -qO- --tries=2 "$v46url") )
-    
-    # Check if it's an IPv6 address or IPv4 and set server_ip accordingly
-    if echo "$serip" | grep -q ':'; then
-        server_ip="[$serip]"  # For IPv6, wrap the IP in brackets
-    else
-        server_ip="$serip"    # For IPv4, use the IP as is
+
+# 根据 out_ip_local 更新 current_server_ip 的函数，确保返回的 IPv6 不包含中括号
+update_server_ip() {
+    # 定义调试日志函数
+    _rk_log() {
+        [ "${DEBUG_REALITY:-0}" = "1" ] && echo -e "$*" >&2  # 如果 DEBUG_REALITY 为 1，则打印日志
+    }
+
+    local current_server_ip="$1"
+    local out_ip_local="$2"  # 修改变量名，避免与其他地方的 out_ip 混淆
+
+    # 输出调试信息，显示传入的参数
+    _rk_log "[调试] 原始 current_server_ip: $current_server_ip"
+    _rk_log "[调试] 原始 out_ip_local: $out_ip_local"
+
+    # 如果 current_server_ip 是 IPv6 地址（即包含中括号），去除中括号
+    if echo "$current_server_ip" | grep -q '^[' && echo "$current_server_ip" | grep -q ']$'; then
+        _rk_log "[调试] 去掉 current_server_ip 中的中括号"
+        current_server_ip=$(echo "$current_server_ip" | sed 's/^\[\(.*\)\]$/\1/')  # 去掉中括号
+        _rk_log "[调试] 去掉中括号后的 current_server_ip: $current_server_ip"
     fi
 
-    # Check if out_ip is valid and not equal to server_ip, if so, update server_ip
-    if [ -n "$out_ip" ] && is_valid_ip "$out_ip" && [ "$server_ip" != "$out_ip" ]; then
-        if echo "$out_ip" | grep -q ':'; then
-            server_ip="[$out_ip]"  # For IPv6, wrap the IP in brackets
+    # 如果 out_ip_local 非空且包含中括号，则去除中括号
+    if [ -n "$out_ip_local" ] && echo "$out_ip_local" | grep -q '^[' && echo "$out_ip_local" | grep -q ']$'; then
+        _rk_log "[调试] 去掉 out_ip_local 中的中括号"
+        out_ip_local=$(echo "$out_ip_local" | sed 's/^\[\(.*\)\]$/\1/')  # 去掉中括号
+        _rk_log "[调试] 去掉中括号后的 out_ip_local: $out_ip_local"
+    fi
+
+    # 检查 out_ip_local 是否有效，并且与 current_server_ip 不同，并且确保它们类型一致（IPv4 或 IPv6）
+    if [ -n "$out_ip_local" ] && is_valid_ip "$out_ip_local" && [ "$current_server_ip" != "$out_ip_local" ]; then
+        # 检查是否是 IPv6 地址，并且确保类型一致
+        if echo "$current_server_ip" | grep -q ':' && echo "$out_ip_local" | grep -q ':'; then
+            # 都是 IPv6 地址
+            _rk_log "[调试] current_server_ip 和 out_ip_local 都是 IPv6，进行更新"
+            current_server_ip="$out_ip_local"
+        # 检查是否是 IPv4 地址，并且确保类型一致
+        elif ! echo "$current_server_ip" | grep -q ':' && ! echo "$out_ip_local" | grep -q ':'; then
+            # 都是 IPv4 地址
+            _rk_log "[调试] current_server_ip 和 out_ip_local 都是 IPv4，进行更新"
+            current_server_ip="$out_ip_local"
         else
-            server_ip="$out_ip"    # For IPv4, use the IP as is
+            _rk_log "[调试] current_server_ip 和 out_ip_local 类型不同（IPv4 和 IPv6），不进行更新"
         fi
+    else
+        _rk_log "[调试] out_ip_local 为空、无效或与 current_server_ip 相同，不进行更新"
     fi
 
-    # Save the server_ip to the log
-    echo "$server_ip" > "$HOME/agsb/server_ip.log"
-    echo "$server_ip=${server_ip},out_ip=$out_ip" 
+    # 输出最终的 server_ip 和 out_ip_local，方便对比
+    _rk_log "[调试] 最终的 server_ip: $current_server_ip"
+    _rk_log "[调试] 最终的 out_ip_local: $out_ip_local"
+
+    # 返回更新后的 server_ip，确保不包含中括号
+    echo "$current_server_ip"
+}
+
+
+# 给没有中括号的 IPv6 地址加上中括号的函数
+add_ipv6_brackets() {
+    local ipv6="$1"
+
+    # 如果是 IPv6 地址且没有中括号，添加中括号
+    if echo "$ipv6" | grep -q ':' && ! echo "$ipv6" | grep -q '[]]'; then
+        echo "[$ipv6]"  # 给 IPv6 地址加上中括号
+    else
+        echo "$ipv6"  # 否则返回原始地址
+    fi
 }
 
 
 
-ipchange(){
-    v4v6
-    v4dq=$( (curl -s4m5 -k https://ip.fm 2>/dev/null | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/') || (wget -4 -qO- --tries=2 https://ip.fm 2>/dev/null | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/') )
-    v6dq=$( (curl -s6m5 -k https://ip.fm 2>/dev/null | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/') || (wget -6 -qO- --tries=2 https://ip.fm 2>/dev/null | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/') )
+
+# ipbest 函数，获取并更新 server_ip 并写入日志
+ipbest() {
+    # 获取公网 IP 地址
+    serip=$( (curl -s4m5 -k "$v46url") || (wget -4 -qO- --tries=2 "$v46url") )
+
+    serip=$(update_server_ip "$serip" "$out_ip")
+    serip=$(add_ipv6_brackets "$serip")
+
+    # 保存更新后的 server_ip 到文件
+    echo "$serip" > "$HOME/agsb/server_ip.log"
+}
+
+
+
+
+# 检查 IPv4 和 IPv6 的连通性
+check_ip_connectivity() {
+    local v46url="$1"
+    local v4 v6
+    # 检查 IPv4 连通性
+    v4=$(curl -s4 -m5 --connect-timeout 5 -k "$v46url" 2>/dev/null || wget -4 -qO- --tries=2 --timeout=5 "$v46url" 2>/dev/null)
+    # 检查 IPv6 连通性
+    v6=$(curl -s6 -m5 --connect-timeout 5 -k "$v46url" 2>/dev/null || wget -6 -qO- --tries=2 --timeout=5 "$v46url" 2>/dev/null)
     
-    # Check if out_ip is non-empty and is a valid IP (IPv4 or IPv6)
-    if [ -n "$out_ip" ] && is_valid_ip "$out_ip"; then
-        # Check if out_ip is IPv6 or IPv4
-        if echo "$out_ip" | grep -q ':'; then
-            # If out_ip is IPv6 and different from server_ip, update server_ip
-            if [ "$server_ip" != "[$out_ip]" ]; then
-                server_ip="[$out_ip]"
-                echo "$server_ip" > "$HOME/agsb/server_ip.log"
-                echo "$server_ip=${server_ip},out_ip=$out_ip" 
-                
-            fi
-        else
-            # If out_ip is IPv4 and different from server_ip, update server_ip
-            if [ "$server_ip" != "$out_ip" ]; then
-                server_ip="$out_ip"
-                echo "$server_ip" > "$HOME/agsb/server_ip.log"
+    # 返回 IPv4 和 IPv6 结果
+    echo "$v4 $v6"
+}
 
-                echo "$server_ip=${server_ip},out_ip=$out_ip" 
-            fi
-        fi
-    fi
+# 从 IP 服务中提取位置
+get_location_from_ip_service() {
+    local ip_service_url="$1"
+    echo $(curl -s4m5 -k "$ip_service_url" 2>/dev/null | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/' || \
+          wget -4 -qO- --tries=2 "$ip_service_url" 2>/dev/null | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/')
+}
 
-    # If out_ip is not set or is invalid, proceed with default IP logic
-    if [ -z "$v4" ]; then 
+# 如果 out_ip 是有效的且与 current_server_ip 不同，则更新 current_server_ip
+update_server_ip_if_valid() {
+    local current_server_ip="$1"
+    local out_ip="$2"
+
+    current_server_ip=$(update_server_ip "$current_server_ip" "$out_ip")
+    current_server_ip=$(add_ipv6_brackets "$current_server_ip")
+    
+    echo "$current_server_ip"
+}
+
+# 精简版 ipchange 函数，输出 IPv4、IPv6 地址、位置和变更后的出口 IP（仅当实际变化时）
+ipchange000() {
+    # 获取 IPv4 和 IPv6 的连通性和位置
+    v4v6_result=$(check_ip_connectivity "$v46url")
+    v4=$(echo "$v4v6_result" | awk '{print $1}')
+    v6=$(echo "$v4v6_result" | awk '{print $2}')
+
+    v4dq=$(get_location_from_ip_service "https://ip.fm")
+    v6dq=$(get_location_from_ip_service "https://ip.fm")
+
+    # 确定 vps 的 IPv4 和 IPv6 地址及其位置
+    if [ -z "$v4" ]; then
         vps_ipv4='无IPV4'
         vps_ipv6="$v6"
         location=$v6dq
-    elif [ -n "$v4" ] && [ -n "$v6" ]; then 
+    elif [ -n "$v4" ] && [ -n "$v6" ]; then
         vps_ipv4="$v4"
         vps_ipv6="$v6"
         location=$v4dq
-    else 
+    else
         vps_ipv4="$v4"
         vps_ipv6='无IPV6'
         location=$v4dq
     fi
-    
-    echo; agsbstatus; echo; 
+
+    # 输出 IPv4 和 IPv6 地址、位置
+    echo
+    agsbstatus
+    echo
     green "=========当前服务器本地IP情况========="
     yellow "本地IPV4地址：$vps_ipv4"
     purple "本地IPV6地址：$vps_ipv6"
     green "服务器地区：$location"
-    echo; sleep 2
-    
-    # Continue with ippz-based IP assignment logic
-    if [ "$ippz" = "4" ]; then 
-        if [ -z "$v4" ]; then 
-            ipbest
+    echo
+
+    # 记录原始的 server_ip
+    original_server_ip="$server_ip"
+
+    # 更新并确保 server_ip 只在变化时更新
+    server_ip=$(update_server_ip_if_valid "$out_ip_local" "$server_ip")
+
+    # 如果 server_ip 确实发生变化，输出变更后的出口 IP
+    if [ "$server_ip" != "$original_server_ip" ]; then
+        yellow "变更后的出口IP：$server_ip"
+    fi
+
+    # 更新并保存变更后的出口 IP 到日志
+    echo "$server_ip" > "$HOME/agsb/server_ip.log"
+}
+
+
+ipchange() {
+    # 第一步：检查 IPv4 和 IPv6 的连通性
+    v4v6_result=$(check_ip_connectivity "$v46url")
+    v4=$(echo "$v4v6_result" | awk '{print $1}')
+    v6=$(echo "$v4v6_result" | awk '{print $2}')
+
+    # 第二步：获取 IPv4 和 IPv6 地址的位置信息
+    v4dq=$(get_location_from_ip_service "https://ip.fm")
+    v6dq=$(get_location_from_ip_service "https://ip.fm")
+
+    # 第三步：根据连通性设置 vps 的 IPv4 和 IPv6 地址以及位置
+    if [ -z "$v4" ]; then
+        vps_ipv4='无IPV4'
+        vps_ipv6="$v6"
+        location=$v6dq
+    elif [ -n "$v4" ] && [ -n "$v6" ]; then
+        vps_ipv4="$v4"
+        vps_ipv6="$v6"
+        location=$v4dq
+    else
+        vps_ipv4="$v4"
+        vps_ipv6='无IPV6'
+        location=$v4dq
+    fi
+
+    # 输出当前的 IPv4 和 IPv6 地址以及位置
+    echo
+    agsbstatus
+    echo
+    green "=========当前服务器本地IP情况========="
+    yellow "本地IPV4地址：$vps_ipv4"
+    purple "本地IPV6地址：$vps_ipv6"
+    green "服务器地区：$location"
+    echo
+    sleep 2
+
+    # 第四步：根据 ippz 值更新 server_ip
+    if [ "$ippz" = "4" ]; then
+        if [ -z "$v4" ]; then
+            ipbest  # 如果没有 v4 地址，则调用 ipbest 获取公网 IP
         else
-            server_ip="$v4"
+            # 使用 update_server_ip 函数更新 server_ip
+            server_ip=$(update_server_ip "$v4" "$server_ip")
+            server_ip=$(add_ipv6_brackets "$server_ip")  # 确保 IPv6 地址加上中括号
             echo "$server_ip" > "$HOME/agsb/server_ip.log"
         fi
-    elif [ "$ippz" = "6" ]; then 
-        if [ -z "$v6" ]; then 
-            ipbest
+    elif [ "$ippz" = "6" ]; then
+        if [ -z "$v6" ]; then
+            ipbest  # 如果没有 v6 地址，则调用 ipbest 获取公网 IP
         else
-            server_ip="[$v6]"
+            # 使用 update_server_ip 函数更新 server_ip
+            server_ip=$(update_server_ip "$v6" "$server_ip")
+            server_ip=$(add_ipv6_brackets "$server_ip")  # 确保 IPv6 地址加上中括号
             echo "$server_ip" > "$HOME/agsb/server_ip.log"
         fi
-    else 
-        ipbest
+    else
+        ipbest  # 如果 ippz 值不是 4 或 6，则直接调用 ipbest 获取公网 IP
+    fi
+
+    # 第五步：如果 server_ip 发生变化，则输出变更后的出口 IP
+    current_server_ip=$(cat "$HOME/agsb/server_ip.log")  # 从日志文件读取当前的 server_ip
+    if [ "$server_ip" != "$current_server_ip" ]; then
+        yellow "👉 由于你设置了单独的出口ip,出口IP已变更为：$server_ip"  # 仅在出口 IP 发生变化时输出变更后的 IP
     fi
 }
+
+
 
 # show nodes
 cip(){
