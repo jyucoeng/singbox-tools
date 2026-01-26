@@ -2244,56 +2244,6 @@ update_server_ip_if_valid() {
     echo "$current_server_ip"
 }
 
-# 精简版 ipchange 函数，输出 IPv4、IPv6 地址、位置和变更后的出口 IP（仅当实际变化时）
-ipchange000() {
-    # 获取 IPv4 和 IPv6 的连通性和位置
-    v4v6_result=$(check_ip_connectivity "$v46url")
-    v4=$(echo "$v4v6_result" | awk '{print $1}')
-    v6=$(echo "$v4v6_result" | awk '{print $2}')
-
-    v4dq=$( (curl -s4m5 -k https://ip.fm 2>/dev/null | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/') || (wget -4 -qO- --tries=2 https://ip.fm 2>/dev/null | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/') )
-    v6dq=$( (curl -s6m5 -k https://ip.fm 2>/dev/null | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/') || (wget -6 -qO- --tries=2 https://ip.fm 2>/dev/null | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/') )
-
-    # 确定 vps 的 IPv4 和 IPv6 地址及其位置
-    if [ -z "$v4" ]; then
-        vps_ipv4='无IPV4'
-        vps_ipv6="$v6"
-        location=$v6dq
-    elif [ -n "$v4" ] && [ -n "$v6" ]; then
-        vps_ipv4="$v4"
-        vps_ipv6="$v6"
-        location=$v4dq
-    else
-        vps_ipv4="$v4"
-        vps_ipv6='无IPV6'
-        location=$v4dq
-    fi
-
-    # 输出 IPv4 和 IPv6 地址、位置
-    echo
-    agsbstatus
-    echo
-    green "=========当前服务器本地IP情况========="
-    yellow "本地IPV4地址：$vps_ipv4"
-    purple "本地IPV6地址：$vps_ipv6"
-    green "服务器地区：$location"
-    echo
-
-    # 记录原始的 server_ip
-    original_server_ip="$server_ip"
-
-    # 更新并确保 server_ip 只在变化时更新
-    server_ip=$(update_server_ip_if_valid "$out_ip_local" "$server_ip")
-
-    # 如果 server_ip 确实发生变化，输出变更后的出口 IP
-    if [ "$server_ip" != "$original_server_ip" ]; then
-        yellow "变更后的出口IP：$server_ip"
-    fi
-
-    # 更新并保存变更后的出口 IP 到日志
-    echo "$server_ip" > "$HOME/agsb/server_ip.log"
-}
-
 
 ipchange() {
     # 第一步：检查 IPv4 和 IPv6 的连通性
@@ -2359,12 +2309,13 @@ ipchange() {
         ipbest  # 如果 ippz 值不是 4 或 6，则直接调用 ipbest 获取公网 IP
     fi
 
-    echo "===========输出变更后的出口IP================"
     # 第五步：如果 server_ip 发生变化，则输出变更后的出口 IP
     current_server_ip=$(cat "$HOME/agsb/server_ip.log")  # 从日志文件读取当前的 server_ip
     # 当out_ip 不为空时，并且是有小的ip时
     if [ -n "$out_ip" ] && is_valid_ip "$out_ip"; then
-        yellow "👉 👉 由于你设置了单独的出口ip,出口IP已变更为：$current_server_ip 👈👈"  # 仅在出口 IP 发生变化时输出变更后的 IP
+        if [ -z"$current_server_ip" ]; then
+            yellow "👉 👉 由于你设置了单独的出口ip,出口IP已变更为：$current_server_ip 👈👈"  # 仅在出口 IP 发生变化时输出变更后的 IP
+        fi
     fi
 }
 
