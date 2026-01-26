@@ -2653,7 +2653,7 @@ install_step(){
 
 main(){
 
-  echo "outip =	$ou_ip"; 
+ 
 
 # 启动 nginx
 if [ "$1" = "nginx_start" ]; then
@@ -2733,6 +2733,8 @@ fi
 
 # 覆盖式安装
 if [ "$1" = "rep" ]; then 
+    green "outip =	$ou_ip"; 
+    sleep 2; 
     green "开始覆盖式安装流程..."; 
     green "1、即将开始清理操作..."; 
     cleandel; 
