@@ -2128,19 +2128,20 @@ update_server_ip() {
     _rk_log "[调试] 原始 current_server_ip: $current_server_ip"
     _rk_log "[调试] 原始 out_ip_local: $out_ip_local"
 
-    # 如果 current_server_ip 是 IPv6 地址（即包含中括号），去除中括号
-    if echo "$current_server_ip" | grep -q '^[' && echo "$current_server_ip" | grep -q ']$'; then
+   # 如果 current_server_ip 是 IPv6 地址（即包含中括号），去除中括号
+    if echo "$current_server_ip" | grep -q '^\[' && echo "$current_server_ip" | grep -q '\]$'; then
         _rk_log "[调试] 去掉 current_server_ip 中的中括号"
         current_server_ip=$(echo "$current_server_ip" | sed 's/^\[\(.*\)\]$/\1/')  # 去掉中括号
         _rk_log "[调试] 去掉中括号后的 current_server_ip: $current_server_ip"
     fi
 
     # 如果 out_ip_local 非空且包含中括号，则去除中括号
-    if [ -n "$out_ip_local" ] && echo "$out_ip_local" | grep -q '^[' && echo "$out_ip_local" | grep -q ']$'; then
+    if [ -n "$out_ip_local" ] && echo "$out_ip_local" | grep -q '^\[' && echo "$out_ip_local" | grep -q '\]$'; then
         _rk_log "[调试] 去掉 out_ip_local 中的中括号"
         out_ip_local=$(echo "$out_ip_local" | sed 's/^\[\(.*\)\]$/\1/')  # 去掉中括号
         _rk_log "[调试] 去掉中括号后的 out_ip_local: $out_ip_local"
     fi
+
 
     # 检查 out_ip_local 是否有效，并且与 current_server_ip 不同，并且确保它们类型一致（IPv4 或 IPv6）
     if [ -n "$out_ip_local" ] && is_valid_ip "$out_ip_local" && [ "$current_server_ip" != "$out_ip_local" ]; then
