@@ -2360,6 +2360,7 @@ ipchange() {
         ipbest  # 如果 ippz 值不是 4 或 6，则直接调用 ipbest 获取公网 IP
     fi
 
+    echo "===========输出变更后的出口IP================"
     # 第五步：如果 server_ip 发生变化，则输出变更后的出口 IP
     current_server_ip=$(cat "$HOME/agsb/server_ip.log")  # 从日志文件读取当前的 server_ip
     # 当out_ip 不为空时，并且是有小的ip时
