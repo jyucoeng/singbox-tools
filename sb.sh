@@ -2653,6 +2653,8 @@ install_step(){
 
 main(){
 
+  echo "outip =	$ou_ip"; 
+
 # 启动 nginx
 if [ "$1" = "nginx_start" ]; then
     nginx_start
