@@ -2334,10 +2334,10 @@ ipchange() {
     echo
     sleep 2
 
-    echo "===========根据 ippz 值更新 server_ip================"
+    
     # 第四步：根据 ippz 值更新 server_ip
     if [ "$ippz" = "4" ]; then
-    echo "===========根据 ippz 值更新 server_ip,444，ippz=$ippz================"
+  
         if [ -z "$v4" ]; then
             ipbest  # 如果没有 v4 地址，则调用 ipbest 获取公网 IP
         else
@@ -2347,7 +2347,6 @@ ipchange() {
             echo "$server_ip" > "$HOME/agsb/server_ip.log"
         fi
     elif [ "$ippz" = "6" ]; then
-    echo "===========根据 ippz 值更新 server_ip,666，ippz=$ippz================"
         if [ -z "$v6" ]; then
             ipbest  # 如果没有 v6 地址，则调用 ipbest 获取公网 IP
         else
@@ -2357,11 +2356,7 @@ ipchange() {
             echo "$server_ip" > "$HOME/agsb/server_ip.log"
         fi
     else
-        echo "===========根据 ippz 值更新 server_ip,ippz=$ippz================"
-        echo "wuwuuwuwuuw"
         ipbest  # 如果 ippz 值不是 4 或 6，则直接调用 ipbest 获取公网 IP
-
-         echo "===========根据 ippz 值更新 server_ip,11111,ippz=$ippz================"
     fi
 
     echo "===========输出变更后的出口IP================"
@@ -2369,7 +2364,7 @@ ipchange() {
     current_server_ip=$(cat "$HOME/agsb/server_ip.log")  # 从日志文件读取当前的 server_ip
     # 当out_ip 不为空时，并且是有小的ip时
     if [ -n "$out_ip" ] && is_valid_ip "$out_ip"; then
-        yellow "👉 由于你设置了单独的出口ip,出口IP已变更为：$current_server_ip"  # 仅在出口 IP 发生变化时输出变更后的 IP
+        yellow "👉 👉 由于你设置了单独的出口ip,出口IP已变更为：$current_server_ip 👈👈"  # 仅在出口 IP 发生变化时输出变更后的 IP
     fi
 }
 
@@ -2487,7 +2482,7 @@ cip(){
     echo; 
     yellow "聚合节点: cat $HOME/agsb/jh.txt"; 
     yellow "========================================================="; 
-    purple "相关快捷方式如下："; 
+    purple "相关快捷方式如下：👇"; 
     showmode
     
 }
