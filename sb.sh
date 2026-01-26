@@ -2222,7 +2222,7 @@ get_location_from_ip_service() {
     if [[ -z "$response" ]]; then
         return  # Return empty (function ends here)
     fi
-
+    echo  
     # Try extracting the location using curl and sed
     location=$(echo "$response" | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/' || \
                wget -4 -qO- --tries=2 "$ip_service_url" 2>/dev/null | grep -oP 'Location: \K[^<]+' | tail -n1)
@@ -2250,8 +2250,8 @@ ipchange000() {
     v4=$(echo "$v4v6_result" | awk '{print $1}')
     v6=$(echo "$v4v6_result" | awk '{print $2}')
 
-    v4dq=$(get_location_from_ip_service "https://ip.fm")
-    v6dq=$(get_location_from_ip_service "https://ip.fm")
+    v4dq=$( (curl -s4m5 -k https://ip.fm 2>/dev/null | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/') || (wget -4 -qO- --tries=2 https://ip.fm 2>/dev/null | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/') )
+    v6dq=$( (curl -s6m5 -k https://ip.fm 2>/dev/null | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/') || (wget -6 -qO- --tries=2 https://ip.fm 2>/dev/null | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/') )
 
     # 确定 vps 的 IPv4 和 IPv6 地址及其位置
     if [ -z "$v4" ]; then
@@ -2301,8 +2301,9 @@ ipchange() {
     v6=$(echo "$v4v6_result" | awk '{print $2}')
 
     # 第二步：获取 IPv4 和 IPv6 地址的位置信息
-    v4dq=$(get_location_from_ip_service "https://ip.fm")
-    v6dq=$(get_location_from_ip_service "https://ip.fm")
+    v4dq=$( (curl -s4m5 -k https://ip.fm 2>/dev/null | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/') || (wget -4 -qO- --tries=2 https://ip.fm 2>/dev/null | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/') )
+    v6dq=$( (curl -s6m5 -k https://ip.fm 2>/dev/null | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/') || (wget -6 -qO- --tries=2 https://ip.fm 2>/dev/null | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/') )
+
 
     # 第三步：根据连通性设置 vps 的 IPv4 和 IPv6 地址以及位置
     if [ -z "$v4" ]; then
