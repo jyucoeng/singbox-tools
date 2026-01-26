@@ -2343,8 +2343,9 @@ ipchange() {
 
     # 第五步：如果 server_ip 发生变化，则输出变更后的出口 IP
     current_server_ip=$(cat "$HOME/agsb/server_ip.log")  # 从日志文件读取当前的 server_ip
-    if [ "$server_ip" != "$current_server_ip" ]; then
-        yellow "👉 由于你设置了单独的出口ip,出口IP已变更为：$server_ip"  # 仅在出口 IP 发生变化时输出变更后的 IP
+    # 当out_ip 不为空时，并且是有小的ip时
+    if [ -n "$out_ip" ] && is_valid_ip "$out_ip"; then
+        yellow "👉 由于你设置了单独的出口ip,出口IP已变更为：$current_server_ip"  # 仅在出口 IP 发生变化时输出变更后的 IP
     fi
 }
 
@@ -2733,8 +2734,6 @@ fi
 
 # 覆盖式安装
 if [ "$1" = "rep" ]; then 
-    green "out_ip =	$out_ip"; 
-    sleep 2; 
     green "开始覆盖式安装流程..."; 
     green "1、即将开始清理操作..."; 
     cleandel; 
