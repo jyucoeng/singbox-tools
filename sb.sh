@@ -839,7 +839,7 @@ get_short_id() {
       fi
       echo "$sid" > "$sid_file"
 
-      debug_log "✅ short_id 已由 reality_private 稳定推导, 值: $sid"
+      debug_log "✅ 【调试】short_id 已由 reality_private 稳定推导, 值: $sid"
 
       echo "$sid"
       return 0
@@ -888,7 +888,7 @@ derive_reality_public_key() {
 
   # 1) 优先本地推导（openssl + xxd）
   if command -v xxd >/dev/null 2>&1 && command -v openssl >/dev/null 2>&1; then
-    debug_log "🔐 derive_reality_public_key: 使用【本地推导】(openssl + xxd)"
+    debug_log "🔐 【调试】 derive_reality_public_key: 使用【本地推导】(openssl + xxd)"
 
     local tmp_dir="${HOME}/agsb/.tmp_reality"
     mkdir -p "$tmp_dir" 2>/dev/null
@@ -904,7 +904,7 @@ derive_reality_public_key() {
     elif [ $mod -eq 3 ]; then
       b64="${b64}="
     elif [ $mod -eq 1 ]; then
-      debug_log "❗ derive_reality_public_key: 私钥 base64 长度不合法（mod=1）"
+      debug_log "❗ 【调试】 derive_reality_public_key: 私钥 base64 长度不合法（mod=1）"
       b64=""
     fi
 
@@ -917,7 +917,7 @@ derive_reality_public_key() {
       elif echo "$b64" | openssl base64 -d -A > "$tmp_dir/_x25519_priv_raw" 2>/dev/null; then
         :
       else
-        debug_log "❗ derive_reality_public_key: 本地解码失败（base64 -d/-D/openssl base64 均失败）"
+        debug_log "❗ 【调试】 derive_reality_public_key: 本地解码失败（base64 -d/-D/openssl base64 均失败）"
         rm -f "$tmp_dir/_x25519_priv_raw" 2>/dev/null
       fi
 
@@ -927,7 +927,7 @@ derive_reality_public_key() {
         priv_len="$(stat -c%s "$tmp_dir/_x25519_priv_raw" 2>/dev/null || stat -f%z "$tmp_dir/_x25519_priv_raw" 2>/dev/null || echo 0)"
 
         if [ "$priv_len" != "32" ]; then
-          debug_log "❗ derive_reality_public_key: 本地解码后长度不为 32 bytes（实际=$priv_len）"
+          debug_log "❗ 【调试】 derive_reality_public_key: 本地解码后长度不为 32 bytes（实际=$priv_len）"
           rm -f "$tmp_dir/_x25519_priv_raw" 2>/dev/null
         else
           # PKCS#8 DER 前缀（X25519 固定头）
@@ -950,7 +950,7 @@ derive_reality_public_key() {
               fi
 
               if [ -n "$pub" ]; then
-                debug_log "✅ derive_reality_public_key: 本地推导成功"
+                debug_log "✅ 【调试】 derive_reality_public_key: 本地推导成功"
 
                 # 清理临时文件（可选）
                 rm -f "$tmp_dir/_x25519_priv_raw" "$tmp_dir/_x25519_priv_der" "$tmp_dir/_x25519_priv_pem" \
@@ -959,25 +959,25 @@ derive_reality_public_key() {
                 echo "$pub"
                 return 0
               else
-                debug_log "❗ derive_reality_public_key: 本地推导成功但编码公钥失败（缺少 base64 工具？）"
+                debug_log "❗ 【调试】 derive_reality_public_key: 本地推导成功但编码公钥失败（缺少 base64 工具？）"
               fi
             else
-              debug_log "❗ derive_reality_public_key: openssl 推导公钥失败（pkcs8/pkey/pubout）"
+              debug_log "❗ 【调试】 derive_reality_public_key: openssl 推导公钥失败（pkcs8/pkey/pubout）"
             fi
           else
-            debug_log "❗ derive_reality_public_key: xxd 读取私钥失败"
+            debug_log "❗ 【调试】 derive_reality_public_key: xxd 读取私钥失败"
           fi
         fi
       fi
     fi
 
-    debug_log "❗ derive_reality_public_key: 本地推导失败，准备在线兜底"
+    debug_log "❗ 【调试】 derive_reality_public_key: 本地推导失败，准备在线兜底"
   else
-    debug_log "❗ derive_reality_public_key: 缺少 openssl 或 xxd，本地推导不可用"
+    debug_log "❗ 【调试】 derive_reality_public_key: 缺少 openssl 或 xxd，本地推导不可用"
   fi
 
   # 2) 在线兜底推导（curl/wget）
-  debug_log "🌐 derive_reality_public_key: 使用【在线推导】(realitykey.cloudflare.now.cc)"
+  debug_log "🌐 【调试】 derive_reality_public_key: 使用【在线推导】(realitykey.cloudflare.now.cc)"
 
   if command -v curl >/dev/null 2>&1; then
     pub="$(curl -s --max-time 2 "https://realitykey.cloudflare.now.cc/?privateKey=${priv}" \
@@ -986,17 +986,17 @@ derive_reality_public_key() {
     pub="$(wget --no-check-certificate -qO- --tries=3 --timeout=2 "https://realitykey.cloudflare.now.cc/?privateKey=${priv}" \
       | awk -F '"' '/publicKey/{print $4; exit}')"
   else
-    debug_log "❗ derive_reality_public_key: curl/wget 都不存在，在线推导不可用"
+    debug_log "❗ 【调试】 derive_reality_public_key: curl/wget 都不存在，在线推导不可用"
     return 1
   fi
 
   if [ -n "$pub" ]; then
-    debug_log "✅ derive_reality_public_key: 在线推导成功"
+    debug_log "✅ 【调试】 derive_reality_public_key: 在线推导成功"
     echo "$pub"
     return 0
   fi
 
-  debug_log "❗ derive_reality_public_key: 在线推导失败（未获取到 publicKey）"
+  debug_log "❗ 【调试】 derive_reality_public_key: 在线推导失败（未获取到 publicKey）"
   return 1
 }
 
@@ -1020,36 +1020,36 @@ init_reality_keypair() {
   local priv="" pub=""
   local print_reality_private=0
 
-  debug_log "🔑 init_reality_keypair: 开始初始化 Reality Keypair..."
-  debug_log "📌 init_reality_keypair: key_file=$key_file"
+  debug_log "🔑 【调试】 init_reality_keypair: 开始初始化 Reality Keypair..."
+  debug_log "📌  【调试】 init_reality_keypair: key_file=$key_file"
 
   # 读取文件中的 keypair（如果存在）
   if [ -f "$key_file" ]; then
     file_priv="$(awk -F': ' '/PrivateKey/{print $2; exit}' "$key_file" 2>/dev/null)"
     file_pub="$(awk -F': ' '/PublicKey/{print $2; exit}' "$key_file" 2>/dev/null)"
-    debug_log "📄 init_reality_keypair: 检测到已有 reality.key（priv=${#file_priv} chars, pub=${#file_pub} chars）"
+    debug_log "📄 【调试】 init_reality_keypair: 检测到已有 reality.key（priv=${#file_priv} chars, pub=${#file_pub} chars）"
   else
-    debug_log "📄 init_reality_keypair: 未找到 reality.key（首次安装或文件丢失）"
+    debug_log "📄 【调试】 init_reality_keypair: 未找到 reality.key（首次安装或文件丢失）"
   fi
 
   # A) 用户传入了 reality_private（最高优先级）
   if [ -n "$env_priv" ]; then
-    debug_log "🧩 init_reality_keypair: 使用环境变量 reality_private（优先级最高）"
+    debug_log "🧩 【调试】 init_reality_keypair: 使用环境变量 reality_private（优先级最高）"
 
     priv="$env_priv"
 
     # 如果文件里私钥与传入相同，则优先复用文件里的公钥（避免变化）
     if [ -n "$file_priv" ] && [ "$file_priv" = "$priv" ] && [ -n "$file_pub" ]; then
       pub="$file_pub"
-      debug_log "✅ init_reality_keypair: 文件私钥与传入一致，复用文件公钥"
+      debug_log "✅ 【调试】 init_reality_keypair: 文件私钥与传入一致，复用文件公钥"
     else
-      debug_log "🔄 init_reality_keypair: 尝试由私钥推导公钥（derive_reality_public_key）"
+      debug_log "🔄 【调试】 init_reality_keypair: 尝试由私钥推导公钥（derive_reality_public_key）"
       pub="$(derive_reality_public_key "$priv" 2>/dev/null)" || pub=""
 
       if [ -n "$pub" ]; then
-        debug_log "✅ init_reality_keypair: 推导公钥成功（pub=${#pub} chars）"
+        debug_log "✅ 【调试】 init_reality_keypair: 推导公钥成功（pub=${#pub} chars）"
       else
-        debug_log "❗ init_reality_keypair: 推导公钥失败，将回退为生成新 keypair（这会覆盖 reality_private）"
+        debug_log "❗ 【调试】 init_reality_keypair: 推导公钥失败，将回退为生成新 keypair（这会覆盖 reality_private）"
 
         # 推导失败：生成一套新的 keypair（回退）
         local kp
@@ -1058,28 +1058,28 @@ init_reality_keypair() {
         pub="$(awk '/PublicKey/{print $NF; exit}' <<< "$kp")"
 
         if [ -z "$priv" ] || [ -z "$pub" ]; then
-          debug_log "❗ init_reality_keypair: 生成 keypair 失败（sing-box generate reality-keypair 无输出）"
+          debug_log "❗ 【调试】 init_reality_keypair: 生成 keypair 失败（sing-box generate reality-keypair 无输出）"
           return 1
         fi
 
         print_reality_private=1
-        debug_log "✅ init_reality_keypair: 已生成新的 Reality Keypair（priv/pub 均已获得）"
+        debug_log "✅ 【调试】 init_reality_keypair: 已生成新的 Reality Keypair（priv/pub 均已获得）"
       fi
     fi
 
   # B) 没传私钥，但文件里有 → 直接复用（稳定）
   elif [ -n "$file_priv" ] && [ -n "$file_pub" ]; then
-    debug_log "♻️ init_reality_keypair: 未传入 reality_private，复用 reality.key 中的 keypair（稳定模式）"
+    debug_log "♻️ 【调试】 init_reality_keypair: 未传入 reality_private，复用 reality.key 中的 keypair（稳定模式）"
 
     export reality_private="$file_priv"
     export reality_public="$file_pub"
 
-    debug_log "✅ init_reality_keypair: 复用成功（priv=${#file_priv} chars, pub=${#file_pub} chars）"
+    debug_log "✅ 【调试】 init_reality_keypair: 复用成功（priv=${#file_priv} chars, pub=${#file_pub} chars）"
     return 0
 
   # C) 既没传私钥，文件也没有 → 首次生成
   else
-    debug_log "🆕 init_reality_keypair: 无传入私钥且无本地文件，生成新的 Reality Keypair"
+    debug_log "🆕 【调试】 init_reality_keypair: 无传入私钥且无本地文件，生成新的 Reality Keypair"
 
     local kp
     kp="$("$HOME/agsb/sing-box" generate reality-keypair 2>/dev/null)"
@@ -1087,12 +1087,12 @@ init_reality_keypair() {
     pub="$(awk '/PublicKey/{print $NF; exit}' <<< "$kp")"
 
     if [ -z "$priv" ] || [ -z "$pub" ]; then
-      debug_log "❗ init_reality_keypair: 生成 keypair 失败（sing-box generate reality-keypair 无输出）"
+      debug_log "❗ 【调试】 init_reality_keypair: 生成 keypair 失败（sing-box generate reality-keypair 无输出）"
       return 1
     fi
 
     print_reality_private=1
-    debug_log "✅ init_reality_keypair: 首次生成成功（priv/pub 均已获得）"
+    debug_log "✅ 【调试】 init_reality_keypair: 首次生成成功（priv/pub 均已获得）"
   fi
 
   # 写入 reality.key（统一落盘）
@@ -1104,8 +1104,8 @@ init_reality_keypair() {
   export reality_private="$priv"
   export reality_public="$pub"
 
-  debug_log "💾 init_reality_keypair: 已写入 $key_file（chmod 600）"
-  debug_log "✅ init_reality_keypair: 完成（priv=${#priv} chars, pub=${#pub} chars）"
+  debug_log "💾 【调试】 init_reality_keypair: 已写入 $key_file（chmod 600）"
+  debug_log "✅ 【调试】 init_reality_keypair: 完成（priv=${#priv} chars, pub=${#pub} chars）"
 
   # 仅在“新生成私钥”时提示用户保存（避免每次刷屏）
   print_reality_keypair_hint "$print_reality_private"
@@ -2477,7 +2477,7 @@ cip(){
         short_id=$(cat "$HOME/agsb/short_id")
         vl_sni=$(cat "$HOME/agsb/vl_sni")
 
-        debug_log "cip函数中的short_id,值为:$short_id"
+        debug_log "【调试】cip函数中的short_id,值为:$short_id"
 
        # vless_link="vless://${uuid}@${server_ip}:${port_vlr}?encryption=none&security=reality&sni=www.yahoo.com&fp=chrome&flow=xtls-rprx-vision&publicKey=${public_key}&shortId=${short_id}#${sxname}vless-reality-$hostname"
         
