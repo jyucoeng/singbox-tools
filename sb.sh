@@ -1643,99 +1643,120 @@ append_argo_cron_legacy() {
 }
 
 
+
 post_install_finalize_legacy() {
-    sleep 5
-    echo
+  sleep 5
+  echo
 
-    if pgrep -f "$HOME/agsb/sing-box" >/dev/null 2>&1 || pgrep -f "$HOME/agsb/cloudflared" >/dev/null 2>&1; then
+  # 只要 sing-box 或 cloudflared 进程存在，认为安装启动成功
+  if pgrep -f "$HOME/agsb/sing-box" >/dev/null 2>&1 || pgrep -f "$HOME/agsb/cloudflared" >/dev/null 2>&1; then
 
-        [ -f ~/.bashrc ] || touch ~/.bashrc
-        sed -i '/agsb/d' ~/.bashrc
+    # 1) 确保 bashrc 存在（Debian/Alpine 都适用）
+    [ -f "$HOME/.bashrc" ] || touch "$HOME/.bashrc"
 
-        SCRIPT_PATH="$HOME/bin/agsb"
-        mkdir -p "$HOME/bin"
+    # 2) 下载主脚本到 $HOME/bin/agsb
+    local SCRIPT_PATH="$HOME/bin/agsb"
+    mkdir -p "$HOME/bin"
 
-        # ✅ 下载主脚本：加超时/重试，避免卡住
-        (curl -sL --connect-timeout 5 --max-time 120 \
-              --retry 2 --retry-delay 2 --retry-all-errors \
-              "$agsburl" -o "$SCRIPT_PATH") \
-        || (wget -qO "$SCRIPT_PATH" --tries=2 --timeout=60 "$agsburl")
+    # 下载：加超时/重试，避免卡住
+    (curl -sL --connect-timeout 5 --max-time 120 \
+          --retry 2 --retry-delay 2 --retry-all-errors \
+          "$agsburl" -o "$SCRIPT_PATH") \
+    || (wget -qO "$SCRIPT_PATH" --tries=2 --timeout=60 "$agsburl")
 
-        # ✅ 下载结果校验：防止空文件/错误页
-        if [ ! -s "$SCRIPT_PATH" ]; then
-            red "❌ 下载主脚本失败：文件为空 $SCRIPT_PATH"
-            exit 1
-        fi
+    # 下载结果校验：防止空文件/错误页
+    if [ ! -s "$SCRIPT_PATH" ]; then
+      red "❌ 下载主脚本失败：文件为空 $SCRIPT_PATH"
+      exit 1
+    fi
+    chmod +x "$SCRIPT_PATH"
 
-        chmod +x "$SCRIPT_PATH"
+    # 3) bashrc 自启：仅在无 systemd / 无 openrc 的场景写入
+    #    （有 systemd/openrc 的情况下应走 service，而不是写 bashrc）
+    if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then
+      # 用区块标记，保证每次覆盖写入，不会累积多份、不会残留孤立 fi
+      local BASHRC_BEGIN="# >>> agsb auto start (added by installer) >>>"
+      local BASHRC_END="# <<< agsb auto start (added by installer) <<<"
 
-        # 仅在无 systemd / openrc 时写 bashrc 自启
-        if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then
-            # ✅ 更安全的 bashrc 写入方式：heredoc（避免引号地狱）
-            # 说明：
-            # - 这里写入的是“固定文本”，里面包含 ${name} 这类变量的展开值（在写入时已经被替换成具体值）
-            # - bashrc 运行时只负责 export，并调用 $HOME/bin/agsb
-            cat >> "$HOME/.bashrc" <<EOF
-# agsb auto start (added by installer)
+      # 先删除旧区块（BusyBox sed / GNU sed 都支持这种范围删除）
+      sed -i "\|^${BASHRC_BEGIN}$|,\|^${BASHRC_END}$|d" "$HOME/.bashrc" 2>/dev/null || true
+
+      # 再追加新区块（注意：这里写入的是“当次安装的具体值”，不是变量名本身）
+      cat >> "$HOME/.bashrc" <<EOF
+${BASHRC_BEGIN}
+# 说明：
+# - 仅在 sing-box 未运行时才拉起
+# - 这里写入的是安装时的参数快照（避免你不带环境变量执行时丢参）
 if ! pgrep -f 'agsb/sing-box' >/dev/null 2>&1; then
-  export \
-    vl_sni="${vl_sni}" \
-    tu_sni="${tu_sni}" \
-    hy_sni="${hy_sni}" \
-    cdn_host="${cdn_host}" \
-    cdn_pt="${cdn_pt}" \
-    vl_sni_pt="${vl_sni_pt}" \
-    short_id="${short_id}" \
-    name="${name}" \
-    ippz="${ippz}" \
-    argo="${argo}" \
-    uuid="${uuid}" \
-    vmpt="${port_vm_ws}" \
-    trpt="${port_tr}" \
-    hypt="${port_hy2}" \
-    tupt="${port_tu}" \
-    vlrt="${port_vlr}" \
-    nginx_pt="${nginx_pt}" \
-    argo_pt="${argo_pt}" \
-    agn="${ARGO_DOMAIN}" \
+  export \\
+    vl_sni="${vl_sni}" \\
+    tu_sni="${tu_sni}" \\
+    hy_sni="${hy_sni}" \\
+    cdn_host="${cdn_host}" \\
+    cdn_pt="${cdn_pt}" \\
+    vl_sni_pt="${vl_sni_pt}" \\
+    short_id="${short_id}" \\
+    name="${name}" \\
+    ippz="${ippz}" \\
+    argo="${argo}" \\
+    uuid="${uuid}" \\
+    vmpt="${port_vm_ws}" \\
+    trpt="${port_tr}" \\
+    hypt="${port_hy2}" \\
+    tupt="${port_tu}" \\
+    vlrt="${port_vlr}" \\
+    nginx_pt="${nginx_pt}" \\
+    argo_pt="${argo_pt}" \\
+    agn="${ARGO_DOMAIN}" \\
     agk="${ARGO_AUTH}"
   bash "\$HOME/bin/agsb"
 fi
+${BASHRC_END}
 EOF
-        fi
-
-        # PATH 注入
-        sed -i '/export PATH="\$HOME\/bin:\$PATH"/d' ~/.bashrc
-        echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.bashrc"
-        grep -qxF 'source ~/.bashrc' ~/.bash_profile 2>/dev/null || echo 'source ~/.bashrc' >> ~/.bash_profile
-        . ~/.bashrc 2>/dev/null
-
-        # crontab 处理
-        crontab -l > /tmp/crontab.tmp 2>/dev/null
-
-        # sing-box cron（仅无 systemd / openrc）
-        if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then
-            sed -i '/agsb\/sing-box/d' /tmp/crontab.tmp
-            echo '@reboot sleep 10 && nohup $HOME/agsb/sing-box run -c $HOME/agsb/sb.json >/dev/null 2>&1 &' \
-                >> /tmp/crontab.tmp
-        fi
-
-        # 清理旧的 cloudflared cron
-        sed -i '/agsb\/cloudflared/d' /tmp/crontab.tmp
-
-        # 写入 Argo cron（token / JSON / 临时三态）
-        append_argo_cron_legacy
-
-        crontab /tmp/crontab.tmp >/dev/null 2>&1
-        rm /tmp/crontab.tmp
-
-        green "agsb脚本进程启动成功，安装完毕"
-        sleep 2
     else
-        red "agsb脚本进程未启动，安装失败"
-        exit 1
+      # 有 systemd/openrc 的环境不写 bashrc，自启交给 service/rc 管
+      :
     fi
+
+    # 4) PATH 注入：确保只有一条 export PATH="$HOME/bin:$PATH"
+    sed -i '/export PATH="\$HOME\/bin:\$PATH"/d' "$HOME/.bashrc" 2>/dev/null || true
+    if ! grep -qs '^export PATH="\$HOME/bin:\$PATH"$' "$HOME/.bashrc" 2>/dev/null; then
+      echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.bashrc"
+    fi
+
+    # 5) Debian 常见：bash_profile 里 source bashrc（没有就补一条）
+    if [ -f "$HOME/.bash_profile" ]; then
+      grep -qxF 'source ~/.bashrc' "$HOME/.bash_profile" 2>/dev/null || echo 'source ~/.bashrc' >> "$HOME/.bash_profile"
+    fi
+
+    # 6) 仅对当前 bash 会话尝试加载（脚本非 source 执行时，只影响脚本进程，不影响你当前终端）
+    if [ -n "${BASH_VERSION:-}" ]; then
+      # shellcheck disable=SC1090
+      . "$HOME/.bashrc" 2>/dev/null || true
+    fi
+
+    # 7) crontab：清理旧条目 + 按需写入 argo cron（token/json/临时）
+    crontab -l > /tmp/crontab.tmp 2>/dev/null || true
+
+    # 清理旧的 agsb / cloudflared cron（避免重复叠加）
+    sed -i '/agsb/d' /tmp/crontab.tmp 2>/dev/null || true
+    sed -i '/agsb\/cloudflared/d' /tmp/crontab.tmp 2>/dev/null || true
+
+    # 写入 Argo cron（函数内部已经做了 systemd/openrc 的跳过判断）
+    append_argo_cron_legacy
+
+    crontab /tmp/crontab.tmp >/dev/null 2>&1 || true
+    rm -f /tmp/crontab.tmp 2>/dev/null || true
+
+    green "agsb脚本进程启动成功，安装完毕"
+    sleep 2
+  else
+    red "agsb脚本进程未启动，安装失败"
+    exit 1
+  fi
 }
+
+
 
 
 ensure_nginx_if_needed() {
