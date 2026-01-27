@@ -1865,7 +1865,6 @@ ensure_nginx_if_needed() {
 }
 
 
-
 ins(){
     debug_log "【调试】进入 ins() 安装流程"
     debug_log "【调试】关键参数：argo=${argo:-<空>}，vmag=${vmag:-<空>}，subscribe=$(get_subscribe_flag 2>/dev/null || echo ${subscribe:-false})，nginx_pt=${nginx_pt:-<空>}，argo_pt=${argo_pt:-<空>}"
@@ -1922,7 +1921,14 @@ ins(){
             argo_tunnel_type="固定"
             debug_log "【调试】判定为固定 Argo 隧道（ARGO_DOMAIN + ARGO_AUTH 都存在）"
 
-            if pidof systemd >/dev/null 2>&1 && [ "$EUID" -eq 0 ]; then
+            # ✅ systemd 判定：不要用 pidof systemd（很多 Debian 精简环境/容器里会失败，导致误走 nohup 分支）
+            local _has_systemd=0
+            if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+                _has_systemd=1
+            fi
+            debug_log "【调试】systemd 判定：_has_systemd=${_has_systemd}，systemctl=$(command -v systemctl 2>/dev/null || echo <无>)，/run/systemd/system=$([ -d /run/systemd/system ] && echo 存在 || echo 不存在)，PID1=$(ps -p 1 -o comm= 2>/dev/null | tr -d ' ' )"
+
+            if [ "${_has_systemd}" = "1" ] && [ "$EUID" -eq 0 ]; then
                 debug_log "【调试】启动方式：systemd 服务（install_argo_service_systemd）"
                 install_argo_service_systemd "$ARGO_MODE" "$ARGO_AUTH"
             elif command -v rc-service >/dev/null 2>&1 && [ "$EUID" -eq 0 ]; then
@@ -1936,6 +1942,7 @@ ins(){
 
             # 与原版一致：固定 Argo 域名直接落盘
             echo "$ARGO_DOMAIN" > "$HOME/agsb/sbargoym.log"
+            
             # token 模式下才会有 sbargotoken.log
             [ "$ARGO_MODE" = "token" ] && echo "$ARGO_AUTH" > "$HOME/agsb/sbargotoken.log"
         else
@@ -1961,7 +1968,6 @@ ins(){
     ensure_agsb_shortcut
     debug_log "【调试】ensure_agsb_shortcut 已执行完成（快捷命令/链接）"
 }
-
 
 
 # Write environment variables to files for persistence
