@@ -487,7 +487,7 @@ EOF
   # ✅ 输出结果（不再依赖 bashrc）
   if command -v agsb >/dev/null 2>&1; then
     echo ""
-    green " 已创建快捷命令：agsb（$(command -v agsb)）"
+    purple " 已创建快捷命令：agsb（$(command -v agsb)）"
   else
     yellow "❗ 已创建 wrapper/软链接，但当前 PATH 未命中 agsb"
     yellow "👉 你仍可直接运行："
@@ -1657,7 +1657,6 @@ EOF
     systemctl start argo
     echo ""
     green "✅ Argo 服务已启动并成功设置开机自启动（systemd）"
-    echo ""
 }
 
 
@@ -1768,7 +1767,7 @@ wait_and_check_argo() {
     if [ -n "$argodomain" ] && echo "$argodomain" | grep -q '\.'; then
       export ARGO_DOMAIN="$argodomain"
       echo "$ARGO_DOMAIN" > "$ym_log" 2>/dev/null
-      green "✅ 固定 Argo 域名：$ARGO_DOMAIN"
+      purple "✅ 固定 Argo 域名：$ARGO_DOMAIN"
       return 0
     fi
 
@@ -1833,7 +1832,6 @@ append_argo_cron_legacy() {
 }
 
 
-
 post_install_finalize_legacy() {
   # 用“最多等待 10 秒 + 检测到就立刻继续”替代固定 sleep
   for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -1846,63 +1844,15 @@ post_install_finalize_legacy() {
 
   # 只要 sing-box 或 cloudflared 进程存在，认为安装启动成功
   if pgrep -f "$HOME/agsb/sing-box" >/dev/null 2>&1 || pgrep -f "$HOME/agsb/cloudflared" >/dev/null 2>&1; then
-    local script_path="$HOME/bin/agsb"
-
-    # 1) 确保 bin 目录存在（不再处理 .bashrc）
-    mkdir -p "$HOME/bin"
-
-    # 2) 下载主脚本到 $HOME/bin/agsb
-    (curl -sL --connect-timeout 5 --max-time 120 \
-          --retry 2 --retry-delay 2 --retry-all-errors \
-          "$agsburl" -o "$script_path") \
-    || (wget -qO "$script_path" --tries=2 --timeout=60 "$agsburl")
-
-    # 下载结果校验：防止空文件/错误页
-    if [ ! -s "$script_path" ]; then
-      red "❌ 下载主脚本失败：文件为空 $script_path"
-      exit 1
-    fi
-    chmod +x "$script_path"
-
-    # 3) 创建“系统级链接”，确保立刻可用（不污染 bashrc）
-    #    优先 /usr/local/bin，其次 /usr/bin
-    if [ "$(id -u)" -eq 0 ]; then
-      if [ -d /usr/local/bin ] && [ -w /usr/local/bin ]; then
-        ln -sf "$script_path" /usr/local/bin/agsb 2>/dev/null || true
-        chmod +x /usr/local/bin/agsb 2>/dev/null || true
-      elif [ -d /usr/bin ] && [ -w /usr/bin ]; then
-        ln -sf "$script_path" /usr/bin/agsb 2>/dev/null || true
-        chmod +x /usr/bin/agsb 2>/dev/null || true
-      fi
-    else
-      # 非 root：尽力放到 ~/.local/bin（很多系统默认在 PATH 里）
-      mkdir -p "$HOME/.local/bin" 2>/dev/null || true
-      if [ -d "$HOME/.local/bin" ] && [ -w "$HOME/.local/bin" ]; then
-        ln -sf "$script_path" "$HOME/.local/bin/agsb" 2>/dev/null || true
-        chmod +x "$HOME/.local/bin/agsb" 2>/dev/null || true
-      fi
-    fi
-
-    # 4) 尽力刷新本进程可见的命令缓存（不改用户环境文件）
-    hash -r 2>/dev/null || true
-    command -v rehash >/dev/null 2>&1 && rehash 2>/dev/null || true
-
-    # 5) 输出结果
-    if command -v agsb >/dev/null 2>&1; then
-      echo ""
-      green "✅ 已创建快捷命令：agsb（$(command -v agsb)）"
-    else
-      yellow "❗ 已下载脚本到：$script_path"
-      yellow "❗ 但当前系统 PATH 未命中 agsb：你可用 $script_path 直接运行"
-      yellow "   （如果你希望非 root 也无感生效，需要你自己把 \$HOME/bin 或 \$HOME/.local/bin 加入 PATH）"
-    fi
-
+    green "✅ 安装完成：已检测到 sing-box/cloudflared 正在运行"
+    # ❗ legacy 收尾：这里只做检测与提示，不做 agsb 快捷方式/下载主脚本/写 PATH/建软链
     return 0
   fi
 
   red "❌ 未检测到 sing-box/cloudflared 运行，安装可能未成功"
   return 1
 }
+
 
 
 
@@ -2050,7 +2000,7 @@ ins(){
 
     # =====================================================
     # 3. 安装完成后的 legacy 收尾逻辑
-    #    （进程检测 / bashrc / cron / 自启）
+    #    （进程检测）
     # =====================================================
     post_install_finalize_legacy
     debug_log "【调试】post_install_finalize_legacy 已执行完成"
