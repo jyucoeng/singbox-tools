@@ -1368,14 +1368,13 @@ nginx_restart() {
     nginx_start
 }
 
-nginx_status() {
-    if pgrep -x nginx >/dev/null 2>&1; then
+ nginx_status() {
+    if ps aux | grep -v grep | grep -q nginx; then
         echo "Nginx：$(green "运行中")"
     else
         echo "Nginx：$(red "未运行")"
     fi
 }
-
 
 ensure_cloudflared_if_needed() {
   # ✅ 仅当启用 argo=vmpt/trpt 且 vmag 存在时才需要 cloudflared
