@@ -318,7 +318,7 @@ ensure_agsb_shortcut() {
   cat > "$wrapper" <<EOF
 #!/usr/bin/env bash
 set -e
-LOCAL_SCRIPT="$HOME/agsb/sb000.sh"
+LOCAL_SCRIPT="$HOME/agsb/sb.sh"
 
 if [ -s "\$LOCAL_SCRIPT" ]; then
   exec bash "\$LOCAL_SCRIPT" "\$@"
@@ -1960,7 +1960,8 @@ agsbstatus() {
     return 0
   fi
 
-  if pgrep -x nginx >/dev/null 2>&1; then
+  # Check if Nginx is running
+  if ps aux | grep -v grep | grep -q nginx; then
     echo "Nginx：✅ $(green "运行中")（${sub_desc}，端口：${nginx_port}）"
   else
     echo "Nginx：❌ $(red "未运行")（${sub_desc}，端口：${nginx_port}）"
