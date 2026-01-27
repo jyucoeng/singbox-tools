@@ -1368,8 +1368,8 @@ nginx_restart() {
     nginx_start
 }
 
- nginx_status() {
-    if ps aux | grep -v grep | grep -q nginx; then
+nginx_status() {
+    if pgrep -x nginx >/dev/null 2>&1; then
         echo "Nginx：$(green "运行中")"
     else
         echo "Nginx：$(red "未运行")"
