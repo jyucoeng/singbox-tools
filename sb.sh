@@ -297,6 +297,118 @@ VERSION="1.0.5(2026-01-27)"
 AUTHOR="littleDoraemon"
 
 
+
+enable_autostart() {
+  local workdir="/root/agsb"
+  local bin="$workdir/sing-box"
+  local cfg="$workdir/sb.json"
+  local svc="agsb-singbox"
+
+  # 只做“已安装才启用”，避免误触发安装
+  if [ ! -x "$bin" ] || [ ! -s "$cfg" ]; then
+    echo "❗ 未检测到已安装：$bin 或 $cfg 不存在/为空，已跳过开启自启"
+    return 1
+  fi
+
+  # systemd (Debian/Ubuntu 等)
+  if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    cat >/etc/systemd/system/${svc}.service <<EOF
+[Unit]
+Description=agsb sing-box service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=${workdir}
+ExecCondition=/bin/sh -c 'test -x ${bin} && test -s ${cfg}'
+ExecStart=${bin} run -c ${cfg}
+Restart=always
+RestartSec=2
+LimitNOFILE=1048576
+TimeoutStartSec=30
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable --now "${svc}.service" >/dev/null 2>&1
+    systemctl restart "${svc}.service" >/dev/null 2>&1
+    echo "✅ 已开启开机自启（systemd）：${svc}"
+    return 0
+  fi
+
+  # openrc (Alpine)
+  if command -v rc-service >/dev/null 2>&1 && command -v rc-update >/dev/null 2>&1; then
+    cat >/etc/init.d/${svc} <<'EOF'
+#!/sbin/openrc-run
+name="agsb sing-box"
+description="agsb sing-box service"
+command="/root/agsb/sing-box"
+command_args="run -c /root/agsb/sb.json"
+command_background="yes"
+pidfile="/run/agsb-singbox.pid"
+
+depend() {
+  need net
+  after firewall
+}
+
+start_pre() {
+  [ -x /root/agsb/sing-box ] || return 1
+  [ -s /root/agsb/sb.json ] || return 1
+}
+
+start() {
+  ebegin "Starting ${name}"
+  start-stop-daemon --start --background --make-pidfile --pidfile "$pidfile" \
+    --exec "$command" -- $command_args
+  eend $?
+}
+
+stop() {
+  ebegin "Stopping ${name}"
+  start-stop-daemon --stop --pidfile "$pidfile"
+  eend $?
+}
+EOF
+
+    chmod +x /etc/init.d/${svc}
+    rc-update add "${svc}" default >/dev/null 2>&1
+    rc-service "${svc}" restart >/dev/null 2>&1
+    echo "✅ 已开启开机自启（openrc）：${svc}"
+    return 0
+  fi
+
+  echo "❗ 未检测到 systemd 或 openrc，无法设置开机自启"
+  return 1
+}
+
+disable_autostart() {
+  local svc="agsb-singbox"
+
+  if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    systemctl disable --now "${svc}.service" >/dev/null 2>&1
+    rm -f "/etc/systemd/system/${svc}.service"
+    systemctl daemon-reload >/dev/null 2>&1
+    echo "✅ 已关闭开机自启（systemd）：${svc}"
+    return 0
+  fi
+
+  if command -v rc-service >/dev/null 2>&1 && command -v rc-update >/dev/null 2>&1; then
+    rc-update del "${svc}" default >/dev/null 2>&1
+    rc-service "${svc}" stop >/dev/null 2>&1
+    rm -f "/etc/init.d/${svc}"
+    echo "✅ 已关闭开机自启（openrc）：${svc}"
+    return 0
+  fi
+
+  echo "❗ 未检测到 systemd 或 openrc"
+  return 1
+}
+
 # Ensure agsb shortcut
 
 ensure_agsb_shortcut() {
@@ -2711,6 +2823,18 @@ install_step(){
 }
 
 main(){
+
+  # 启动自定义端口
+if [ "$1" = "autostart" ]; then
+    enable_autostart
+    exit
+fi
+
+  # 启动自定义端口
+if [ "$1" = "autostart_off" ]; then
+    disable_autostart
+    exit
+fi
 
 # 启动 nginx
 if [ "$1" = "nginx_start" ]; then
