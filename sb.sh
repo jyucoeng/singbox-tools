@@ -1643,47 +1643,49 @@ append_argo_cron_legacy() {
 }
 
 
-
 post_install_finalize_legacy() {
-  sleep 2
+  sleep 1
   echo
 
   # 只要 sing-box 或 cloudflared 进程存在，认为安装启动成功
   if pgrep -f "$HOME/agsb/sing-box" >/dev/null 2>&1 || pgrep -f "$HOME/agsb/cloudflared" >/dev/null 2>&1; then
 
-    # 1) 确保 bashrc 存在（Debian/Alpine 都适用）
-    [ -f "$HOME/.bashrc" ] || touch "$HOME/.bashrc"
+    local bashrc="$HOME/.bashrc"
+    local script_path="$HOME/bin/agsb"
 
-    # 2) 下载主脚本到 $HOME/bin/agsb
-    local SCRIPT_PATH="$HOME/bin/agsb"
+    # 1) 确保 bashrc / bin 目录存在（Debian/Alpine 都适用）
+    [ -f "$bashrc" ] || touch "$bashrc"
     mkdir -p "$HOME/bin"
 
-    # 下载：加超时/重试，避免卡住
+    # 2) 下载主脚本到 $HOME/bin/agsb
     (curl -sL --connect-timeout 5 --max-time 120 \
           --retry 2 --retry-delay 2 --retry-all-errors \
-          "$agsburl" -o "$SCRIPT_PATH") \
-    || (wget -qO "$SCRIPT_PATH" --tries=2 --timeout=60 "$agsburl")
+          "$agsburl" -o "$script_path") \
+    || (wget -qO "$script_path" --tries=2 --timeout=60 "$agsburl")
 
     # 下载结果校验：防止空文件/错误页
-    if [ ! -s "$SCRIPT_PATH" ]; then
-      red "❌ 下载主脚本失败：文件为空 $SCRIPT_PATH"
+    if [ ! -s "$script_path" ]; then
+      red "❌ 下载主脚本失败：文件为空 $script_path"
       exit 1
     fi
-    chmod +x "$SCRIPT_PATH"
+    chmod +x "$script_path"
 
-    # 3) bashrc 自启：仅在无 systemd / 无 openrc 的场景写入
-    #    （有 systemd/openrc 的情况下应走 service，而不是写 bashrc）
+    # 3) 关键修复：写入前清理 bashrc，避免重复写入/残留 fi
+
+    # 3.1 清理“残缺块”（你现在遇到的：export \ ... 然后 fi）
+    #     只要出现一行以 export \ 结尾，就从这行删到下一行孤立 fi
+    sed -i '/^[[:space:]]*export[[:space:]]*\\[[:space:]]*$/,/^[[:space:]]*fi[[:space:]]*$/d' "$bashrc" 2>/dev/null || true
+
+    # 3.2 清理旧版本自启块（从注释到 fi）
+    sed -i '/^# agsb auto start (added by installer)$/,/^[[:space:]]*fi[[:space:]]*$/d' "$bashrc" 2>/dev/null || true
+
+    # 3.3 清理新版本 marker 块（整块删除，保证 rep 执行 N 次也只会有一份）
+    sed -i '\|^# >>> agsb auto start (added by installer) >>>$|,\|^# <<< agsb auto start (added by installer) <<<$|d' "$bashrc" 2>/dev/null || true
+
+    # 4) 仅在无 systemd / 无 openrc 的场景写入 bashrc 自启
     if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then
-      # 用区块标记，保证每次覆盖写入，不会累积多份、不会残留孤立 fi
-      local BASHRC_BEGIN="# >>> agsb auto start (added by installer) >>>"
-      local BASHRC_END="# <<< agsb auto start (added by installer) <<<"
-
-      # 先删除旧区块（BusyBox sed / GNU sed 都支持这种范围删除）
-      sed -i "\|^${BASHRC_BEGIN}$|,\|^${BASHRC_END}$|d" "$HOME/.bashrc" 2>/dev/null || true
-
-      # 再追加新区块（注意：这里写入的是“当次安装的具体值”，不是变量名本身）
-      cat >> "$HOME/.bashrc" <<EOF
-${BASHRC_BEGIN}
+      cat >> "$bashrc" <<EOF
+# >>> agsb auto start (added by installer) >>>
 # 说明：
 # - 仅在 sing-box 未运行时才拉起
 # - 这里写入的是安装时的参数快照（避免你不带环境变量执行时丢参）
@@ -1711,47 +1713,41 @@ if ! pgrep -f 'agsb/sing-box' >/dev/null 2>&1; then
     agk="${ARGO_AUTH}"
   bash "\$HOME/bin/agsb"
 fi
-${BASHRC_END}
+# <<< agsb auto start (added by installer) <<<
 EOF
-    else
-      # 有 systemd/openrc 的环境不写 bashrc，自启交给 service/rc 管
-      :
     fi
 
-    # 4) PATH 注入：确保只有一条 export PATH="$HOME/bin:$PATH"
-    sed -i '/export PATH="\$HOME\/bin:\$PATH"/d' "$HOME/.bashrc" 2>/dev/null || true
-    if ! grep -qs '^export PATH="\$HOME/bin:\$PATH"$' "$HOME/.bashrc" 2>/dev/null; then
-      echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.bashrc"
-    fi
+    # 5) PATH 注入：确保只保留一条
+    sed -i '/^export PATH="\$HOME\/bin:\$PATH"$/d' "$bashrc" 2>/dev/null || true
+    echo 'export PATH="$HOME/bin:$PATH"' >> "$bashrc"
 
-    # 5) Debian 常见：bash_profile 里 source bashrc（没有就补一条）
-    if [ -f "$HOME/.bash_profile" ]; then
-      grep -qxF 'source ~/.bashrc' "$HOME/.bash_profile" 2>/dev/null || echo 'source ~/.bashrc' >> "$HOME/.bash_profile"
-    fi
+    # 6) 让脚本当前进程里也立刻可用
+    export PATH="$HOME/bin:$PATH"
+    hash -r 2>/dev/null || true
 
-    # 6) 仅对当前 bash 会话尝试加载（脚本非 source 执行时，只影响脚本进程，不影响你当前终端）
+    # 7) 尝试在 bash 下 reload（注意：脚本非 source 执行时，只影响脚本进程，不影响你当前终端）
     if [ -n "${BASH_VERSION:-}" ]; then
       # shellcheck disable=SC1090
-      . "$HOME/.bashrc" 2>/dev/null || true
+      . "$bashrc" 2>/dev/null || true
+      hash -r 2>/dev/null || true
     fi
 
-    # 7) crontab：清理旧条目 + 按需写入 argo cron（token/json/临时）
-    crontab -l > /tmp/crontab.tmp 2>/dev/null || true
+    # 8) crontab：清理旧条目 + 按需写入 argo cron
+    local tmp="/tmp/crontab.tmp"
+    crontab -l > "$tmp" 2>/dev/null || : > "$tmp"
+    sed -i '/agsb/d' "$tmp" 2>/dev/null || true
 
-    # 清理旧的 agsb / cloudflared cron（避免重复叠加）
-    sed -i '/agsb/d' /tmp/crontab.tmp 2>/dev/null || true
-    sed -i '/agsb\/cloudflared/d' /tmp/crontab.tmp 2>/dev/null || true
-
-    # 写入 Argo cron（函数内部已经做了 systemd/openrc 的跳过判断）
+    # 你的原逻辑：append_argo_cron_legacy 会按需写入（保持兼容）
     append_argo_cron_legacy
 
-    crontab /tmp/crontab.tmp >/dev/null 2>&1 || true
-    rm -f /tmp/crontab.tmp 2>/dev/null || true
+    crontab "$tmp" >/dev/null 2>&1 || true
+    rm -f "$tmp" 2>/dev/null || true
 
-    green "agsb脚本进程启动成功，安装完毕"
-    sleep 2
+    green "✅ agsb 脚本进程启动成功，安装完毕"
+    sleep 1
+    return 0
   else
-    red "agsb脚本进程未启动，安装失败"
+    red "❌ agsb 脚本进程未启动，安装失败"
     exit 1
   fi
 }
