@@ -1371,10 +1371,13 @@ nginx_restart() {
 nginx_status() {
     if pgrep -x nginx >/dev/null 2>&1; then
         echo "Nginx：$(green "运行中")"
+    elif rc-service nginx status >/dev/null 2>&1; then
+        echo "Nginx：$(green "运行中 (OpenRC)")"
     else
         echo "Nginx：$(red "未运行")"
     fi
 }
+
 
 ensure_cloudflared_if_needed() {
   # ✅ 仅当启用 argo=vmpt/trpt 且 vmag 存在时才需要 cloudflared
