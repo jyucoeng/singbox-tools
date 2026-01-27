@@ -413,16 +413,15 @@ disable_autostart() {
 
 ensure_agsb_shortcut() {
   local wrapper="$HOME/agsb/agsb"
-  local link_home="$HOME/bin/agsb"
+  local local_script="$HOME/agsb/sb.sh"
+
+  # 软链接目标（按优先级）
+  local link_local1="$HOME/.local/bin/agsb"
+  local link_local2="$HOME/bin/agsb"
   local link_sys1="/usr/local/bin/agsb"
   local link_sys2="/usr/bin/agsb"
 
-  local bashrc="$HOME/.bashrc"
-  local begin="# >>> agsb shortcut begin >>>"
-  local end="# <<< agsb shortcut end <<<"
-
-  mkdir -p "$HOME/agsb" "$HOME/bin"
-  [ -f "$bashrc" ] || touch "$bashrc"
+  mkdir -p "$HOME/agsb" "$HOME/.local/bin" "$HOME/bin"
 
   # ✅ wrapper：优先本地脚本，否则在线拉取 agsburl（curl/wget 二选一，兼容 Alpine）
   cat > "$wrapper" <<EOF
@@ -447,11 +446,14 @@ fi
 EOF
   chmod +x "$wrapper" 2>/dev/null || true
 
-  # ✅ home 链接兜底（非 root 也能用）
-  ln -sf "$wrapper" "$link_home" 2>/dev/null || true
-  chmod +x "$link_home" 2>/dev/null || true
+  # ✅ 用户级入口（不改 bashrc，只建链接）
+  ln -sf "$wrapper" "$link_local1" 2>/dev/null || true
+  chmod +x "$link_local1" 2>/dev/null || true
 
-  # ✅ root：系统目录入口（立刻生效）
+  ln -sf "$wrapper" "$link_local2" 2>/dev/null || true
+  chmod +x "$link_local2" 2>/dev/null || true
+
+  # ✅ root：系统目录入口（通常立刻生效，且不需要改 PATH）
   if [ "$(id -u)" -eq 0 ]; then
     [ -d "/usr/local/bin" ] || mkdir -p /usr/local/bin 2>/dev/null || true
     if [ -d "/usr/local/bin" ] && [ -w "/usr/local/bin" ]; then
@@ -463,48 +465,36 @@ EOF
     fi
   fi
 
-  # ✅ 当前会话尽力立刻可用（注意：脚本非 source 执行时只影响子进程）
-  export PATH="/usr/local/bin:/usr/bin:$HOME/bin:$PATH"
+  # ✅ 尽力让“当前 shell”立刻识别（不修改环境文件）
   hash -r 2>/dev/null || true
   command -v rehash >/dev/null 2>&1 && rehash 2>/dev/null || true
 
-  # ✅ 写入 bashrc（只写 PATH marker 块；由脚本管理）
-  sed -i "\|^${begin}$|,\|^${end}$|d" "$bashrc" 2>/dev/null || true
-  cat >> "$bashrc" <<EOF
-${begin}
-# 说明：为 agsb 快捷命令加入 \$HOME/bin 到 PATH（仅此一块由脚本管理）
-export PATH="\$HOME/bin:\$PATH"
-${end}
-EOF
-
-  # ✅ 用代码实现 “source ~/.bashrc”（仅对当前 bash 且脚本被 source 时真正影响当前会话）
-  if [ -n "${BASH_VERSION:-}" ] && [ -f "$bashrc" ]; then
-    # shellcheck disable=SC1090
-    source "$bashrc" 2>/dev/null || true
-    hash -r 2>/dev/null || true
-  fi
-
+  # ✅ 输出结果（不再依赖 bashrc）
   if command -v agsb >/dev/null 2>&1; then
     green "✅ 已创建快捷命令：agsb（$(command -v agsb)）"
   else
-    yellow "❗ 已创建快捷命令 agsb，但当前环境未识别到命令（可重新登录或手动刷新 PATH）"
+    yellow "❗ 已创建 wrapper/软链接，但当前 PATH 未命中 agsb"
+    yellow "👉 你仍可直接运行："
+    green  "   $wrapper"
+    yellow "👉 或用以下任一路径（若已在 PATH 中则可直接敲 agsb）："
+    green  "   $link_local1"
+    green  "   $link_local2"
+    [ "$(id -u)" -eq 0 ] && { green "   $link_sys1"; green "   $link_sys2"; }
   fi
 }
 
-
 cleanup_agsb_shortcut() {
   local wrapper="$HOME/agsb/agsb"
-  local link_home="$HOME/bin/agsb"
+
+  local link_local1="$HOME/.local/bin/agsb"
+  local link_local2="$HOME/bin/agsb"
   local link_sys1="/usr/local/bin/agsb"
   local link_sys2="/usr/bin/agsb"
 
-  local bashrc="$HOME/.bashrc"
-  local begin="# >>> agsb shortcut begin >>>"
-  local end="# <<< agsb shortcut end <<<"
-
-  # 1) 删除快捷命令入口（系统级 + 用户级）
-  rm -f "$link_home" 2>/dev/null || true
-  rm -f "$wrapper" 2>/dev/null || true
+  # 1) 删除入口（系统级 + 用户级）
+  rm -f "$link_local1" 2>/dev/null || true
+  rm -f "$link_local2" 2>/dev/null || true
+  rm -f "$wrapper"     2>/dev/null || true
 
   # root 才能删系统目录入口
   if [ "$(id -u)" -eq 0 ]; then
@@ -512,35 +502,18 @@ cleanup_agsb_shortcut() {
     rm -f "$link_sys2" 2>/dev/null || true
   fi
 
-  # 2) 只清理自己写入的 marker 块（不误伤用户其它配置）
-  if [ -f "$bashrc" ]; then
-    sed -i "\|^${begin}$|,\|^${end}$|d" "$bashrc" 2>/dev/null || true
-  fi
-
-  # 3) 尽力让当前会话立刻失效（受 shell 机制限制）
+  # 2) 刷新命令缓存（不再 source bashrc）
   hash -r 2>/dev/null || true
   command -v rehash >/dev/null 2>&1 && rehash 2>/dev/null || true
 
-  # 4) 你要求的：用代码实现 “source ~/.bashrc”
-  # 说明：只有当脚本是 source 执行时，才会影响当前终端环境；
-  # 否则仅影响脚本进程本身（bash 机制如此）
-  if [ -n "${BASH_VERSION:-}" ] && [ -f "$bashrc" ]; then
-    # shellcheck disable=SC1090
-    source "$bashrc" 2>/dev/null || true
-    hash -r 2>/dev/null || true
-  fi
-
-  # 5) 输出结果
+  # 3) 输出结果
   if command -v agsb >/dev/null 2>&1; then
     yellow "❗ cleanup 已执行，但当前会话仍能找到 agsb：$(command -v agsb)"
-    yellow "👉 重新开一个 SSH 会话即可完全生效"
+    yellow "👉 若你之前把某个路径手动加进 PATH，或 shell 有缓存，重新开一个终端/SSH 会话即可"
   else
-    green "✅ 已清理 agsb 快捷命令（wrapper/软链接/.bashrc marker）"
+    green "✅ 已清理 agsb 快捷命令（wrapper/软链接）"
   fi
 }
-
-
-
 
 
 
@@ -1773,9 +1746,9 @@ append_argo_cron_legacy() {
 }
 
 
+
 post_install_finalize_legacy() {
-  # 用“最多等待 10 秒 + 检测到就立刻继续”替代固定 sleep 5
-  # 避免偶发：进程刚启动还没起来就被 pgrep 误判为未启动
+  # 用“最多等待 10 秒 + 检测到就立刻继续”替代固定 sleep
   for i in 1 2 3 4 5 6 7 8 9 10; do
     if pgrep -f "$HOME/agsb/sing-box" >/dev/null 2>&1 || pgrep -f "$HOME/agsb/cloudflared" >/dev/null 2>&1; then
       break
@@ -1786,12 +1759,9 @@ post_install_finalize_legacy() {
 
   # 只要 sing-box 或 cloudflared 进程存在，认为安装启动成功
   if pgrep -f "$HOME/agsb/sing-box" >/dev/null 2>&1 || pgrep -f "$HOME/agsb/cloudflared" >/dev/null 2>&1; then
-
-    local bashrc="$HOME/.bashrc"
     local script_path="$HOME/bin/agsb"
 
-    # 1) 确保 bashrc / bin 目录存在（Debian / Alpine 通用）
-    [ -f "$bashrc" ] || touch "$bashrc"
+    # 1) 确保 bin 目录存在（不再处理 .bashrc）
     mkdir -p "$HOME/bin"
 
     # 2) 下载主脚本到 $HOME/bin/agsb
@@ -1807,90 +1777,43 @@ post_install_finalize_legacy() {
     fi
     chmod +x "$script_path"
 
-    # 3) 关键修复：写入前清理 bashrc（兼容旧版本/新版本/残缺块），避免重复写入与孤立 fi
-
-    # 3.1 优先清理：带“# 说明：”的残缺块（新版残留）
-    #     从 "# 说明：" 到下一行孤立 fi 整段删除（会把那三行说明一起删掉）
-    sed -i '/^[[:space:]]*#[[:space:]]*说明：[[:space:]]*$/,/^[[:space:]]*fi[[:space:]]*$/d' "$bashrc" 2>/dev/null || true
-
-    # 3.2 兜底清理：不带“# 说明：”的残缺块（旧版残留）
-    #     从 "export \" 到下一行孤立 fi 整段删除
-    sed -i '/^[[:space:]]*export[[:space:]]*\\[[:space:]]*$/,/^[[:space:]]*fi[[:space:]]*$/d' "$bashrc" 2>/dev/null || true
-
-    # 3.3 清理更老版本自启块（从旧注释行到 fi）
-    sed -i '/^# agsb auto start (added by installer)$/,/^[[:space:]]*fi[[:space:]]*$/d' "$bashrc" 2>/dev/null || true
-
-    # 3.4 清理新版本 marker 块（整块删除，保证 rep 执行 N 次也只会有一份）
-    sed -i '\|^# >>> agsb auto start (added by installer) >>>$|,\|^# <<< agsb auto start (added by installer) <<<$|d' "$bashrc" 2>/dev/null || true
-
-    # 4) 仅在无 systemd / 无 openrc 的场景写入 bashrc 自启
-    if ! pidof systemd >/dev/null 2>&1 && ! command -v rc-service >/dev/null 2>&1; then
-      cat >> "$bashrc" <<EOF
-# >>> agsb auto start (added by installer) >>>
-# 说明：
-# - 仅在 sing-box 未运行时才拉起
-# - 这里写入的是安装时的参数快照（避免你不带环境变量执行时丢参）
-if ! pgrep -f 'agsb/sing-box' >/dev/null 2>&1; then
-  export \\
-    vl_sni="${vl_sni}" \\
-    tu_sni="${tu_sni}" \\
-    hy_sni="${hy_sni}" \\
-    cdn_host="${cdn_host}" \\
-    cdn_pt="${cdn_pt}" \\
-    vl_sni_pt="${vl_sni_pt}" \\
-    short_id="${short_id}" \\
-    name="${name}" \\
-    ippz="${ippz}" \\
-    argo="${argo}" \\
-    uuid="${uuid}" \\
-    vmpt="${port_vm_ws}" \\
-    trpt="${port_tr}" \\
-    hypt="${port_hy2}" \\
-    tupt="${port_tu}" \\
-    vlrt="${port_vlr}" \\
-    nginx_pt="${nginx_pt}" \\
-    argo_pt="${argo_pt}" \\
-    agn="${ARGO_DOMAIN}" \\
-    agk="${ARGO_AUTH}"
-  bash "\$HOME/bin/agsb"
-fi
-# <<< agsb auto start (added by installer) <<<
-EOF
+    # 3) 创建“系统级链接”，确保立刻可用（不污染 bashrc）
+    #    优先 /usr/local/bin，其次 /usr/bin
+    if [ "$(id -u)" -eq 0 ]; then
+      if [ -d /usr/local/bin ] && [ -w /usr/local/bin ]; then
+        ln -sf "$script_path" /usr/local/bin/agsb 2>/dev/null || true
+        chmod +x /usr/local/bin/agsb 2>/dev/null || true
+      elif [ -d /usr/bin ] && [ -w /usr/bin ]; then
+        ln -sf "$script_path" /usr/bin/agsb 2>/dev/null || true
+        chmod +x /usr/bin/agsb 2>/dev/null || true
+      fi
+    else
+      # 非 root：尽力放到 ~/.local/bin（很多系统默认在 PATH 里）
+      mkdir -p "$HOME/.local/bin" 2>/dev/null || true
+      if [ -d "$HOME/.local/bin" ] && [ -w "$HOME/.local/bin" ]; then
+        ln -sf "$script_path" "$HOME/.local/bin/agsb" 2>/dev/null || true
+        chmod +x "$HOME/.local/bin/agsb" 2>/dev/null || true
+      fi
     fi
 
-    # 5) PATH 注入：确保只保留一条
-    sed -i '/^export PATH="\$HOME\/bin:\$PATH"$/d' "$bashrc" 2>/dev/null || true
-    echo 'export PATH="$HOME/bin:$PATH"' >> "$bashrc"
-
-    # 6) 让脚本当前进程里也立刻可用
-    export PATH="$HOME/bin:$PATH"
+    # 4) 尽力刷新本进程可见的命令缓存（不改用户环境文件）
     hash -r 2>/dev/null || true
+    command -v rehash >/dev/null 2>&1 && rehash 2>/dev/null || true
 
-    # 7) 尝试在 bash 下 reload
-    #    注意：脚本不是 source 执行时，只影响脚本进程，不影响你当前终端
-    if [ -n "${BASH_VERSION:-}" ]; then
-      # shellcheck disable=SC1090
-      . "$bashrc" 2>/dev/null || true
-      hash -r 2>/dev/null || true
+    # 5) 输出结果
+    if command -v agsb >/dev/null 2>&1; then
+      green "✅ 已创建快捷命令：agsb（$(command -v agsb)）"
+    else
+      yellow "❗ 已下载脚本到：$script_path"
+      yellow "❗ 但当前系统 PATH 未命中 agsb：你可用 $script_path 直接运行"
+      yellow "   （如果你希望非 root 也无感生效，需要你自己把 \$HOME/bin 或 \$HOME/.local/bin 加入 PATH）"
     fi
 
-    # 8) crontab：清理旧条目 + 按需写入 argo cron
-    local tmp="/tmp/crontab.tmp"
-    crontab -l > "$tmp" 2>/dev/null || : > "$tmp"
-    sed -i '/agsb/d' "$tmp" 2>/dev/null || true
-
-    # 保持你原逻辑：append_argo_cron_legacy 会按需写入
-    append_argo_cron_legacy
-
-    crontab "$tmp" >/dev/null 2>&1 || true
-    rm -f "$tmp" 2>/dev/null || true
-
-    green "✅ agsb 脚本进程启动成功，安装完毕"
     return 0
-  else
-    red "❌ agsb 脚本进程未启动，安装失败"
-    exit 1
   fi
+
+  red "❌ 未检测到 sing-box/cloudflared 运行，安装可能未成功"
+  return 1
 }
 
 
