@@ -81,6 +81,14 @@ else
     fi
 fi
 
+has_systemd() {
+  command -v systemctl >/dev/null 2>&1 || return 1
+  [ -d /run/systemd/system ] || return 1
+  # 可选：更严格，确保 PID1 就是 systemd（不想太严格可删掉这一行）
+  [ "$(ps -p 1 -o comm= 2>/dev/null | tr -d '[:space:]')" = "systemd" ] || return 1
+  return 0
+}
+
 
 install_deps() {
 
@@ -1283,7 +1291,8 @@ sbbout(){
 "route": { "rules": [ { "action": "sniff" }, { "action": "resolve", "strategy": "${sbyx}" } ], "final": "direct" }
 }
 EOF
-        if pidof systemd >/dev/null 2>&1 && [ "$EUID" -eq 0 ]; then
+        if has_systemd && [ "$EUID" -eq 0 ]; then
+            debug_log "【调试】sbbout：使用 systemd 管理/启动 sb 服务"
             cat > /etc/systemd/system/sb.service <<EOF
 [Unit]
 Description=sb service
@@ -1302,6 +1311,7 @@ EOF
             systemctl start sb
             green "✅ sb 服务已启动,并开启开机自启服务（systemd）"
         elif command -v rc-service >/dev/null 2>&1 && [ "$EUID" -eq 0 ]; then
+            debug_log "【调试】sbbout：使用 openrc 管理/启动 sb 服务"
             cat > /etc/init.d/sing-box <<EOF
 #!/sbin/openrc-run
 description="sb service"
@@ -1316,8 +1326,9 @@ EOF
             rc-service sing-box start
             green "✅ sb 服务已启动,并开启开机自启服务（openrc）"
         else
+            debug_log "【调试】sbbout：使用 nohup 模式运行 sb 服务"
             nohup "$HOME/agsb/sing-box" run -c "$HOME/agsb/sb.json" >/dev/null 2>&1 &
-            green "✅ sb 服务已启动, 使用 nohup 模式运行"
+            green "✅  sb 服务已启动, 使用 nohup 模式运行"
         fi
     fi
 }
@@ -1432,7 +1443,7 @@ EOF
 start_nginx_service() {
   debug_log "【调试】start_nginx_service：开始启动 Nginx 服务"
     # systemd
-    if pidof systemd >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1; then
+    if has_systemd then
         debug_log "【调试】start_nginx_service：使用 systemd 管理 Nginx 服务"
     
         systemctl enable nginx >/dev/null 2>&1
@@ -1466,7 +1477,7 @@ nginx_start() {
 nginx_stop() {
   debug_log "【调试】nginx_stop：开始停止 Nginx 服务"
     # systemd
-    if pidof systemd >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1; then
+    if has_systemd then
         debug_log "【调试】nginx_stop：使用 systemd 管理 Nginx 服务"
         systemctl stop nginx >/dev/null 2>&1
         return 0
@@ -1488,7 +1499,7 @@ nginx_stop() {
 nginx_restart() {
   debug_log "【调试】nginx_restart：开始重启 Nginx 服务"
     # systemd
-    if pidof systemd >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1; then
+    if has_systemd then
         debug_log "【调试】nginx_restart：使用 systemd 管理 Nginx 服务"
         systemctl restart nginx >/dev/null 2>&1 || systemctl start nginx >/dev/null 2>&1
         green "✅ Nginx 服务已重启"
@@ -1788,7 +1799,7 @@ append_argo_cron_legacy() {
     # openrc 只有 root 能装服务时才不写 cron ✅
     # 非 root 的 openrc 环境会写 cron ✅
 
-   if pidof systemd >/dev/null 2>&1 || (command -v rc-service >/dev/null 2>&1 && [ "$EUID" -eq 0 ]); then
+   if has_systemd && [ "$EUID" -eq 0 ]); then
         return
    fi
 
@@ -1979,12 +1990,6 @@ ins(){
             argo_tunnel_type="固定"
             debug_log "【调试】判定为固定 Argo 隧道（ARGO_DOMAIN + ARGO_AUTH 都存在）"
 
-            # ✅ systemd 判定：不要用 pidof systemd（很多 Debian 精简环境/容器里会失败，导致误走 nohup 分支）
-            local _has_systemd=0
-          if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
-              _has_systemd=1
-          fi
-
           if [ "${DEBUG_FLAG:-0}" = "1" ]; then
               _systemctl_path="$(command -v systemctl 2>/dev/null || true)"
 
@@ -1997,7 +2002,7 @@ ins(){
 
 
           # systemd 判定
-          if [ "${_has_systemd}" = "1" ] && [ "$EUID" -eq 0 ]; then
+          if has_systemd && [ "$EUID" -eq 0 ]; then
               debug_log "【调试】启动方式：systemd 服务（install_argo_service_systemd），模式=${ARGO_MODE}"
 
               install_argo_service_systemd "$ARGO_MODE" "$ARGO_AUTH"
@@ -2654,7 +2659,7 @@ cleanup_nginx() {
     rm -f "$(nginx_conf_path)" 2>/dev/null
 
     # 禁用 nginx 自启（避免卸载后 nginx 仍然起来）
-    if pidof systemd >/dev/null 2>&1; then
+    if has_systemd then
         systemctl stop nginx >/dev/null 2>&1
         systemctl disable nginx >/dev/null 2>&1
     elif command -v rc-service >/dev/null 2>&1; then
@@ -2704,7 +2709,7 @@ cleandel(){
     fi
 
 
-    if pidof systemd >/dev/null 2>&1; then
+    if has_systemd then
         for svc in sb argo; do
             systemctl stop "$svc" >/dev/null 2>&1
             systemctl disable "$svc" >/dev/null 2>&1
@@ -2737,7 +2742,7 @@ cleandel(){
 sbrestart(){
     pkill -15 -f "$HOME/agsb/sing-box" 2>/dev/null
 
-    if pidof systemd >/dev/null 2>&1; then
+    if has_systemd then
         systemctl restart sb
     elif command -v rc-service >/dev/null 2>&1; then
         rc-service sing-box restart
@@ -2757,7 +2762,7 @@ argorestart(){
     # ===============================
     # systemd 管理
     # ===============================
-    if pidof systemd >/dev/null 2>&1; then
+    if has_systemd then
         systemctl restart argo
         return
     fi
