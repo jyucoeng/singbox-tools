@@ -429,7 +429,7 @@ showmode(){
     yellow "更新Singbox内核：agsb ups(属于预留命令)"
     yellow "重启脚本：agsb res(重启singbox和argo)"
     yellow "卸载脚本：agsb del"
-    yellow "Nginx相关：agsb nginx_start | nginx_stop | nginx_restart | nginx_status"
+    yellow "Nginx相关：agsb nginx_start | agsb nginx_stop | agsb nginx_restart | agsb nginx_status"
     echo "---------------------------------------------------------"
 }
 
