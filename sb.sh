@@ -1536,7 +1536,7 @@ ensure_cloudflared() {
 
 
 install_argo_service_systemd() {
-    local mode="$1"
+    local mode="$1" # json|token
     local token="$2"
 
      # 检查 systemd 是否存在
@@ -1546,6 +1546,8 @@ install_argo_service_systemd() {
     fi
 
     if [ "$mode" = "json" ]; then
+        debug_log "【调试】使用 json 模式安装 argo 服务"
+
         cat > /etc/systemd/system/argo.service <<EOF
 [Unit]
 Description=argo service
@@ -1562,6 +1564,8 @@ RestartSec=5s
 WantedBy=multi-user.target
 EOF
     else
+        debug_log "【调试】使用 token 模式安装 argo 服务"
+
         cat > /etc/systemd/system/argo.service <<EOF
 [Unit]
 Description=argo service
@@ -1588,7 +1592,7 @@ EOF
 
 
 install_argo_service_openrc() {
-    local mode="$1"
+    local mode="$1" # json|token
     local token="$2"
 
       # 检查 openrc 是否存在
@@ -1601,8 +1605,10 @@ install_argo_service_openrc() {
     local args=""
 
     if [ "$mode" = "json" ]; then
+        debug_log "【调试】使用 json 模式安装 argo 服务"
         args="tunnel --edge-ip-version auto --config $HOME/agsb/tunnel.yml run"
     else
+        debug_log "【调试】使用 token 模式安装 argo 服务"
         args="tunnel --no-autoupdate --edge-ip-version auto run --token ${token}"
     fi
 
@@ -1632,17 +1638,20 @@ start_argo_no_daemon() {
     local port="$3"
 
     if [ "$mode" = "json" ]; then
+        debug_log "【调试】使用 json 模式，nohup 启动 argo"
         nohup "$HOME/agsb/cloudflared" tunnel \
           --edge-ip-version auto \
           --config "$HOME/agsb/tunnel.yml" run \
           > "$HOME/agsb/argo.log" 2>&1 &
     elif [ -n "$token" ]; then
+        debug_log "【调试】使用 token 模式，nohup 启动 argo"
         nohup "$HOME/agsb/cloudflared" tunnel \
           --no-autoupdate \
           --edge-ip-version auto run \
           --token "$token" \
           > "$HOME/agsb/argo.log" 2>&1 &
     else
+        debug_log "【调试】使用 URL 模式，nohup 启动 argo"
         nohup "$HOME/agsb/cloudflared" tunnel \
           --url "http://localhost:${port}" \
           --edge-ip-version auto \
@@ -1940,13 +1949,13 @@ ins(){
 
           # systemd 判定
           if [ "${_has_systemd}" = "1" ] && [ "$EUID" -eq 0 ]; then
-              debug_log "【调试】启动方式：systemd 服务（install_argo_service_systemd）"
+              debug_log "【调试】启动方式：systemd 服务（install_argo_service_systemd），模式=${ARGO_MODE}"
 
               install_argo_service_systemd "$ARGO_MODE" "$ARGO_AUTH"
 
           elif command -v rc-service >/dev/null 2>&1 && [ "$EUID" -eq 0 ]; then
 
-              debug_log "【调试】启动方式：openrc 服务（install_argo_service_openrc）"
+              debug_log "【调试】启动方式：openrc 服务（install_argo_service_openrc），模式=${ARGO_MODE}"
               install_argo_service_openrc "$ARGO_MODE" "$ARGO_AUTH"
           else
               # 无 systemd / openrc，直接后台启动
@@ -1962,7 +1971,7 @@ ins(){
             # 临时 Argo（trycloudflare）
             argo_tunnel_type="临时"
             debug_log "【调试】判定为临时 Argo 隧道（未提供 ARGO_DOMAIN/ARGO_AUTH，走 trycloudflare）"
-            debug_log "【调试】启动方式：临时隧道，直接后台启动（start_argo_no_daemon temp）"
+            debug_log "【调试】启动方式：临时隧道，直接后台启动（start_argo_no_daemon temp），模式=${ARGO_MODE}"
             start_argo_no_daemon "temp" "" "$argoport"
         fi
 
