@@ -2681,13 +2681,12 @@ install_step(){
         echo "不支持此操作系统"
     fi
     ins; 
+    green "agsb脚本安装完成！即将打印节点信息……"
     # 显示节点信息 这里的key是一个定值，为了打印私钥
     cip "key"
 }
 
 main(){
-
- 
 
 # 启动 nginx
 if [ "$1" = "nginx_start" ]; then
