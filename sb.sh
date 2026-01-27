@@ -1644,7 +1644,14 @@ append_argo_cron_legacy() {
 
 
 post_install_finalize_legacy() {
-  sleep 1
+  # 用“最多等待 10 秒 + 检测到就立刻继续”替代固定 sleep 5
+  # 避免偶发：进程刚启动还没起来就被 pgrep 误判为未启动
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    if pgrep -f "$HOME/agsb/sing-box" >/dev/null 2>&1 || pgrep -f "$HOME/agsb/cloudflared" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
   echo
 
   # 只要 sing-box 或 cloudflared 进程存在，认为安装启动成功
@@ -1653,7 +1660,7 @@ post_install_finalize_legacy() {
     local bashrc="$HOME/.bashrc"
     local script_path="$HOME/bin/agsb"
 
-    # 1) 确保 bashrc / bin 目录存在（Debian/Alpine 都适用）
+    # 1) 确保 bashrc / bin 目录存在（Debian / Alpine 通用）
     [ -f "$bashrc" ] || touch "$bashrc"
     mkdir -p "$HOME/bin"
 
@@ -1670,16 +1677,20 @@ post_install_finalize_legacy() {
     fi
     chmod +x "$script_path"
 
-    # 3) 关键修复：写入前清理 bashrc，避免重复写入/残留 fi
+    # 3) 关键修复：写入前清理 bashrc（兼容旧版本/新版本/残缺块），避免重复写入与孤立 fi
 
-    # 3.1 清理“残缺块”（你现在遇到的：export \ ... 然后 fi）
-    #     只要出现一行以 export \ 结尾，就从这行删到下一行孤立 fi
+    # 3.1 优先清理：带“# 说明：”的残缺块（新版残留）
+    #     从 "# 说明：" 到下一行孤立 fi 整段删除（会把那三行说明一起删掉）
+    sed -i '/^[[:space:]]*#[[:space:]]*说明：[[:space:]]*$/,/^[[:space:]]*fi[[:space:]]*$/d' "$bashrc" 2>/dev/null || true
+
+    # 3.2 兜底清理：不带“# 说明：”的残缺块（旧版残留）
+    #     从 "export \" 到下一行孤立 fi 整段删除
     sed -i '/^[[:space:]]*export[[:space:]]*\\[[:space:]]*$/,/^[[:space:]]*fi[[:space:]]*$/d' "$bashrc" 2>/dev/null || true
 
-    # 3.2 清理旧版本自启块（从注释到 fi）
+    # 3.3 清理更老版本自启块（从旧注释行到 fi）
     sed -i '/^# agsb auto start (added by installer)$/,/^[[:space:]]*fi[[:space:]]*$/d' "$bashrc" 2>/dev/null || true
 
-    # 3.3 清理新版本 marker 块（整块删除，保证 rep 执行 N 次也只会有一份）
+    # 3.4 清理新版本 marker 块（整块删除，保证 rep 执行 N 次也只会有一份）
     sed -i '\|^# >>> agsb auto start (added by installer) >>>$|,\|^# <<< agsb auto start (added by installer) <<<$|d' "$bashrc" 2>/dev/null || true
 
     # 4) 仅在无 systemd / 无 openrc 的场景写入 bashrc 自启
@@ -1725,7 +1736,8 @@ EOF
     export PATH="$HOME/bin:$PATH"
     hash -r 2>/dev/null || true
 
-    # 7) 尝试在 bash 下 reload（注意：脚本非 source 执行时，只影响脚本进程，不影响你当前终端）
+    # 7) 尝试在 bash 下 reload
+    #    注意：脚本不是 source 执行时，只影响脚本进程，不影响你当前终端
     if [ -n "${BASH_VERSION:-}" ]; then
       # shellcheck disable=SC1090
       . "$bashrc" 2>/dev/null || true
@@ -1737,21 +1749,20 @@ EOF
     crontab -l > "$tmp" 2>/dev/null || : > "$tmp"
     sed -i '/agsb/d' "$tmp" 2>/dev/null || true
 
-    # 你的原逻辑：append_argo_cron_legacy 会按需写入（保持兼容）
+    # 保持你原逻辑：append_argo_cron_legacy 会按需写入
     append_argo_cron_legacy
 
     crontab "$tmp" >/dev/null 2>&1 || true
     rm -f "$tmp" 2>/dev/null || true
 
     green "✅ agsb 脚本进程启动成功，安装完毕"
-    sleep 1
+    sleep 2
     return 0
   else
     red "❌ agsb 脚本进程未启动，安装失败"
     exit 1
   fi
 }
-
 
 
 
