@@ -1291,7 +1291,7 @@ sbbout(){
 "route": { "rules": [ { "action": "sniff" }, { "action": "resolve", "strategy": "${sbyx}" } ], "final": "direct" }
 }
 EOF
-        if has_systemd && [ "$EUID" -eq 0 ]; then
+        if $(has_systemd) && [ "$EUID" -eq 0 ]; then
             debug_log "【调试】sbbout：使用 systemd 管理/启动 sb 服务"
             cat > /etc/systemd/system/sb.service <<EOF
 [Unit]
@@ -1443,7 +1443,7 @@ EOF
 start_nginx_service() {
   debug_log "【调试】start_nginx_service：开始启动 Nginx 服务"
     # systemd
-    if has_systemd then
+    if $(has_systemd) then
         debug_log "【调试】start_nginx_service：使用 systemd 管理 Nginx 服务"
     
         systemctl enable nginx >/dev/null 2>&1
@@ -1477,7 +1477,7 @@ nginx_start() {
 nginx_stop() {
   debug_log "【调试】nginx_stop：开始停止 Nginx 服务"
     # systemd
-    if has_systemd then
+    if $(has_systemd) then
         debug_log "【调试】nginx_stop：使用 systemd 管理 Nginx 服务"
         systemctl stop nginx >/dev/null 2>&1
         return 0
@@ -1499,7 +1499,7 @@ nginx_stop() {
 nginx_restart() {
   debug_log "【调试】nginx_restart：开始重启 Nginx 服务"
     # systemd
-    if has_systemd then
+    if $(has_systemd) then
         debug_log "【调试】nginx_restart：使用 systemd 管理 Nginx 服务"
         systemctl restart nginx >/dev/null 2>&1 || systemctl start nginx >/dev/null 2>&1
         green "✅ Nginx 服务已重启"
@@ -1799,7 +1799,7 @@ append_argo_cron_legacy() {
     # openrc 只有 root 能装服务时才不写 cron ✅
     # 非 root 的 openrc 环境会写 cron ✅
 
-   if has_systemd && [ "$EUID" -eq 0 ]); then
+   if $(has_systemd) && [ "$EUID" -eq 0 ]; then
         return
    fi
 
@@ -1985,6 +1985,8 @@ ins(){
         prepare_argo_credentials "$ARGO_AUTH" "$ARGO_DOMAIN" "$argoport"
         debug_log "【调试】prepare_argo_credentials 完成：ARGO_MODE=${ARGO_MODE:-<未设置>}，ARGO_DOMAIN=${ARGO_DOMAIN:-<空>}（固定隧道需域名+凭据）"
 
+        local _has_systemd=$(has_systemd)
+
         # 2.4 启动 Argo（固定 / 临时）
         if [ -n "$ARGO_DOMAIN" ] && [ -n "$ARGO_AUTH" ]; then
             argo_tunnel_type="固定"
@@ -2002,7 +2004,7 @@ ins(){
 
 
           # systemd 判定
-          if has_systemd && [ "$EUID" -eq 0 ]; then
+          if _has_systemd && [ "$EUID" -eq 0 ]; then
               debug_log "【调试】启动方式：systemd 服务（install_argo_service_systemd），模式=${ARGO_MODE}"
 
               install_argo_service_systemd "$ARGO_MODE" "$ARGO_AUTH"
@@ -2659,7 +2661,7 @@ cleanup_nginx() {
     rm -f "$(nginx_conf_path)" 2>/dev/null
 
     # 禁用 nginx 自启（避免卸载后 nginx 仍然起来）
-    if has_systemd then
+    if $(has_systemd) then
         systemctl stop nginx >/dev/null 2>&1
         systemctl disable nginx >/dev/null 2>&1
     elif command -v rc-service >/dev/null 2>&1; then
@@ -2709,7 +2711,7 @@ cleandel(){
     fi
 
 
-    if has_systemd then
+    if $(has_systemd) then
         for svc in sb argo; do
             systemctl stop "$svc" >/dev/null 2>&1
             systemctl disable "$svc" >/dev/null 2>&1
@@ -2742,7 +2744,7 @@ cleandel(){
 sbrestart(){
     pkill -15 -f "$HOME/agsb/sing-box" 2>/dev/null
 
-    if has_systemd then
+    if $(has_systemd) then
         systemctl restart sb
     elif command -v rc-service >/dev/null 2>&1; then
         rc-service sing-box restart
@@ -2762,7 +2764,7 @@ argorestart(){
     # ===============================
     # systemd 管理
     # ===============================
-    if has_systemd then
+    if $(has_systemd) then
         systemctl restart argo
         return
     fi
