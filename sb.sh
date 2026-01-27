@@ -1645,7 +1645,7 @@ append_argo_cron_legacy() {
 
 
 post_install_finalize_legacy() {
-  sleep 5
+  sleep 2
   echo
 
   # 只要 sing-box 或 cloudflared 进程存在，认为安装启动成功
