@@ -722,27 +722,27 @@ case $(uname -m) in aarch64) cpu=arm64;; x86_64) cpu=amd64;; *) echo "目前脚�
 # Check and set IP version
 v4v6(){
     # Check IPv4 connectivity
-    # echo "Checking IPv4 and IPv6 connectivity, ready to get IP..."
-    # echo "Checking IPv4 connectivity..."
-    v4=$(curl -s3 -m3 --connect-timeout 5 -k "$v46url" 2>/dev/null || wget -4 -qO- --tries=2 --timeout=5 "$v46url" 2>/dev/null)
+    debug_log "【调试】 Checking IPv4 and IPv6 connectivity, ready to get IP..."
+    debug_log "【调试】 Checking IPv4 connectivity..."
+    v4=$(curl -s4 -m2 --connect-timeout 2 -k "$v46url" 2>/dev/null || wget -4 -qO- --tries=2 --timeout=2 "$v46url" 2>/dev/null)
     if [ -n "$v4" ]; then
         v4_ok=true
     else
         v4_ok=false
     fi
 
-    # echo "IPv4 connectivity check completed. ipv4=$v4"
+    debug_log "【调试】 IPv4 connectivity check completed. ipv4=$v4"
 
     # Check IPv6 connectivity
-    # echo "Checking IPv6 connectivity..."
-    v6=$(curl -s6 -m3 --connect-timeout 5 -k "$v46url" 2>/dev/null || wget -6 -qO- --tries=2 --timeout=5 "$v46url" 2>/dev/null)
+    debug_log "【调试】 Checking IPv6 connectivity..."
+    v6=$(curl -s6 -m2 --connect-timeout 2 -k "$v46url" 2>/dev/null || wget -6 -qO- --tries=2 --timeout=2 "$v46url" 2>/dev/null)
     if [ -n "$v6" ]; then
         v6_ok=true
     else
         v6_ok=false
     fi
-   #  echo "IPv6 connectivity check completed. ipv6=$v6"
-   #   echo "IP connectivity check completed. ipv4=$v4, ipv6=$v6"
+    debug_log "【调试】 IPv6 connectivity check completed. ipv6=$v6"
+    debug_log "【调试】 IP connectivity check completed. ipv4=$v4, ipv6=$v6"
 
     
 }
@@ -2340,8 +2340,8 @@ add_ipv6_brackets() {
 
 # ipbest 函数，获取并更新 server_ip 并写入日志
 ipbest() {
-    # 获取公网 IP 地址,3 秒超时重试
-    serip=$( (curl -s4m3 -k "$v46url") || (wget -4 -qO- --tries=2 "$v46url") )
+    # 获取公网 IP 地址,2 秒超时重试
+    serip=$( (curl -s4m2 -k "$v46url") || (wget -4 -qO- --tries=2 "$v46url") )
 
     serip=$(update_server_ip "$serip" "$out_ip")
     serip=$(add_ipv6_brackets "$serip")
