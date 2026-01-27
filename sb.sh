@@ -492,6 +492,55 @@ EOF
 }
 
 
+cleanup_agsb_shortcut() {
+  local wrapper="$HOME/agsb/agsb"
+  local link_home="$HOME/bin/agsb"
+  local link_sys1="/usr/local/bin/agsb"
+  local link_sys2="/usr/bin/agsb"
+
+  local bashrc="$HOME/.bashrc"
+  local begin="# >>> agsb shortcut begin >>>"
+  local end="# <<< agsb shortcut end <<<"
+
+  # 1) 删除快捷命令入口（系统级 + 用户级）
+  rm -f "$link_home" 2>/dev/null || true
+  rm -f "$wrapper" 2>/dev/null || true
+
+  # root 才能删系统目录入口
+  if [ "$(id -u)" -eq 0 ]; then
+    rm -f "$link_sys1" 2>/dev/null || true
+    rm -f "$link_sys2" 2>/dev/null || true
+  fi
+
+  # 2) 只清理自己写入的 marker 块（不误伤用户其它配置）
+  if [ -f "$bashrc" ]; then
+    sed -i "\|^${begin}$|,\|^${end}$|d" "$bashrc" 2>/dev/null || true
+  fi
+
+  # 3) 尽力让当前会话立刻失效（受 shell 机制限制）
+  hash -r 2>/dev/null || true
+  command -v rehash >/dev/null 2>&1 && rehash 2>/dev/null || true
+
+  # 4) 你要求的：用代码实现 “source ~/.bashrc”
+  # 说明：只有当脚本是 source 执行时，才会影响当前终端环境；
+  # 否则仅影响脚本进程本身（bash 机制如此）
+  if [ -n "${BASH_VERSION:-}" ] && [ -f "$bashrc" ]; then
+    # shellcheck disable=SC1090
+    source "$bashrc" 2>/dev/null || true
+    hash -r 2>/dev/null || true
+  fi
+
+  # 5) 输出结果
+  if command -v agsb >/dev/null 2>&1; then
+    yellow "❗ cleanup 已执行，但当前会话仍能找到 agsb：$(command -v agsb)"
+    yellow "👉 重新开一个 SSH 会话即可完全生效"
+  else
+    green "✅ 已清理 agsb 快捷命令（wrapper/软链接/.bashrc marker）"
+  fi
+}
+
+
+
 
 
 
@@ -2654,6 +2703,9 @@ cleandel(){
   cleanup_agsb_shortcut
 
 }
+
+
+
 
 # Restart sing-box
 sbrestart(){
