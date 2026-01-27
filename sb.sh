@@ -697,6 +697,7 @@ EOF
 
         ARGO_MODE="json"
         debug_log "【调试】prepare_argo_credentials：ARGO_MODE 已设为 json"
+
     else
         # token 模式
         ARGO_MODE="token"
@@ -1291,7 +1292,10 @@ RestartSec=5s
 [Install]
 WantedBy=multi-user.target
 EOF
-            systemctl daemon-reload; systemctl enable sb; systemctl start sb
+            systemctl daemon-reload; 
+            systemctl enable sb; 
+            systemctl start sb
+            green "✅ sb 服务已启动,并开启开机自启服务（systemd）"
         elif command -v rc-service >/dev/null 2>&1 && [ "$EUID" -eq 0 ]; then
             cat > /etc/init.d/sing-box <<EOF
 #!/sbin/openrc-run
@@ -1302,9 +1306,13 @@ command_background=yes
 pidfile="/run/sing-box.pid"
 depend() { need net; }
 EOF
-            chmod +x /etc/init.d/sing-box; rc-update add sing-box default; rc-service sing-box start
+            chmod +x /etc/init.d/sing-box;
+            rc-update add sing-box default;
+            rc-service sing-box start
+            green "✅ sb 服务已启动,并开启开机自启服务（openrc）"
         else
             nohup "$HOME/agsb/sing-box" run -c "$HOME/agsb/sb.json" >/dev/null 2>&1 &
+            green "✅ sb 服务已启动, 使用 nohup 模式运行"
         fi
     fi
 }
