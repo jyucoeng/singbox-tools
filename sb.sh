@@ -643,14 +643,22 @@ prepare_argo_credentials() {
 
     ARGO_MODE="none"
 
-    [ -z "$auth" ] && return
+    # 调试：不要打印敏感凭据本体，仅打印长度/关键信息
+    debug_log "【调试】prepare_argo_credentials：开始处理凭据（auth长度=${#auth}，domain=${domain:-<空>}，local_port=${local_port:-<空>}）"
+
+    if [ -z "$auth" ]; then
+        debug_log "【调试】prepare_argo_credentials：auth 为空，跳过（ARGO_MODE=none）"
+        return
+    fi
 
     # ---------- JSON 凭据 ----------
     if echo "$auth" | grep -q 'TunnelSecret'; then
         yellow "检测到 Argo JSON 凭据，使用 credentials-file 模式"
+        debug_log "【调试】prepare_argo_credentials：识别为 JSON 凭据（将写入 $HOME/agsb/tunnel.json 并生成 tunnel.yml）"
 
         if [ -z "$local_port" ]; then
             red "❌ prepare_argo_credentials: LOCAL_PORT 为空"
+            debug_log "【调试】prepare_argo_credentials：失败：local_port 为空，无法生成 tunnel.yml"
             return 1
         fi
 
@@ -659,7 +667,7 @@ prepare_argo_credentials() {
         # 写入 tunnel.json
         #❗ 如果 ARGO_AUTH 里的 JSON 含有 \n、\r、\uXXXX 之类，echo 在某些 shell/实现里可能会解释转义，导致 tunnel.json 内容被破坏。 改法：用 printf 更可靠
         printf '%s' "$auth" > "$HOME/agsb/tunnel.json"
-
+        debug_log "【调试】prepare_argo_credentials：tunnel.json 已写入（大小=$(wc -c "$HOME/agsb/tunnel.json" 2>/dev/null | awk '{print $1}') 字节）"
 
         # 提取 TunnelID
         local tunnel_id
@@ -667,8 +675,10 @@ prepare_argo_credentials() {
 
         if [ -z "$tunnel_id" ]; then
             red "❌ Argo JSON 中未找到 TunnelID"
+            debug_log "【调试】prepare_argo_credentials：失败：JSON 中未解析到 TunnelID"
             return 1
         fi
+        debug_log "【调试】prepare_argo_credentials：已解析 TunnelID（前8位=${tunnel_id:0:8}...）"
 
         # 生成 tunnel.yml（对齐 s4.sh）
         cat > "$HOME/agsb/tunnel.yml" <<EOF
@@ -683,16 +693,19 @@ ingress:
       noTLSVerify: true
   - service: http_status:404
 EOF
+        debug_log "【调试】prepare_argo_credentials：tunnel.yml 已生成（回源到 localhost:${local_port}，hostname=${domain:-<空>}）"
 
         ARGO_MODE="json"
+        debug_log "【调试】prepare_argo_credentials：ARGO_MODE 已设为 json"
     else
         # token 模式
         ARGO_MODE="token"
+        debug_log "【调试】prepare_argo_credentials：识别为 token 凭据（ARGO_MODE=token）"
     fi
 
     export ARGO_MODE
+    debug_log "【调试】prepare_argo_credentials：结束（ARGO_MODE=${ARGO_MODE}）"
 }
-
 
 
 # ================== 系统bashrc函数 ==================
@@ -1020,8 +1033,8 @@ init_reality_keypair() {
   local priv="" pub=""
   local print_reality_private=0
 
-  debug_log "🔑 【调试】 init_reality_keypair: 开始初始化 Reality Keypair..."
-  debug_log "📌  【调试】 init_reality_keypair: key_file=$key_file"
+  debug_log "🔑 【调试】init_reality_keypair: 开始初始化 Reality Keypair..."
+  debug_log "📌 【调试】init_reality_keypair: key_file=$key_file"
 
   # 读取文件中的 keypair（如果存在）
   if [ -f "$key_file" ]; then
