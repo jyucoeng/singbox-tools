@@ -632,6 +632,7 @@ set_sbyx(){
         echo
         yellow "所有节点名称前缀：$name"
     fi
+    echo "IP版本获取中……请稍候"
     v4v6  # This now sets both v4_ok and v6_ok
     
 
