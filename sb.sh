@@ -2651,6 +2651,7 @@ main(){
 # 启动 nginx
 if [ "$1" = "nginx_start" ]; then
     nginx_start
+    green "Nginx 已完成启动操作！"
     nginx_status
     exit
 fi
@@ -2658,6 +2659,7 @@ fi
 # 停止 nginx
 if [ "$1" = "nginx_stop" ]; then
     nginx_stop
+    green "Nginx 已完成停止操作！"
     nginx_status
     exit
 fi
@@ -2665,6 +2667,7 @@ fi
 # 重启 nginx
 if [ "$1" = "nginx_restart" ]; then
     nginx_restart
+     green "Nginx 已完成重启操作！"
     nginx_status
     exit
 fi
