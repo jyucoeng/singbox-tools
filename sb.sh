@@ -305,60 +305,81 @@ ensure_agsb_shortcut() {
   local link_sys2="/usr/bin/agsb"
   local link_home="$HOME/bin/agsb"
 
+  local bashrc="$HOME/.bashrc"
+  local begin="# >>> agsb shortcut begin >>>"
+  local end="# <<< agsb shortcut end <<<"
+
   mkdir -p "$HOME/agsb" "$HOME/bin"
+  [ -f "$bashrc" ] || touch "$bashrc"
 
   # ✅ Alpine 最小系统可能没有 bash，提前检查
   if ! command -v bash >/dev/null 2>&1; then
     yellow "⚠️ 检测到系统未安装 bash，agsb 快捷命令需要 bash 才能运行"
     yellow "👉 Alpine 请先执行：apk add --no-cache bash"
-    # 不直接 exit，继续创建文件（用户装好 bash 后立刻可用）
+    # 不 exit：先把文件/软链准备好，用户装好 bash 后立刻可用
   fi
 
-  # wrapper：优先本地脚本，否则在线拉取 agsburl
+  # ✅ wrapper：优先本地脚本，否则在线拉取 agsburl（curl/wget 二选一，兼容 Alpine）
   cat > "$wrapper" <<EOF
 #!/usr/bin/env bash
 set -e
-LOCAL_SCRIPT="$HOME/agsb/sb.sh"
+LOCAL_SCRIPT="\$HOME/agsb/sb.sh"
 
 if [ -s "\$LOCAL_SCRIPT" ]; then
   exec bash "\$LOCAL_SCRIPT" "\$@"
 else
-  exec bash <(curl -Ls "$agsburl") "\$@"
+  if command -v curl >/dev/null 2>&1; then
+    exec bash <(curl -Ls "$agsburl") "\$@"
+  elif command -v wget >/dev/null 2>&1; then
+    exec bash <(wget -qO- "$agsburl") "\$@"
+  else
+    echo "ERROR: need curl or wget to fetch script." >&2
+    echo "Debian/Ubuntu: apt update && apt install -y curl" >&2
+    echo "Alpine: apk add --no-cache curl" >&2
+    exit 1
+  fi
 fi
 EOF
   chmod +x "$wrapper"
 
-  # home 链接兜底
-  ln -sf "$wrapper" "$link_home"
-  chmod +x "$link_home"
+  # ✅ home 链接兜底（非 root 也能用）
+  ln -sf "$wrapper" "$link_home" 2>/dev/null || true
+  chmod +x "$link_home" 2>/dev/null || true
 
-  # ✅关键：系统目录（立刻生效）
+  # ✅ root：系统目录（立刻生效）
   if [ "$(id -u)" -eq 0 ]; then
-    # Alpine 有时 /usr/local/bin 不存在，创建它
-    [ -d "/usr/local/bin" ] || mkdir -p /usr/local/bin 2>/dev/null
+    [ -d "/usr/local/bin" ] || mkdir -p /usr/local/bin 2>/dev/null || true
 
     if [ -d "/usr/local/bin" ] && [ -w "/usr/local/bin" ]; then
-      ln -sf "$wrapper" "$link_sys1"
-      chmod +x "$link_sys1"
+      ln -sf "$wrapper" "$link_sys1" 2>/dev/null || true
+      chmod +x "$link_sys1" 2>/dev/null || true
     elif [ -d "/usr/bin" ] && [ -w "/usr/bin" ]; then
-      ln -sf "$wrapper" "$link_sys2"
-      chmod +x "$link_sys2"
+      ln -sf "$wrapper" "$link_sys2" 2>/dev/null || true
+      chmod +x "$link_sys2" 2>/dev/null || true
     fi
   fi
 
-  # 脚本进程内刷新 PATH（让脚本内部后续也能直接调用 agsb）
+  # ✅ 当前会话立刻可用：刷新 PATH + hash
   export PATH="/usr/local/bin:/usr/bin:$HOME/bin:$PATH"
   hash -r 2>/dev/null || true
+  command -v rehash >/dev/null 2>&1 && rehash 2>/dev/null || true
 
-  # 写入 bashrc（下次登录兜底）
-  if ! grep -qs 'export PATH="\$HOME/bin:\$PATH"' "$HOME/.bashrc" 2>/dev/null; then
-    echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.bashrc"
-  fi
+  # ✅ 写入 bashrc（marker 块管理：先删旧块，再写新块，避免重复）
+  # BusyBox/GNU sed 都支持这种“范围删除”
+  sed -i "\|^${begin}$|,\|^${end}$|d" "$bashrc" 2>/dev/null || true
+  cat >> "$bashrc" <<EOF
+${begin}
+# 说明：为 agsb 快捷命令加入 \$HOME/bin 到 PATH（仅此一块由脚本管理）
+export PATH="\$HOME/bin:\$PATH"
+${end}
+EOF
 
-  # ✅你要求的“用代码实现 source ~/.bashrc”
-  if [ -n "$BASH_VERSION" ] && [ -f "$HOME/.bashrc" ]; then
+  # ✅ 你要求的“用代码实现 source ~/.bashrc”
+  # 注意：只有当脚本是 source 执行时，才会影响当前终端环境；否则仅影响脚本进程本身
+  if [ -n "${BASH_VERSION:-}" ] && [ -f "$bashrc" ]; then
     # shellcheck disable=SC1090
-    source "$HOME/.bashrc" 2>/dev/null || true
+    source "$bashrc" 2>/dev/null || true
+    hash -r 2>/dev/null || true
   fi
 
   # 输出状态
@@ -367,7 +388,7 @@ EOF
     echo -e "👉 例如：agsb list / agsb rep / agsb del"
   else
     yellow "⚠️ 已创建快捷命令 agsb，但当前环境未识别到命令"
-    yellow "👉 若 Alpine 未装 bash：apk add --no-cache bash"
+    yellow "👉 你可以执行：export PATH=\"/usr/local/bin:/usr/bin:\$HOME/bin:\$PATH\" 后再试"
   fi
 }
 
@@ -377,33 +398,37 @@ cleanup_agsb_shortcut() {
   local link_sys2="/usr/bin/agsb"
   local link_home="$HOME/bin/agsb"
 
-  # 1) 删除快捷命令入口（系统级 + 用户级）
-  rm -f "$link_sys1" "$link_sys2" "$link_home" 2>/dev/null
-  rm -f "$wrapper" 2>/dev/null
+  local bashrc="$HOME/.bashrc"
+  local begin="# >>> agsb shortcut begin >>>"
+  local end="# <<< agsb shortcut end <<<"
 
-  # 2) bashrc 清理（下次登录也不再出现）
-  if [ -f "$HOME/.bashrc" ]; then
-    # 清理：export PATH="$HOME/bin:$PATH"
-    sed -i '/export PATH="\$HOME\/bin:\$PATH"/d' "$HOME/.bashrc" 2>/dev/null || true
+  # 1) 删除快捷命令入口（系统级 + 用户级）
+  rm -f "$link_sys1" "$link_sys2" "$link_home" 2>/dev/null || true
+  rm -f "$wrapper" 2>/dev/null || true
+
+  # 2) 只清理自己写入的 marker 块（不误伤用户其它 PATH 配置）
+  if [ -f "$bashrc" ]; then
+    sed -i "\|^${begin}$|,\|^${end}$|d" "$bashrc" 2>/dev/null || true
   fi
 
   # 3) 立刻失效：刷新 shell 命令缓存（Debian/Alpine 都适用）
-  # hash -r 是 bash 内建，command -v hash 成功说明当前shell支持
   hash -r 2>/dev/null || true
   command -v rehash >/dev/null 2>&1 && rehash 2>/dev/null || true
 
   # 4) 你要求的：用代码实现 “source ~/.bashrc”
   # 注意：只有当脚本是 source 执行时，才会影响当前终端环境；否则仅影响脚本进程本身
-  if [ -n "$BASH_VERSION" ] && [ -f "$HOME/.bashrc" ]; then
+  if [ -n "${BASH_VERSION:-}" ] && [ -f "$bashrc" ]; then
     # shellcheck disable=SC1090
-    source "$HOME/.bashrc" 2>/dev/null || true
+    source "$bashrc" 2>/dev/null || true
     hash -r 2>/dev/null || true
   fi
 
-  # 5) 输出确认：确保“当前进程内”已经不可用
+  # 5) 输出确认
   if command -v agsb >/dev/null 2>&1; then
     yellow "⚠️ 已执行清理，但当前环境仍能找到 agsb：$(command -v agsb)"
-    yellow "👉 可能是你当前终端 PATH 里还有别的 agsb（例如你自己手动放过）"
+    yellow "👉 可能原因："
+    yellow "   - 你当前终端不是 source 执行脚本（环境不会被回滚）"
+    yellow "   - PATH 里还有别的 agsb（你手动放过）"
     yellow "👉 你可以执行：which -a agsb 查看残留来源"
   else
     green "✅ 快捷命令 agsb 已清理（当前环境已立即失效）"
@@ -1756,7 +1781,6 @@ EOF
     rm -f "$tmp" 2>/dev/null || true
 
     green "✅ agsb 脚本进程启动成功，安装完毕"
-    sleep 2
     return 0
   else
     red "❌ agsb 脚本进程未启动，安装失败"
