@@ -2,6 +2,8 @@
 #!/usr/bin/env bash
 export LANG=en_US.UTF-8
 
+export DEBUG_FLAG=${DEBUG_FLAG:-'0'}; 
+
 # 颜色（仅在本函数内使用，避免外部未定义）
 
  # ================== 颜色函数 ==================
@@ -15,6 +17,11 @@ purple(){ echo -e "\e[1;35m$1\033[0m"; }
 is_true() {
   [ "$(printf '%s' "${1:-}" | tr 'A-Z' 'a-z')" = "true" ]
 }
+
+debug_log() {
+  [ "${DEBUG_FLAG:-0}" = "1" ] && echo -e "$*" >&2
+}
+
 
 get_subscribe_flag() {
   # 优先读落盘值（避免用户不带环境变量执行 agsb sub 时失效）
@@ -794,10 +801,6 @@ get_short_id() {
   # 1) 传了 reality_private → 直接由 reality_private 稳定推导 short_id（并写入文件）
   # 2) 否则                → 读文件；文件无效/不存在则随机生成并落盘
 
-  # 日志：只输出到 stderr，不污染 stdout
-    _rk_log() {
-      [ "${DEBUG_FLAG:-0}" = "1" ] && echo -e "$*" >&2
-    }
 
   local sid_file="${1:-$HOME/agsb/short_id}"
   local sid=""
@@ -836,7 +839,7 @@ get_short_id() {
       fi
       echo "$sid" > "$sid_file"
 
-      _rk_log "✅ short_id 已由 reality_private 稳定推导, 值: $sid"
+      debug_log "✅ short_id 已由 reality_private 稳定推导, 值: $sid"
 
       echo "$sid"
       return 0
@@ -879,17 +882,13 @@ derive_reality_public_key() {
   local priv="$1"
   local pub=""
 
-  # 只输出到 stderr，不污染 stdout（stdout 必须保持纯公钥）
-  _rk_log() {
-    [ "${DEBUG_FLAG:-0}" = "1" ] && echo -e "$*" >&2
-  }
 
   # 私钥为空直接失败
   [ -z "$priv" ] && return 1
 
   # 1) 优先本地推导（openssl + xxd）
   if command -v xxd >/dev/null 2>&1 && command -v openssl >/dev/null 2>&1; then
-    _rk_log "🔐 derive_reality_public_key: 使用【本地推导】(openssl + xxd)"
+    debug_log "🔐 derive_reality_public_key: 使用【本地推导】(openssl + xxd)"
 
     local tmp_dir="${HOME}/agsb/.tmp_reality"
     mkdir -p "$tmp_dir" 2>/dev/null
@@ -905,7 +904,7 @@ derive_reality_public_key() {
     elif [ $mod -eq 3 ]; then
       b64="${b64}="
     elif [ $mod -eq 1 ]; then
-      _rk_log "❗ derive_reality_public_key: 私钥 base64 长度不合法（mod=1）"
+      debug_log "❗ derive_reality_public_key: 私钥 base64 长度不合法（mod=1）"
       b64=""
     fi
 
@@ -918,7 +917,7 @@ derive_reality_public_key() {
       elif echo "$b64" | openssl base64 -d -A > "$tmp_dir/_x25519_priv_raw" 2>/dev/null; then
         :
       else
-        _rk_log "❗ derive_reality_public_key: 本地解码失败（base64 -d/-D/openssl base64 均失败）"
+        debug_log "❗ derive_reality_public_key: 本地解码失败（base64 -d/-D/openssl base64 均失败）"
         rm -f "$tmp_dir/_x25519_priv_raw" 2>/dev/null
       fi
 
@@ -928,7 +927,7 @@ derive_reality_public_key() {
         priv_len="$(stat -c%s "$tmp_dir/_x25519_priv_raw" 2>/dev/null || stat -f%z "$tmp_dir/_x25519_priv_raw" 2>/dev/null || echo 0)"
 
         if [ "$priv_len" != "32" ]; then
-          _rk_log "❗ derive_reality_public_key: 本地解码后长度不为 32 bytes（实际=$priv_len）"
+          debug_log "❗ derive_reality_public_key: 本地解码后长度不为 32 bytes（实际=$priv_len）"
           rm -f "$tmp_dir/_x25519_priv_raw" 2>/dev/null
         else
           # PKCS#8 DER 前缀（X25519 固定头）
@@ -951,7 +950,7 @@ derive_reality_public_key() {
               fi
 
               if [ -n "$pub" ]; then
-                _rk_log "✅ derive_reality_public_key: 本地推导成功"
+                debug_log "✅ derive_reality_public_key: 本地推导成功"
 
                 # 清理临时文件（可选）
                 rm -f "$tmp_dir/_x25519_priv_raw" "$tmp_dir/_x25519_priv_der" "$tmp_dir/_x25519_priv_pem" \
@@ -960,25 +959,25 @@ derive_reality_public_key() {
                 echo "$pub"
                 return 0
               else
-                _rk_log "❗ derive_reality_public_key: 本地推导成功但编码公钥失败（缺少 base64 工具？）"
+                debug_log "❗ derive_reality_public_key: 本地推导成功但编码公钥失败（缺少 base64 工具？）"
               fi
             else
-              _rk_log "❗ derive_reality_public_key: openssl 推导公钥失败（pkcs8/pkey/pubout）"
+              debug_log "❗ derive_reality_public_key: openssl 推导公钥失败（pkcs8/pkey/pubout）"
             fi
           else
-            _rk_log "❗ derive_reality_public_key: xxd 读取私钥失败"
+            debug_log "❗ derive_reality_public_key: xxd 读取私钥失败"
           fi
         fi
       fi
     fi
 
-    _rk_log "❗ derive_reality_public_key: 本地推导失败，准备在线兜底"
+    debug_log "❗ derive_reality_public_key: 本地推导失败，准备在线兜底"
   else
-    _rk_log "❗ derive_reality_public_key: 缺少 openssl 或 xxd，本地推导不可用"
+    debug_log "❗ derive_reality_public_key: 缺少 openssl 或 xxd，本地推导不可用"
   fi
 
   # 2) 在线兜底推导（curl/wget）
-  _rk_log "🌐 derive_reality_public_key: 使用【在线推导】(realitykey.cloudflare.now.cc)"
+  debug_log "🌐 derive_reality_public_key: 使用【在线推导】(realitykey.cloudflare.now.cc)"
 
   if command -v curl >/dev/null 2>&1; then
     pub="$(curl -s --max-time 2 "https://realitykey.cloudflare.now.cc/?privateKey=${priv}" \
@@ -987,17 +986,17 @@ derive_reality_public_key() {
     pub="$(wget --no-check-certificate -qO- --tries=3 --timeout=2 "https://realitykey.cloudflare.now.cc/?privateKey=${priv}" \
       | awk -F '"' '/publicKey/{print $4; exit}')"
   else
-    _rk_log "❗ derive_reality_public_key: curl/wget 都不存在，在线推导不可用"
+    debug_log "❗ derive_reality_public_key: curl/wget 都不存在，在线推导不可用"
     return 1
   fi
 
   if [ -n "$pub" ]; then
-    _rk_log "✅ derive_reality_public_key: 在线推导成功"
+    debug_log "✅ derive_reality_public_key: 在线推导成功"
     echo "$pub"
     return 0
   fi
 
-  _rk_log "❗ derive_reality_public_key: 在线推导失败（未获取到 publicKey）"
+  debug_log "❗ derive_reality_public_key: 在线推导失败（未获取到 publicKey）"
   return 1
 }
 
@@ -1021,41 +1020,36 @@ init_reality_keypair() {
   local priv="" pub=""
   local print_reality_private=0
 
-  # 日志：只输出到 stderr，不污染 stdout
-  _rk_log() {
-    [ "${DEBUG_FLAG:-0}" = "1" ] && echo -e "$*" >&2
-  }
-
-  _rk_log "🔑 init_reality_keypair: 开始初始化 Reality Keypair..."
-  _rk_log "📌 init_reality_keypair: key_file=$key_file"
+  debug_log "🔑 init_reality_keypair: 开始初始化 Reality Keypair..."
+  debug_log "📌 init_reality_keypair: key_file=$key_file"
 
   # 读取文件中的 keypair（如果存在）
   if [ -f "$key_file" ]; then
     file_priv="$(awk -F': ' '/PrivateKey/{print $2; exit}' "$key_file" 2>/dev/null)"
     file_pub="$(awk -F': ' '/PublicKey/{print $2; exit}' "$key_file" 2>/dev/null)"
-    _rk_log "📄 init_reality_keypair: 检测到已有 reality.key（priv=${#file_priv} chars, pub=${#file_pub} chars）"
+    debug_log "📄 init_reality_keypair: 检测到已有 reality.key（priv=${#file_priv} chars, pub=${#file_pub} chars）"
   else
-    _rk_log "📄 init_reality_keypair: 未找到 reality.key（首次安装或文件丢失）"
+    debug_log "📄 init_reality_keypair: 未找到 reality.key（首次安装或文件丢失）"
   fi
 
   # A) 用户传入了 reality_private（最高优先级）
   if [ -n "$env_priv" ]; then
-    _rk_log "🧩 init_reality_keypair: 使用环境变量 reality_private（优先级最高）"
+    debug_log "🧩 init_reality_keypair: 使用环境变量 reality_private（优先级最高）"
 
     priv="$env_priv"
 
     # 如果文件里私钥与传入相同，则优先复用文件里的公钥（避免变化）
     if [ -n "$file_priv" ] && [ "$file_priv" = "$priv" ] && [ -n "$file_pub" ]; then
       pub="$file_pub"
-      _rk_log "✅ init_reality_keypair: 文件私钥与传入一致，复用文件公钥"
+      debug_log "✅ init_reality_keypair: 文件私钥与传入一致，复用文件公钥"
     else
-      _rk_log "🔄 init_reality_keypair: 尝试由私钥推导公钥（derive_reality_public_key）"
+      debug_log "🔄 init_reality_keypair: 尝试由私钥推导公钥（derive_reality_public_key）"
       pub="$(derive_reality_public_key "$priv" 2>/dev/null)" || pub=""
 
       if [ -n "$pub" ]; then
-        _rk_log "✅ init_reality_keypair: 推导公钥成功（pub=${#pub} chars）"
+        debug_log "✅ init_reality_keypair: 推导公钥成功（pub=${#pub} chars）"
       else
-        _rk_log "❗ init_reality_keypair: 推导公钥失败，将回退为生成新 keypair（这会覆盖 reality_private）"
+        debug_log "❗ init_reality_keypair: 推导公钥失败，将回退为生成新 keypair（这会覆盖 reality_private）"
 
         # 推导失败：生成一套新的 keypair（回退）
         local kp
@@ -1064,28 +1058,28 @@ init_reality_keypair() {
         pub="$(awk '/PublicKey/{print $NF; exit}' <<< "$kp")"
 
         if [ -z "$priv" ] || [ -z "$pub" ]; then
-          _rk_log "❗ init_reality_keypair: 生成 keypair 失败（sing-box generate reality-keypair 无输出）"
+          debug_log "❗ init_reality_keypair: 生成 keypair 失败（sing-box generate reality-keypair 无输出）"
           return 1
         fi
 
         print_reality_private=1
-        _rk_log "✅ init_reality_keypair: 已生成新的 Reality Keypair（priv/pub 均已获得）"
+        debug_log "✅ init_reality_keypair: 已生成新的 Reality Keypair（priv/pub 均已获得）"
       fi
     fi
 
   # B) 没传私钥，但文件里有 → 直接复用（稳定）
   elif [ -n "$file_priv" ] && [ -n "$file_pub" ]; then
-    _rk_log "♻️ init_reality_keypair: 未传入 reality_private，复用 reality.key 中的 keypair（稳定模式）"
+    debug_log "♻️ init_reality_keypair: 未传入 reality_private，复用 reality.key 中的 keypair（稳定模式）"
 
     export reality_private="$file_priv"
     export reality_public="$file_pub"
 
-    _rk_log "✅ init_reality_keypair: 复用成功（priv=${#file_priv} chars, pub=${#file_pub} chars）"
+    debug_log "✅ init_reality_keypair: 复用成功（priv=${#file_priv} chars, pub=${#file_pub} chars）"
     return 0
 
   # C) 既没传私钥，文件也没有 → 首次生成
   else
-    _rk_log "🆕 init_reality_keypair: 无传入私钥且无本地文件，生成新的 Reality Keypair"
+    debug_log "🆕 init_reality_keypair: 无传入私钥且无本地文件，生成新的 Reality Keypair"
 
     local kp
     kp="$("$HOME/agsb/sing-box" generate reality-keypair 2>/dev/null)"
@@ -1093,12 +1087,12 @@ init_reality_keypair() {
     pub="$(awk '/PublicKey/{print $NF; exit}' <<< "$kp")"
 
     if [ -z "$priv" ] || [ -z "$pub" ]; then
-      _rk_log "❗ init_reality_keypair: 生成 keypair 失败（sing-box generate reality-keypair 无输出）"
+      debug_log "❗ init_reality_keypair: 生成 keypair 失败（sing-box generate reality-keypair 无输出）"
       return 1
     fi
 
     print_reality_private=1
-    _rk_log "✅ init_reality_keypair: 首次生成成功（priv/pub 均已获得）"
+    debug_log "✅ init_reality_keypair: 首次生成成功（priv/pub 均已获得）"
   fi
 
   # 写入 reality.key（统一落盘）
@@ -1110,8 +1104,8 @@ init_reality_keypair() {
   export reality_private="$priv"
   export reality_public="$pub"
 
-  _rk_log "💾 init_reality_keypair: 已写入 $key_file（chmod 600）"
-  _rk_log "✅ init_reality_keypair: 完成（priv=${#priv} chars, pub=${#pub} chars）"
+  debug_log "💾 init_reality_keypair: 已写入 $key_file（chmod 600）"
+  debug_log "✅ init_reality_keypair: 完成（priv=${#priv} chars, pub=${#pub} chars）"
 
   # 仅在“新生成私钥”时提示用户保存（避免每次刷屏）
   print_reality_keypair_hint "$print_reality_private"
@@ -1859,8 +1853,9 @@ ensure_nginx_if_needed() {
 
 
 
-
 ins(){
+    debug_log "【调试】进入 ins() 安装流程"
+    debug_log "【调试】关键参数：argo=${argo:-<空>}，vmag=${vmag:-<空>}，subscribe=$(get_subscribe_flag 2>/dev/null || echo ${subscribe:-false})，nginx_pt=${nginx_pt:-<空>}，argo_pt=${argo_pt:-<空>}"
     # =====================================================
     # 1. 安装并启动 sing-box
     # =====================================================
@@ -1869,13 +1864,16 @@ ins(){
     sbbout
 
     # 2. Nginx（按需：subscribe=true 或启用 argo 才需要）
-   ensure_nginx_if_needed || exit 1
+    ensure_nginx_if_needed || exit 1
+    debug_log "【调试】ensure_nginx_if_needed 已执行完成（如需 Nginx 则已确保安装/启动）"
+    debug_log "【调试】即将判断是否进入 Argo 分支：need_argo=$(need_argo && echo yes || echo no)，vmag=${vmag:-<空>}"
 
 
     # =====================================================
     # 2. Argo 相关逻辑（仅在启用 argo + vmag 时）
     # =====================================================
    if need_argo && [ -n "$vmag" ]; then
+        debug_log "【调试】已进入 Argo 启动分支（argo=${argo}，vmag=${vmag}）"
         echo
         echo "=========启用Cloudflared-argo内核========="
 
@@ -1885,9 +1883,11 @@ ins(){
             red "❌ 已启用 Argo，但 cloudflared 准备失败，无法继续启用 Argo"
             exit 1
         }
+        debug_log "【调试】cloudflared 已准备就绪（已通过 ensure_cloudflared_if_needed 检查）"
 
          # 2.2 计算 Argo 本地端口
         argoport="${argo_pt:-$ARGO_DEFAULT_PORT}"
+        debug_log "【调试】Argo 本地回源端口 argoport=${argoport}（来自 argo_pt 或默认 ARGO_DEFAULT_PORT）"
         echo "$argoport" > "$HOME/agsb/argoport.log"    
 
 
@@ -1902,17 +1902,22 @@ ins(){
         # 2.3 生成 Argo 凭据（JSON / token）
         # 仅用于“当前启动流程”，不用于重启判断
         prepare_argo_credentials "$ARGO_AUTH" "$ARGO_DOMAIN" "$argoport"
+        debug_log "【调试】prepare_argo_credentials 完成：ARGO_MODE=${ARGO_MODE:-<未设置>}，ARGO_DOMAIN=${ARGO_DOMAIN:-<空>}（固定隧道需域名+凭据）"
 
         # 2.4 启动 Argo（固定 / 临时）
         if [ -n "$ARGO_DOMAIN" ] && [ -n "$ARGO_AUTH" ]; then
             argo_tunnel_type="固定"
+            debug_log "【调试】判定为固定 Argo 隧道（ARGO_DOMAIN + ARGO_AUTH 都存在）"
 
             if pidof systemd >/dev/null 2>&1 && [ "$EUID" -eq 0 ]; then
+                debug_log "【调试】启动方式：systemd 服务（install_argo_service_systemd）"
                 install_argo_service_systemd "$ARGO_MODE" "$ARGO_AUTH"
             elif command -v rc-service >/dev/null 2>&1 && [ "$EUID" -eq 0 ]; then
+                debug_log "【调试】启动方式：openrc 服务（install_argo_service_openrc）"
                 install_argo_service_openrc "$ARGO_MODE" "$ARGO_AUTH"
             else
                 # 无 systemd / openrc，直接后台启动
+                debug_log "【调试】启动方式：无 systemd/openrc，直接后台启动（start_argo_no_daemon，模式=${ARGO_MODE}）"
                 start_argo_no_daemon "$ARGO_MODE" "$ARGO_AUTH" "$argoport"
             fi
 
@@ -1923,10 +1928,13 @@ ins(){
         else
             # 临时 Argo（trycloudflare）
             argo_tunnel_type="临时"
+            debug_log "【调试】判定为临时 Argo 隧道（未提供 ARGO_DOMAIN/ARGO_AUTH，走 trycloudflare）"
+            debug_log "【调试】启动方式：临时隧道，直接后台启动（start_argo_no_daemon temp）"
             start_argo_no_daemon "temp" "" "$argoport"
         fi
 
         # 2.5 等待并检查 Argo 申请结果（原版 sleep + grep 逻辑）
+        debug_log "【调试】开始等待并检查 Argo 申请结果：tunnel_type=${argo_tunnel_type}，日志文件：$HOME/agsb/argo.log"
         wait_and_check_argo "$argo_tunnel_type"
     fi
 
@@ -1935,10 +1943,11 @@ ins(){
     #    （进程检测 / bashrc / cron / 自启）
     # =====================================================
     post_install_finalize_legacy
+    debug_log "【调试】post_install_finalize_legacy 已执行完成"
 
     ensure_agsb_shortcut
+    debug_log "【调试】ensure_agsb_shortcut 已执行完成（快捷命令/链接）"
 }
-
 
 
 
@@ -2219,7 +2228,7 @@ is_valid_ip() {
 # 根据 out_ip_local 更新 current_server_ip 的函数，确保返回的 IPv6 不包含中括号
 update_server_ip() {
     # 定义调试日志函数
-    _rk_log() {
+    debug_log() {
         [ "${DEBUG_FLAG:-0}" = "1" ] && echo -e "$*" >&2  # 如果 DEBUG_FLAG 为 1，则打印日志
     }
 
@@ -2227,21 +2236,21 @@ update_server_ip() {
     local out_ip_local="$2"  # 修改变量名，避免与其他地方的 out_ip 混淆
 
     # 输出调试信息，显示传入的参数
-    _rk_log "[调试] 原始 current_server_ip: $current_server_ip"
-    _rk_log "[调试] 原始 out_ip_local: $out_ip_local"
+    debug_log "[调试] 原始 current_server_ip: $current_server_ip"
+    debug_log "[调试] 原始 out_ip_local: $out_ip_local"
 
    # 如果 current_server_ip 是 IPv6 地址（即包含中括号），去除中括号
     if echo "$current_server_ip" | grep -q '^\[' && echo "$current_server_ip" | grep -q '\]$'; then
-        _rk_log "[调试] 去掉 current_server_ip 中的中括号"
+        debug_log "[调试] 去掉 current_server_ip 中的中括号"
         current_server_ip=$(echo "$current_server_ip" | sed 's/^\[\(.*\)\]$/\1/')  # 去掉中括号
-        _rk_log "[调试] 去掉中括号后的 current_server_ip: $current_server_ip"
+        debug_log "[调试] 去掉中括号后的 current_server_ip: $current_server_ip"
     fi
 
     # 如果 out_ip_local 非空且包含中括号，则去除中括号
     if [ -n "$out_ip_local" ] && echo "$out_ip_local" | grep -q '^\[' && echo "$out_ip_local" | grep -q '\]$'; then
-        _rk_log "[调试] 去掉 out_ip_local 中的中括号"
+        debug_log "[调试] 去掉 out_ip_local 中的中括号"
         out_ip_local=$(echo "$out_ip_local" | sed 's/^\[\(.*\)\]$/\1/')  # 去掉中括号
-        _rk_log "[调试] 去掉中括号后的 out_ip_local: $out_ip_local"
+        debug_log "[调试] 去掉中括号后的 out_ip_local: $out_ip_local"
     fi
 
 
@@ -2250,23 +2259,23 @@ update_server_ip() {
         # 检查是否是 IPv6 地址，并且确保类型一致
         if echo "$current_server_ip" | grep -q ':' && echo "$out_ip_local" | grep -q ':'; then
             # 都是 IPv6 地址
-            _rk_log "[调试] current_server_ip 和 out_ip_local 都是 IPv6，进行更新"
+            debug_log "[调试] current_server_ip 和 out_ip_local 都是 IPv6，进行更新"
             current_server_ip="$out_ip_local"
         # 检查是否是 IPv4 地址，并且确保类型一致
         elif ! echo "$current_server_ip" | grep -q ':' && ! echo "$out_ip_local" | grep -q ':'; then
             # 都是 IPv4 地址
-            _rk_log "[调试] current_server_ip 和 out_ip_local 都是 IPv4，进行更新"
+            debug_log "[调试] current_server_ip 和 out_ip_local 都是 IPv4，进行更新"
             current_server_ip="$out_ip_local"
         else
-            _rk_log "[调试] current_server_ip 和 out_ip_local 类型不同（IPv4 和 IPv6），不进行更新"
+            debug_log "[调试] current_server_ip 和 out_ip_local 类型不同（IPv4 和 IPv6），不进行更新"
         fi
     else
-        _rk_log "[调试] out_ip_local 为空、无效或与 current_server_ip 相同，不进行更新"
+        debug_log "[调试] out_ip_local 为空、无效或与 current_server_ip 相同，不进行更新"
     fi
 
     # 输出最终的 server_ip 和 out_ip_local，方便对比
-    _rk_log "[调试] 最终的 server_ip: $current_server_ip"
-    _rk_log "[调试] 最终的 out_ip_local: $out_ip_local"
+    debug_log "[调试] 最终的 server_ip: $current_server_ip"
+    debug_log "[调试] 最终的 out_ip_local: $out_ip_local"
 
     # 返回更新后的 server_ip，确保不包含中括号
     echo "$current_server_ip"
@@ -2424,7 +2433,7 @@ ipchange() {
 cip(){
 
     # 日志：只输出到 stderr，不污染 stdout
-    _rk_log() {
+    debug_log() {
       [ "${DEBUG_FLAG:-0}" = "1" ] && echo -e "$*" >&2
     }
     
@@ -2468,7 +2477,7 @@ cip(){
         short_id=$(cat "$HOME/agsb/short_id")
         vl_sni=$(cat "$HOME/agsb/vl_sni")
 
-        _rk_log "cip函数中的short_id,值为:$short_id"
+        debug_log "cip函数中的short_id,值为:$short_id"
 
        # vless_link="vless://${uuid}@${server_ip}:${port_vlr}?encryption=none&security=reality&sni=www.yahoo.com&fp=chrome&flow=xtls-rprx-vision&publicKey=${public_key}&shortId=${short_id}#${sxname}vless-reality-$hostname"
         
