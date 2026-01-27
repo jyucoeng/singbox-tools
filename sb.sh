@@ -1546,7 +1546,7 @@ install_argo_service_systemd() {
     fi
 
     if [ "$mode" = "json" ]; then
-        debug_log "【调试】使用 json 模式安装 argo 服务"
+        debug_log "【调试】使用 json 模式安装 argo 服务(systemd)"
 
         cat > /etc/systemd/system/argo.service <<EOF
 [Unit]
@@ -1564,7 +1564,7 @@ RestartSec=5s
 WantedBy=multi-user.target
 EOF
     else
-        debug_log "【调试】使用 token 模式安装 argo 服务"
+        debug_log "【调试】使用 token 模式安装 argo 服务(systemd)"
 
         cat > /etc/systemd/system/argo.service <<EOF
 [Unit]
@@ -1605,10 +1605,10 @@ install_argo_service_openrc() {
     local args=""
 
     if [ "$mode" = "json" ]; then
-        debug_log "【调试】使用 json 模式安装 argo 服务"
+        debug_log "【调试】使用 json 模式安装 argo 服务(openrc)"
         args="tunnel --edge-ip-version auto --config $HOME/agsb/tunnel.yml run"
     else
-        debug_log "【调试】使用 token 模式安装 argo 服务"
+        debug_log "【调试】使用 token 模式安装 argo 服务(openrc)"
         args="tunnel --no-autoupdate --edge-ip-version auto run --token ${token}"
     fi
 
