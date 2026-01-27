@@ -1309,6 +1309,7 @@ EOF
             systemctl daemon-reload; 
             systemctl enable sb; 
             systemctl start sb
+            echo
             green "✅ sb 服务已启动,并开启开机自启服务（systemd）"
         elif command -v rc-service >/dev/null 2>&1 && [ "$EUID" -eq 0 ]; then
             debug_log "【调试】sbbout：使用 openrc 管理/启动 sb 服务"
@@ -1324,10 +1325,12 @@ EOF
             chmod +x /etc/init.d/sing-box;
             rc-update add sing-box default;
             rc-service sing-box start
+            echo
             green "✅ sb 服务已启动,并开启开机自启服务（openrc）"
         else
             debug_log "【调试】sbbout：使用 nohup 模式运行 sb 服务"
             nohup "$HOME/agsb/sing-box" run -c "$HOME/agsb/sb.json" >/dev/null 2>&1 &
+            echo
             green "✅  sb 服务已启动, 使用 nohup 模式运行"
         fi
     fi
@@ -1448,6 +1451,7 @@ start_nginx_service() {
     
         systemctl enable nginx >/dev/null 2>&1
         systemctl restart nginx >/dev/null 2>&1 || systemctl start nginx >/dev/null 2>&1
+        echo
         green "✅ Nginx 服务已启动,并开启开机自启服务（systemd）"
         return 0
     fi
@@ -1457,6 +1461,7 @@ start_nginx_service() {
         debug_log "【调试】start_nginx_service：使用 openrc 管理 Nginx 服务"
         rc-update add nginx default >/dev/null 2>&1
         rc-service nginx restart >/dev/null 2>&1 || rc-service nginx start >/dev/null 2>&1
+        echo
         green "✅ Nginx 服务已启动,并开启开机自启服务（openrc）"
         return 0
     fi
@@ -1465,6 +1470,7 @@ start_nginx_service() {
     # no init
     pkill -15 nginx >/dev/null 2>&1
     nohup nginx >/dev/null 2>&1 &
+    echo
     green "✅ Nginx 服务已启动, 使用 nohup 模式运行"
     return 0
 }
@@ -1502,6 +1508,7 @@ nginx_restart() {
     if has_systemd; then
         debug_log "【调试】nginx_restart：使用 systemd 管理 Nginx 服务"
         systemctl restart nginx >/dev/null 2>&1 || systemctl start nginx >/dev/null 2>&1
+        echo
         green "✅ Nginx 服务已重启"
         return 0
     fi
@@ -1512,6 +1519,7 @@ nginx_restart() {
     if command -v rc-service >/dev/null 2>&1; then
         debug_log "【调试】nginx_restart：使用 openrc 管理 Nginx 服务"
         rc-service nginx restart >/dev/null 2>&1 || rc-service nginx start >/dev/null 2>&1
+        echo
         green "✅ Nginx 服务已重启"
         return 0
     fi
@@ -1646,7 +1654,8 @@ EOF
     systemctl daemon-reload
     systemctl enable argo
     systemctl start argo
-    green "✅ Argo 服务已成功安装并启动（systemd）"
+    echo
+    green "✅ Argo 服务已启动并成功设置开机自启动（systemd）"
 }
 
 
