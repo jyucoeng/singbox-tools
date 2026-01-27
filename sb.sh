@@ -449,7 +449,7 @@ showmode(){
  
     yellow "主脚本：bash <(curl -Ls ${agsburl}) 或 bash <(wget -qO- ${agsburl})"
     yellow "显示节点信息：agsb list"
-    yellow "安装命令： agsb或者 agsb ins（命令前面需要带上环境变量）"
+    yellow "安装命令：  agsb ins（命令前面需要带上环境变量）"
     yellow "覆盖式安装命令： agsb rep（命令前面需要带上环境变量）"
     yellow "更新Singbox内核：agsb ups(属于预留命令)"
     yellow "重启脚本：agsb res(重启singbox和argo)"
@@ -2806,10 +2806,17 @@ if [ "$1" = "rep" ]; then
     exit;
 fi
 
-# 安装步骤(不带参数或者参数为 ins)
-if [ -z "$1" ] || [ "$1" = "ins" ]; then
-    yellow "开始安装流程..."; 
+# 只在明确 ins 时才安装；无参数只显示菜单
+if [ "$1" = "ins" ]; then
+    yellow "开始安装流程..."
     install_step
+    exit
+fi
+
+# 无参数：只展示帮助/菜单
+if [ -z "$1" ]; then
+    showmode
+    exit
 fi
 
 }
