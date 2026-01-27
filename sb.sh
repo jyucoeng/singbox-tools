@@ -1923,26 +1923,39 @@ ins(){
 
             # ✅ systemd 判定：不要用 pidof systemd（很多 Debian 精简环境/容器里会失败，导致误走 nohup 分支）
             local _has_systemd=0
-            if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
-                _has_systemd=1
-            fi
-            debug_log "【调试】systemd 判定：_has_systemd=${_has_systemd}，systemctl=$(command -v systemctl 2>/dev/null || echo <无>)，/run/systemd/system=$([ -d /run/systemd/system ] && echo 存在 || echo 不存在)，PID1=$(ps -p 1 -o comm= 2>/dev/null | tr -d ' ' )"
+          if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+              _has_systemd=1
+          fi
 
-            if [ "${_has_systemd}" = "1" ] && [ "$EUID" -eq 0 ]; then
-                debug_log "【调试】启动方式：systemd 服务（install_argo_service_systemd）"
-                install_argo_service_systemd "$ARGO_MODE" "$ARGO_AUTH"
-            elif command -v rc-service >/dev/null 2>&1 && [ "$EUID" -eq 0 ]; then
-                debug_log "【调试】启动方式：openrc 服务（install_argo_service_openrc）"
-                install_argo_service_openrc "$ARGO_MODE" "$ARGO_AUTH"
-            else
-                # 无 systemd / openrc，直接后台启动
-                debug_log "【调试】启动方式：无 systemd/openrc，直接后台启动（start_argo_no_daemon，模式=${ARGO_MODE}）"
-                start_argo_no_daemon "$ARGO_MODE" "$ARGO_AUTH" "$argoport"
-            fi
+          if [ "${DEBUG_FLAG:-0}" = "1" ]; then
+              _systemctl_path="$(command -v systemctl 2>/dev/null || true)"
+
+              [ -n "$_systemctl_path" ] || _systemctl_path="无"
+              _systemd_dir_status="$([ -d /run/systemd/system ] && echo 存在 || echo 不存在)"
+              _pid1="$(ps -p 1 -o comm= 2>/dev/null | tr -d '[:space:]')"
+              _pid1="$(ps -p 1 -o comm= 2>/dev/null | tr -d '[:space:]')"
+              debug_log "【调试】systemd 判定：_has_systemd=${_has_systemd}，systemctl=${_systemctl_path}，/run/systemd/system=${_systemd_dir_status}，PID1=${_pid1}"
+          fi
+
+
+          # systemd 判定
+          if [ "${_has_systemd}" = "1" ] && [ "$EUID" -eq 0 ]; then
+              debug_log "【调试】启动方式：systemd 服务（install_argo_service_systemd）"
+
+              install_argo_service_systemd "$ARGO_MODE" "$ARGO_AUTH"
+
+          elif command -v rc-service >/dev/null 2>&1 && [ "$EUID" -eq 0 ]; then
+
+              debug_log "【调试】启动方式：openrc 服务（install_argo_service_openrc）"
+              install_argo_service_openrc "$ARGO_MODE" "$ARGO_AUTH"
+          else
+              # 无 systemd / openrc，直接后台启动
+              debug_log "【调试】启动方式：无 systemd/openrc，直接后台启动（start_argo_no_daemon，模式=${ARGO_MODE}）"
+              start_argo_no_daemon "$ARGO_MODE" "$ARGO_AUTH" "$argoport"
+          fi
 
             # 与原版一致：固定 Argo 域名直接落盘
             echo "$ARGO_DOMAIN" > "$HOME/agsb/sbargoym.log"
-            
             # token 模式下才会有 sbargotoken.log
             [ "$ARGO_MODE" = "token" ] && echo "$ARGO_AUTH" > "$HOME/agsb/sbargotoken.log"
         else
