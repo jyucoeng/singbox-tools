@@ -779,16 +779,20 @@ upsingbox(){
     (curl -Lo "$out" -# --connect-timeout 5 --max-time 120  --retry 2 --retry-delay 2 --retry-all-errors "$url") || (wget -O "$out" --tries=2 --timeout=120 --dns-timeout=5 --read-timeout=60 "$url")
 
 
+    debug_log "【调试】upsingbox：下载 Sing-box 二进制文件，保存路径 $out，url: $url"
+
     # 下载结果校验：防止拿到空文件/错误页导致后续假安装
     if [ ! -s "$out" ]; then
+        debug_log "【调试】upsingbox：下载失败：文件为空"
         red "❌ 下载失败：文件为空 $out"
         exit 1
     fi
-
+    debug_log "【调试】upsingbox：检查 Sing-box 二进制文件是否下载成功"
 
     chmod +x "$HOME/agsb/sing-box"
     sbcore=$("$HOME/agsb/sing-box" version 2>/dev/null | awk '/version/{print $NF}')
-    echo "已安装Sing-box正式版内核：$sbcore"
+    debug_log "【调试】upsingbox：Sing-box 版本为 $sbcore"
+    green "✅  已安装Sing-box正式版内核：$sbcore"
 }
 # Generate UUID and save to file
 insuuid(){
@@ -1167,6 +1171,7 @@ installsb(){
     echo; echo "=========启用Sing-box内核========="
 
     if [ ! -e "$HOME/agsb/sing-box" ]; then 
+        debug_log "【调试】installsb：Sing-box 不存在，开始下载/安装"
         upsingbox; 
     fi
 
@@ -1420,27 +1425,37 @@ EOF
     nginx -t
     return 1
   }
+ 
 }
 
 
 start_nginx_service() {
+  debug_log "【调试】start_nginx_service：开始启动 Nginx 服务"
     # systemd
     if pidof systemd >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1; then
+        debug_log "【调试】start_nginx_service：使用 systemd 管理 Nginx 服务"
+    
         systemctl enable nginx >/dev/null 2>&1
         systemctl restart nginx >/dev/null 2>&1 || systemctl start nginx >/dev/null 2>&1
+        green "✅ Nginx 服务已启动,并开启开机自启服务（systemd）"
         return 0
     fi
 
     # openrc
     if command -v rc-service >/dev/null 2>&1; then
+        debug_log "【调试】start_nginx_service：使用 openrc 管理 Nginx 服务"
         rc-update add nginx default >/dev/null 2>&1
         rc-service nginx restart >/dev/null 2>&1 || rc-service nginx start >/dev/null 2>&1
+        green "✅ Nginx 服务已启动,并开启开机自启服务（openrc）"
         return 0
     fi
 
+    debug_log "【调试】start_nginx_service：使用 nohup 模式运行 Nginx 服务"
     # no init
     pkill -15 nginx >/dev/null 2>&1
     nohup nginx >/dev/null 2>&1 &
+    green "✅ Nginx 服务已启动, 使用 nohup 模式运行"
+    return 0
 }
 
 
@@ -1449,40 +1464,55 @@ nginx_start() {
 }
 
 nginx_stop() {
+  debug_log "【调试】nginx_stop：开始停止 Nginx 服务"
     # systemd
     if pidof systemd >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1; then
+        debug_log "【调试】nginx_stop：使用 systemd 管理 Nginx 服务"
         systemctl stop nginx >/dev/null 2>&1
         return 0
     fi
 
     # openrc
     if command -v rc-service >/dev/null 2>&1; then
+        debug_log "【调试】nginx_stop：使用 openrc 管理 Nginx 服务"
         rc-service nginx stop >/dev/null 2>&1
         return 0
     fi
 
     # no init：直接杀进程
     pkill -15 -x nginx >/dev/null 2>&1
+    debug_log "【调试】nginx_stop： Nginx 服务已停止"
+    return 0
 }
 
 nginx_restart() {
+  debug_log "【调试】nginx_restart：开始重启 Nginx 服务"
     # systemd
     if pidof systemd >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1; then
+        debug_log "【调试】nginx_restart：使用 systemd 管理 Nginx 服务"
         systemctl restart nginx >/dev/null 2>&1 || systemctl start nginx >/dev/null 2>&1
+        green "✅ Nginx 服务已重启"
         return 0
     fi
 
+
+ 
     # openrc
     if command -v rc-service >/dev/null 2>&1; then
+        debug_log "【调试】nginx_restart：使用 openrc 管理 Nginx 服务"
         rc-service nginx restart >/dev/null 2>&1 || rc-service nginx start >/dev/null 2>&1
+        green "✅ Nginx 服务已重启"
         return 0
     fi
 
+    debug_log "【调试】nginx_restart：使用 nohup 模式运行 Nginx 服务"
     # no init：优先 reload，不行就 stop+start
     if command -v nginx >/dev/null 2>&1; then
+        debug_log "【调试】nginx_restart：使用 nohup 模式运行 Nginx 服务，尝试 reload"
         nginx -s reload >/dev/null 2>&1 && return 0
     fi
 
+    debug_log "【调试】nginx_restart：使用 nohup 模式运行 Nginx 服务，尝试 stop+start"
     nginx_stop
     nginx_start
 }
@@ -1500,11 +1530,13 @@ nginx_status() {
 
 ensure_cloudflared_if_needed() {
   # ✅ 仅当启用 argo=vmpt/trpt 且 vmag 存在时才需要 cloudflared
+  debug_log "【调试】ensure_cloudflared_if_needed：检查是否需要 cloudflared"
   if { [ "${argo:-}" != "vmpt" ] && [ "${argo:-}" != "trpt" ]; } || [ -z "${vmag:-}" ]; then
+    debug_log "【调试】ensure_cloudflared_if_needed：未启用 Argo（或未启用 vmess/trojan），跳过 cloudflared 下载/安装"
     purple "ℹ️ 未启用 Argo（或未启用 vmess/trojan），跳过 cloudflared 下载/安装"
     return 0
   fi
-
+  debug_log "【调试】ensure_cloudflared_if_needed：需要 cloudflared，开始下载/安装"
   ensure_cloudflared || return 1
   return 0
 }
@@ -1513,11 +1545,13 @@ ensure_cloudflared_if_needed() {
 
 
 ensure_cloudflared() {
+  debug_log "【调试】ensure_cloudflared：开始下载/安装 cloudflared"
   # 已存在就不重复下载
   if [ -x "$HOME/agsb/cloudflared" ]; then
     return 0
   fi
 
+  debug_log "【调试】ensure_cloudflared：检查 cloudflared 是否已存在"
   yellow "下载 Cloudflared Argo 内核中…"
   local url out
 
@@ -1528,16 +1562,23 @@ ensure_cloudflared() {
   url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$cpu"
   out="$HOME/agsb/cloudflared"
 
+  debug_log "【调试】ensure_cloudflared：下载 cloudflared 二进制文件，保存路径 $out"
+
   (curl -Lo "$out" -# --connect-timeout 5 --max-time 120 \
     --retry 2 --retry-delay 2 --retry-all-errors "$url") \
   || (wget -O "$out" --tries=2 --timeout=60 --dns-timeout=5 --read-timeout=60 "$url")
 
+  debug_log "【调试】ensure_cloudflared：检查 cloudflared 二进制文件是否下载成功"
   if [ ! -s "$out" ]; then
+    debug_log "【调试】ensure_cloudflared：下载失败：文件为空"
     red "❌ 下载失败：文件为空 $out"
     return 1
   fi
 
+  debug_log "【调试】ensure_cloudflared：设置 cloudflared 二进制文件权限"
   chmod +x "$out" || return 1
+
+  debug_log "【调试】ensure_cloudflared：cloudflared 二进制文件权限设置成功"
   return 0
 }
 
@@ -1594,7 +1635,7 @@ EOF
     systemctl daemon-reload
     systemctl enable argo
     systemctl start argo
-    green "Argo 服务已成功安装并启动（systemd）"
+    green "✅ Argo 服务已成功安装并启动（systemd）"
 }
 
 
@@ -1633,7 +1674,7 @@ EOF
     chmod +x /etc/init.d/argo
     rc-update add argo default
     rc-service argo start
-    green "Argo 服务已成功安装并启动（openrc）"
+    green "✅ Argo 服务已成功安装并启动（openrc）"
 }
 
 
