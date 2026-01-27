@@ -2501,15 +2501,25 @@ cleandel(){
     pkill -15 -f "$HOME/agsb/sing-box" 2>/dev/null
     pkill -15 -f "$HOME/agsb/cloudflared" 2>/dev/null
 
-    sed -i '/agsb/d' ~/.bashrc
-    sed -i '/export PATH="\$HOME\/bin:\$PATH"/d' ~/.bashrc
+    # 从 .bashrc 文件中删除包含 'agsb' 的行
+    sed -i '/.*agsb.*/d' ~/.bashrc
+    sed -i '/.*export PATH="\$HOME\/bin:\$PATH".*/d' ~/.bashrc
+
+    # 立即应用 .bashrc 的修改
     . ~/.bashrc 2>/dev/null
 
-    crontab -l > /tmp/crontab.tmp 2>/dev/null
-    sed -i '/agsb/d' /tmp/crontab.tmp
+    # 处理 crontab，兼容 Debian 和 Alpine
+    # Debian/Ubuntu 和 Alpine 都支持 crontab，但需要检查 crontab 是否存在
+    crontab -l > /tmp/crontab.tmp 2>/dev/null || touch /tmp/crontab.tmp
+    sed -i '/.*agsb.*/d' /tmp/crontab.tmp
     crontab /tmp/crontab.tmp >/dev/null 2>&1
     rm /tmp/crontab.tmp
-    rm -rf "$HOME/bin/agsb"
+
+    # 删除 agsb 目录，检查路径是否在 Alpine 或 Debian 上正确
+    if [ -d "$HOME/bin/agsb" ]; then
+        rm -rf "$HOME/bin/agsb"
+    fi
+
 
     if pidof systemd >/dev/null 2>&1; then
         for svc in sb argo; do
