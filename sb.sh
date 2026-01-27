@@ -724,7 +724,7 @@ v4v6(){
     # Check IPv4 connectivity
     # echo "Checking IPv4 and IPv6 connectivity, ready to get IP..."
     # echo "Checking IPv4 connectivity..."
-    v4=$(curl -s4 -m5 --connect-timeout 5 -k "$v46url" 2>/dev/null || wget -4 -qO- --tries=2 --timeout=5 "$v46url" 2>/dev/null)
+    v4=$(curl -s3 -m3 --connect-timeout 5 -k "$v46url" 2>/dev/null || wget -4 -qO- --tries=2 --timeout=5 "$v46url" 2>/dev/null)
     if [ -n "$v4" ]; then
         v4_ok=true
     else
@@ -735,7 +735,7 @@ v4v6(){
 
     # Check IPv6 connectivity
     # echo "Checking IPv6 connectivity..."
-    v6=$(curl -s6 -m5 --connect-timeout 5 -k "$v46url" 2>/dev/null || wget -6 -qO- --tries=2 --timeout=5 "$v46url" 2>/dev/null)
+    v6=$(curl -s6 -m3 --connect-timeout 5 -k "$v46url" 2>/dev/null || wget -6 -qO- --tries=2 --timeout=5 "$v46url" 2>/dev/null)
     if [ -n "$v6" ]; then
         v6_ok=true
     else
@@ -2340,8 +2340,8 @@ add_ipv6_brackets() {
 
 # ipbest 函数，获取并更新 server_ip 并写入日志
 ipbest() {
-    # 获取公网 IP 地址
-    serip=$( (curl -s4m5 -k "$v46url") || (wget -4 -qO- --tries=2 "$v46url") )
+    # 获取公网 IP 地址,3 秒超时重试
+    serip=$( (curl -s4m3 -k "$v46url") || (wget -4 -qO- --tries=2 "$v46url") )
 
     serip=$(update_server_ip "$serip" "$out_ip")
     serip=$(add_ipv6_brackets "$serip")
@@ -2355,15 +2355,19 @@ ipbest() {
 
 # 检查 IPv4 和 IPv6 的连通性
 check_ip_connectivity() {
-    local v46url="$1"
-    local v4 v6
-    # 检查 IPv4 连通性
-    v4=$(curl -s4 -m5 --connect-timeout 5 -k "$v46url" 2>/dev/null || wget -4 -qO- --tries=2 --timeout=5 "$v46url" 2>/dev/null)
-    # 检查 IPv6 连通性
-    v6=$(curl -s6 -m5 --connect-timeout 5 -k "$v46url" 2>/dev/null || wget -6 -qO- --tries=2 --timeout=5 "$v46url" 2>/dev/null)
-    
-    # 返回 IPv4 和 IPv6 结果
-    echo "$v4 $v6"
+  local v46url="$1"
+  local timeout="${IP_CHECK_TIMEOUT:-2}"   # 默认 2 秒（你也可以设成 1）
+  local v4="" v6=""
+
+  # IPv4
+  v4="$(curl -s4 -m"$timeout" --connect-timeout "$timeout" "$v46url" 2>/dev/null \
+        || wget -4 -qO- --tries=1 --timeout="$timeout" "$v46url" 2>/dev/null)"
+
+  # IPv6
+  v6="$(curl -s6 -m"$timeout" --connect-timeout "$timeout" "$v46url" 2>/dev/null \
+        || wget -6 -qO- --tries=1 --timeout="$timeout" "$v46url" 2>/dev/null)"
+
+  echo "$v4 $v6"
 }
 
 # 从 IP 服务中提取位置
@@ -2404,9 +2408,9 @@ ipchange() {
     v6=$(echo "$v4v6_result" | awk '{print $2}')
 
   
-    # 第二步：获取 IPv4 和 IPv6 地址的位置信息
-    v4dq=$( (curl -s4m5 -k https://ip.fm 2>/dev/null | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/') || (wget -4 -qO- --tries=2 https://ip.fm 2>/dev/null | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/') )
-    v6dq=$( (curl -s6m5 -k https://ip.fm 2>/dev/null | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/') || (wget -6 -qO- --tries=2 https://ip.fm 2>/dev/null | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/') )
+    # 第二步：获取 IPv4 和 IPv6 地址的位置信息,2 秒超时重试 
+    v4dq=$( (curl -s4m2 -k https://ip.fm 2>/dev/null | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/') || (wget -4 -qO- --tries=2 https://ip.fm 2>/dev/null | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/') )
+    v6dq=$( (curl -s6m2 -k https://ip.fm 2>/dev/null | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/') || (wget -6 -qO- --tries=2 https://ip.fm 2>/dev/null | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/') )
 
     # 第三步：根据连通性设置 vps 的 IPv4 和 IPv6 地址以及位置
     if [ -z "$v4" ]; then
