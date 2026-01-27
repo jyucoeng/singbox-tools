@@ -488,7 +488,6 @@ EOF
   if command -v agsb >/dev/null 2>&1; then
     echo ""
     green " 已创建快捷命令：agsb（$(command -v agsb)）"
-    echo ""
   else
     yellow "❗ 已创建 wrapper/软链接，但当前 PATH 未命中 agsb"
     yellow "👉 你仍可直接运行："
@@ -1312,7 +1311,6 @@ EOF
             systemctl enable sb; 
             systemctl start sb
             echo ""
-            echo ""
             green "✅ sb 服务已启动,并开启开机自启服务（systemd）"
         elif command -v rc-service >/dev/null 2>&1 && [ "$EUID" -eq 0 ]; then
             debug_log "【调试】sbbout：使用 openrc 管理/启动 sb 服务"
@@ -1329,12 +1327,10 @@ EOF
             rc-update add sing-box default;
             rc-service sing-box start
             echo "" 
-            echo ""
             green "✅ sb 服务已启动,并开启开机自启服务（openrc）"
         else
             debug_log "【调试】sbbout：使用 nohup 模式运行 sb 服务"
             nohup "$HOME/agsb/sing-box" run -c "$HOME/agsb/sb.json" >/dev/null 2>&1 &
-            echo ""
             echo ""
             green "✅  sb 服务已启动, 使用 nohup 模式运行"
         fi
@@ -1457,7 +1453,6 @@ start_nginx_service() {
         systemctl enable nginx >/dev/null 2>&1
         systemctl restart nginx >/dev/null 2>&1 || systemctl start nginx >/dev/null 2>&1
         echo ""
-        echo ""
         green "✅ Nginx 服务已启动,并开启开机自启服务（systemd）"
         return 0
     fi
@@ -1467,7 +1462,6 @@ start_nginx_service() {
         debug_log "【调试】start_nginx_service：使用 openrc 管理 Nginx 服务"
         rc-update add nginx default >/dev/null 2>&1
         rc-service nginx restart >/dev/null 2>&1 || rc-service nginx start >/dev/null 2>&1
-        echo ""
         echo ""  
         green "✅ Nginx 服务已启动,并开启开机自启服务（openrc）"
         return 0
@@ -1477,7 +1471,6 @@ start_nginx_service() {
     # no init
     pkill -15 nginx >/dev/null 2>&1
     nohup nginx >/dev/null 2>&1 &
-    echo ""
     echo ""
     green "✅ Nginx 服务已启动, 使用 nohup 模式运行"
     return 0
@@ -1663,9 +1656,7 @@ EOF
     systemctl enable argo
     systemctl start argo
     echo ""
-    echo ""
     green "✅ Argo 服务已启动并成功设置开机自启动（systemd）"
-    echo ""
     echo ""
 }
 
@@ -1899,9 +1890,7 @@ post_install_finalize_legacy() {
     # 5) 输出结果
     if command -v agsb >/dev/null 2>&1; then
       echo ""
-      echo ""
       green "✅ 已创建快捷命令：agsb（$(command -v agsb)）"
-      echo ""
     else
       yellow "❗ 已下载脚本到：$script_path"
       yellow "❗ 但当前系统 PATH 未命中 agsb：你可用 $script_path 直接运行"
