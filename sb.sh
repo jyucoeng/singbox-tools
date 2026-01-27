@@ -2047,9 +2047,24 @@ show_sub_url() {
 
   [ -z "$sub_uuid" ] && return 0
 
-  # 固定 Argo（JSON 或 Token）
-  if [ -n "${ARGO_DOMAIN}" ] && [ -n "${ARGO_AUTH}" ]; then
-    echo "https://${ARGO_DOMAIN}/sub/${sub_uuid}"
+
+  local argodomain=$(cat "$HOME/agsb/sbargoym.log" 2>/dev/null)
+
+  local need_argo_flag=false
+  vlvm=$(cat $HOME/agsb/vlvm 2>/dev/null);
+  # vlvm不为空，则代表一定有argo  
+  if [ -n "$vlvm" ]; then
+    need_argo_flag=true
+  fi
+ 
+    # 当 need_argo_flag 为 true 且 argodomain 为空且 argo.log 存在时
+    if $need_argo_flag && [ -z "$argodomain" ] && [ -s "$HOME/agsb/argo.log" ]; then
+        argodomain=$(grep -aoE '[a-zA-Z0-9.-]+trycloudflare\.com' "$HOME/agsb/argo.log" 2>/dev/null | tail -n1)
+    fi
+  
+  # 当argodomain 不为空时
+  if [ -n "$argodomain" ]; then
+    echo "https://${argodomain}/sub/${sub_uuid}"
     return 0
   fi
 
@@ -2062,11 +2077,6 @@ show_sub_url() {
     server_ip=$(update_server_ip "$server_ip" "$out_ip")
     server_ip=$(add_ipv6_brackets "$server_ip")  # 确保 IPv6 地址加上中括号
   fi
-
-  # IPv6 加中括号
-  # if echo "$server_ip" | grep -q ':' && ! echo "$server_ip" | grep -q '^\['; then
-  #   server_ip="[$server_ip]"
-  # fi
 
   echo "http://${server_ip}:${port}/sub/${sub_uuid}"
 }
