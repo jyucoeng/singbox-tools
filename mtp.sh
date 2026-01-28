@@ -28,6 +28,7 @@ export IP_MODE="${IP_MODE:-v4}"
 
 export INSTALL_MODE="${INSTALL_MODE:-go}"
 export DEBUG_FLAG=${DEBUG_FLAG:-'0'}; 
+DEFAULT_DOMAIN="www.microsoft.com"
 
 INTERACTIVE_FLAG=1
 
@@ -170,40 +171,65 @@ check_sys() {
         PACKAGE_MANAGER="apt"
         INIT_SYSTEM="systemd"
     elif [[ "$OS" == "centos" || "$OS" == "rhel" ]]; then
-        PACKAGE_MANAGER="yum"
+        if command -v dnf >/dev/null 2>&1; then
+            PACKAGE_MANAGER="dnf"
+        else
+            PACKAGE_MANAGER="yum"
+        fi
         INIT_SYSTEM="systemd"
     else
         echo -e "${RED}不支持的系统: $OS${PLAIN}"
         exit 1
     fi
+
+    # Fallback if OS is not detected
+    if [ -z "$OS" ]; then
+        echo -e "${RED}无法检测操作系统，请检查是否为标准Linux发行版.${PLAIN}"
+        exit 1
+    fi
 }
+
 
 install_base_deps() {
     echo -e "${BLUE}正在安装基础依赖...${PLAIN}"
-    
-    # Check if dependencies are already installed and only install if missing
-    install_pkg_if_missing() {
-        if ! command -v "$1" &> /dev/null; then
-            echo -e "${GREEN}$1 没有安装，正在安装...${PLAIN}"
+
+    # List of required dependencies
+    REQUIRED_DEPS=("curl" "wget" "tar" "ca-certificates" "openssl" "bash")
+
+    # Temporary array to store missing dependencies
+    MISSING_DEPS=()
+
+    # Check and install dependencies
+    for dep in "${REQUIRED_DEPS[@]}"; do
+        if ! command -v "$dep" &> /dev/null; then
+            MISSING_DEPS+=("$dep")  # Add missing dependency to the array
+            echo -e "${YELLOW}$dep 没有安装，正在安装...${PLAIN}"
+            # Install using appropriate package manager
             if [[ "$PACKAGE_MANAGER" == "apk" ]]; then
-                apk add --no-cache "$1"
+                apk add --no-cache "$dep"
             elif [[ "$PACKAGE_MANAGER" == "apt" ]]; then
-                apt-get install -y "$1"
+                apt-get install -y "$dep"
             elif [[ "$PACKAGE_MANAGER" == "yum" ]]; then
-                yum install -y "$1"
+                yum install -y "$dep"
             fi
         else
-            echo -e "${GREEN}$1 已经安装，跳过安装.${PLAIN}"
+            echo -e "${GREEN}$dep 已经安装，跳过安装.${PLAIN}"
         fi
-    }
+    done
 
-    # Install each required dependency if not already installed
-    install_pkg_if_missing "curl"
-    install_pkg_if_missing "wget"
-    install_pkg_if_missing "tar"
-    install_pkg_if_missing "ca-certificates"
-    install_pkg_if_missing "openssl"
-    install_pkg_if_missing "bash"
+    # Debug log for missing dependencies
+    if [[ ${#MISSING_DEPS[@]} -gt 0 ]]; then
+        debug_log "【调试】 未安装的依赖: ${MISSING_DEPS[*]}"
+    fi
+
+    # Debug log for systemd and OpenRC compatibility
+    if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+        debug_log "【调试】 系统检测：systemd 初始化系统"
+    elif [[ "$INIT_SYSTEM" == "openrc" ]]; then
+        debug_log "【调试】 系统检测：OpenRC 初始化系统"
+    else
+        debug_log "【调试】 系统检测：未知的初始化系统"
+    fi
 }
 
 
@@ -282,7 +308,8 @@ select_ip_mode() {
 
  inputs_noninteractive() {
      # 非交互：只用环境变量 + 自动生成，不要任何 read
-     DOMAIN="${DOMAIN:-www.apple.com}"
+     # DOMAIN 为空，直接用 DEFAULT_DOMAIN作为默认值
+     DOMAIN="${DOMAIN:-$DEFAULT_DOMAIN}"
      IP_MODE="${IP_MODE:-v4}"
  
      # 端口兜底：注意这里才给默认值，不要在文件顶部 export PORT=443
@@ -302,8 +329,8 @@ select_ip_mode() {
 
 inputs_interactive() {
     # 交互：所有 read / 选择都在这里
-    read -p "$(yellow "请输入伪装域名 (默认: ${DOMAIN:-www.apple.com}): ")" tmp
-    DOMAIN="${tmp:-${DOMAIN:-www.apple.com}}"
+    read -p "$(yellow "请输入伪装域名 (默认: ${DOMAIN:-$DEFAULT_DOMAIN}): ")" tmp
+    DOMAIN="${DOMAIN:-$DEFAULT_DOMAIN}"
 
     IP_MODE="$(select_ip_mode)"
 
@@ -405,6 +432,7 @@ download_file() {
         sleep 2  # Wait before retrying
     done
 
+    debug_log "【调试】 下载文件失败，已尝试 $retries 次。请检查网络或文件路径。"
     echo -e "${RED}下载失败，已尝试 $retries 次。请检查网络或文件路径。${PLAIN}"
     return 1
 }
@@ -500,6 +528,8 @@ install_mtp_go() {
         aarch64) MTG_ARCH="arm64" ;;
         *) echo "不支持的架构: $ARCH"; exit 1 ;;
     esac
+
+    debug_log "【调试】 install_mtp_go 架构为: $MTG_ARCH"
     
     mkdir -p "$BIN_DIR"
     TARGET_NAME="mtg-go-${MTG_ARCH}"
@@ -510,6 +540,10 @@ install_mtp_go() {
     elif [ -f "${SCRIPT_DIR}/${TARGET_NAME}" ]; then
         FOUND_PATH="${SCRIPT_DIR}/${TARGET_NAME}"
     fi
+
+    debug_log "【调试】 FOUND_PATH 为: $FOUND_PATH"
+
+    debug_log "【调试】 准备下载或使用本地的 mtg-go 二进制文件"
 
     control_service stop mtg
 
@@ -522,8 +556,11 @@ install_mtp_go() {
     fi
     chmod +x "$BIN_DIR/mtg-go"
 
+    debug_log "【调试】 准备创建服务 (Go)"
     # Proceed with the installation using the variables
     create_service_mtg "$PORT" "$SECRET" "$DOMAIN" "$IP_MODE" "$PORT_V6"
+
+    debug_log "【调试】 准备检查服务状态 (Go)"
     check_service_status mtg
     debug_log "【调试】 show_info_mtg函数开始打印节点信息……"
     yellow "准备打印节点信息，请稍候……"
@@ -593,6 +630,8 @@ create_service_mtg() {
     SECRET=$2
     DOMAIN=$3
     IP_MODE=$4
+
+    debug_log "【调试】 create_service_mtg 参数: PORT=$PORT, SECRET=$SECRET, DOMAIN=$DOMAIN, IP_MODE=$IP_MODE, PORT_V6=$PORT_V6"
     
     HEX_DOMAIN=$(echo -n "$DOMAIN" | od -A n -t x1 | tr -d ' \n')
     FULL_SECRET="ee${SECRET}${HEX_DOMAIN}"
@@ -628,6 +667,8 @@ EOF
         systemctl daemon-reload
         systemctl enable mtg
         systemctl restart mtg
+        debug_log "【调试】 mtg 服务创建完成,已设置为开机自启(systemd)"
+        green "✅ mtg服务创建完成，已设置为开机自启(systemd)"
         
     elif [[ "$INIT_SYSTEM" == "openrc" ]]; then
         cat > /etc/init.d/mtg <<EOF
@@ -652,6 +693,8 @@ EOF
         chmod +x /etc/init.d/mtg
         rc-update add mtg default
         rc-service mtg restart
+        debug_log "【调试】 mtg 服务创建完成,已设置为开机自启(openrc)"
+        green "✅ mtg服务创建完成，已设置为开机自启(openrc)"
     fi
 }
 
@@ -1373,8 +1416,10 @@ non_interactive_install_quick() {
     fi
 
     if [[ "$INSTALL_MODE" == "go" ]]; then
+        debug_log "【调试】 安装模式为 go"
         install_mtp_go
     else
+        debug_log "【调试】 安装模式为 python"
         install_mtp_python
     fi
 
