@@ -2533,6 +2533,8 @@ ipchange() {
     v4=$(echo "$v4v6_result" | awk '{print $1}')
     v6=$(echo "$v4v6_result" | awk '{print $2}')
 
+    debug_log "[调试] IPv4: $v4"
+    debug_log "[调试] IPv6: $v6"
   
     # 第二步：获取 IPv4 和 IPv6 地址的位置信息,2 秒超时重试 
     v4dq=$( (curl -s4m2 -k https://ip.fm 2>/dev/null | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/') || (wget -4 -qO- --tries=2 https://ip.fm 2>/dev/null | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/') )
