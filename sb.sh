@@ -164,6 +164,8 @@ install_deps() {
   # - fuser：用于等待 apt/dpkg 锁（psmisc）
   # - base64/stat/等：coreutils（不同系统差异大时更稳）
   # - xxd：某些本地推导会用到（常见在 vim-common / vim / xxd）
+  debug_log "【调试】install_deps安装函数开始了……"
+  
   local NEED_CMDS=(
     curl wget jq openssl
     iptables
