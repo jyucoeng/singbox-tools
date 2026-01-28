@@ -153,8 +153,7 @@ v6_ok=false
 install_deps() {
   # 只负责安装“脚本运行必需的通用依赖”
   # ❗不要在这里强装 nginx / cloudflared / glibc（按需安装放到对应函数里）
-
-  # 你脚本里常用的基础命令（按需增删）
+    # 你脚本里常用的基础命令（按需增删）
   # - curl/wget：下载
   # - jq：解析 JSON
   # - openssl：证书/派生
@@ -164,6 +163,7 @@ install_deps() {
   # - fuser：用于等待 apt/dpkg 锁（psmisc）
   # - base64/stat/等：coreutils（不同系统差异大时更稳）
   # - xxd：某些本地推导会用到（常见在 vim-common / vim / xxd）
+
   debug_log "【调试】install_deps安装函数开始了……"
 
   local NEED_CMDS=(
@@ -189,37 +189,76 @@ install_deps() {
 
   # 都齐了就直接返回
   if [ "${#missing[@]}" -eq 0 ]; then
+    green "✅ 依赖已齐全，跳过安装"
     return 0
   fi
 
   yellow "👉 正在安装依赖...（缺少：${missing[*]}）"
 
   # ==========================================================
-  # 通用安装器：先批量安装，失败则逐个安装并记录失败包
+  # 通用安装器：逐个安装 + 边装边打印 + 记录失败包
   # 参数：
-  #   $1 label: 仅用于日志显示
+  #   $1 label: apt-get|yum|dnf|apk
   #   $2 cmd_arr_name: 命令前缀数组名（例如 APT_CMD）
   #   $3 pkgs_arr_name: 包数组名（例如 APT_PKGS）
   # 返回：
-  #   0：不代表全成功（因为逐个失败会跳过），最终靠“关键命令兜底检查”
+  #   0：不代表全成功（会跳过失败包），最终靠“关键命令兜底检查”
   # ==========================================================
   install_pkgs_resilient() {
     local label="$1"
     local -n _cmd="$2"
     local -n _pkgs="$3"
 
-    # 先批量（最快）
-    if "${_cmd[@]}" "${_pkgs[@]}"; then
-      return 0
-    fi
-
-    yellow "❗ ${label} 批量安装失败，改为逐个安装并记录失败包..."
-
     local -a failed=()
     local p
+
+    # 安装输出日志（避免刷屏；失败时可回看）
+    local run_log="/tmp/agsb_deps_${label}.log"
+    : > "$run_log" 2>/dev/null || true
+
+    pkg_installed() {
+      local pkg="$1"
+      case "$label" in
+        apt-get)
+          dpkg -s "$pkg" >/dev/null 2>&1
+          ;;
+        yum|dnf)
+          rpm -q "$pkg" >/dev/null 2>&1
+          ;;
+        apk)
+          apk info -e "$pkg" >/dev/null 2>&1
+          ;;
+        *)
+          return 1
+          ;;
+      esac
+    }
+
     for p in "${_pkgs[@]}"; do
-      if ! "${_cmd[@]}" "$p" >/dev/null 2>&1; then
-        failed+=("$p")
+      # 已安装就直接提示
+      if pkg_installed "$p"; then
+        green "✅ 已存在：$p"
+        continue
+      fi
+
+      yellow "👉 安装：$p"
+
+      if [ "${DEBUG_FLAG:-0}" = "1" ]; then
+        # 调试模式：不静默，方便看具体报错
+        if "${_cmd[@]}" "$p"; then
+          debug_log "【调试】 ✅ 安装成功：$p"
+        else
+          red "❌ 安装失败：$p（已跳过）"
+          failed+=("$p")
+        fi
+      else
+        # 默认：静默，把输出写到日志，失败时提示查看
+        if "${_cmd[@]}" "$p" >>"$run_log" 2>&1; then
+          green "✅ 安装成功：$p"
+        else
+          red "❌ 安装失败：$p（已跳过，详见 $run_log）"
+          failed+=("$p")
+        fi
       fi
     done
 
@@ -263,7 +302,6 @@ install_deps() {
             -o Acquire::https::Timeout=15 \
             update || { red "❌ apt-get update 失败（DNS/网络/源不可用）"; return 1; }
 
-    # 命令 -> 包名映射（Debian/Ubuntu）
     local -a APT_PKGS=(
       curl wget jq openssl
       iptables iproute2
@@ -283,6 +321,7 @@ install_deps() {
 
     install_pkgs_resilient "apt-get" APT_CMD APT_PKGS
     green "✅ 依赖安装流程完成（apt-get）"
+
   # =========================
   # RHEL/CentOS (yum) / Fedora (dnf)
   # =========================
@@ -309,13 +348,14 @@ install_deps() {
       install_pkgs_resilient "yum" YUM_CMD YUM_DNF_PKGS
       green "✅ 依赖安装流程完成（yum）"
     fi
+
   # =========================
   # Alpine (apk)
   # =========================
   elif command -v apk >/dev/null 2>&1; then
     # Alpine 关键点：
     # - 不跑 apk update（你之前遇到过 apk update 被 Killed）
-    # - 直接 apk add --no-cache
+    # - 逐个 apk add --no-cache，避免“一个包失败导致全盘退出”
     local -a APK_PKGS=(
       curl wget jq openssl
       iptables ip6tables
@@ -331,7 +371,9 @@ install_deps() {
 
     # xxd：Alpine 有时在 xxd 包或 vim 包里，做成“可选补齐”
     if ! command -v xxd >/dev/null 2>&1; then
+      yellow "👉 尝试补齐 xxd（可选）"
       apk add --no-cache xxd >/dev/null 2>&1 || apk add --no-cache vim >/dev/null 2>&1 || true
+      command -v xxd >/dev/null 2>&1 && green "✅ xxd 已可用" || yellow "❗ xxd 仍不可用（不致命，继续）"
     fi
 
     green "✅ 依赖安装流程完成（apk）"
