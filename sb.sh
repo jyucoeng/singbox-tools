@@ -2489,11 +2489,11 @@ check_ip_connectivity() {
   v4="$(curl -s4 -m"$timeout" --connect-timeout "$timeout" "$v46url" 2>/dev/null \
         || wget -4 -qO- --tries=1 --timeout="$timeout" "$v46url" 2>/dev/null)"
 
-  debug_log "[调试] IPv4: $v4"
+  debug_log "[调试] check_ip_connectivitya函数IPv4: $v4"
   # IPv6
   v6="$(curl -s6 -m"$timeout" --connect-timeout "$timeout" "$v46url" 2>/dev/null \
         || wget -6 -qO- --tries=1 --timeout="$timeout" "$v46url" 2>/dev/null)"
-  debug_log "[调试] IPv6: $v6"
+  debug_log "[调试] check_ip_connectivity函数IPv6: $v6"
   echo "$v4 $v6"
 }
 
@@ -2531,12 +2531,12 @@ update_server_ip_if_valid() {
 ipchange() {
     # 第一步：检查 IPv4 和 IPv6 的连通性
     v4v6_result=$(check_ip_connectivity "$v46url")
-    debug_log "[调试] IPv4 和 IPv6 连通性检查结果: $v4v6_result"
+    debug_log "[调试] ipchange函数，IPv4 和 IPv6 连通性检查结果: $v4v6_result"
     v4=$(echo "$v4v6_result" | awk '{print $1}')
     v6=$(echo "$v4v6_result" | awk '{print $2}')
 
-    debug_log "[调试] IPv4: $v4"
-    debug_log "[调试] IPv6: $v6"
+    debug_log "[调试] ipchange函数，IPv4: $v4"
+    debug_log "[调试] ipchange函数，IPv6: $v6"
   
     # 第二步：获取 IPv4 和 IPv6 地址的位置信息,2 秒超时重试 
     v4dq=$( (curl -s4m2 -k https://ip.fm 2>/dev/null | sed -E 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/') || (wget -4 -qO- --tries=2 https://ip.fm 2>/dev/null | grep '<span class="has-text-grey-light">Location:' | tail -n1 | sed -E 's/.*>Location: <\/span>([^<]+)<.*/\1/') )
