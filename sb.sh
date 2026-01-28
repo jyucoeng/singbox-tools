@@ -2274,40 +2274,6 @@ agsbstatus() {
         echo "Argo：❌ 未运行（已启用 Argo）"
         yellow "❗ 已启用 Argo，但 cloudflared 未运行"
 
-        # ===== DEBUG 开始 =====
-        debug_log "[调试] argo_debug: 开始采集 cloudflared 未运行原因..."
-
-        # 1) 基础信息：二进制与进程
-        debug_log "[调试] argo_debug: cloudflared_bin=$HOME/agsb/cloudflared"
-        debug_log "[调试] argo_debug: pgrep(cloudflared)=$(pgrep -af cloudflared 2>/dev/null | head -n 3 | tr '\n' ';' )"
-        debug_log "[调试] argo_debug: pgrep(agsb/cloudflared)=$(pgrep -af "$HOME/agsb/cloudflared" 2>/dev/null | head -n 3 | tr '\n' ';' )"
-
-    # 2) token/域名/关键落盘文件是否存在（按你脚本实际文件名再补）
-        debug_log "[调试] argo_debug: vlvm(file)='$(cat "$HOME/agsb/vlvm" 2>/dev/null | tr -d '\r\n')'"
-        debug_log "[调试] argo_debug: argo_domain(file)='$(cat "$HOME/agsb/argo_domain" 2>/dev/null | tr -d '\r\n')'"
-        debug_log "[调试] argo_debug: argo_auth(file)='$(cat "$HOME/agsb/argo_auth" 2>/dev/null | tr -d '\r\n' | sed 's/./*/g')'"
-
-    # 3) 最近日志（Alpine 常见 /var/log/messages）
-        if [ -f /var/log/messages ]; then
-           debug_log "[调试] argo_debug: /var/log/messages 最近 cloudflared 记录(20行)："
-          tail -n 300 /var/log/messages 2>/dev/null | grep -i cloudflared | tail -n 20 | while IFS= read -r line; do debug_log "[调试] argo_log: $line"; done
-       fi
-
-      # 4) systemd / openrc 状态（有哪个就打哪个）
-      if command -v systemctl >/dev/null 2>&1; then
-        debug_log "[调试] argo_debug: systemd units(匹配 cloudflared/argo)：$(systemctl list-unit-files 2>/dev/null | grep -Ei 'cloudflared|argo' | head -n 5 | tr '\n' ';')"
-        debug_log "[调试] argo_debug: systemctl status cloudflared："
-        systemctl status cloudflared --no-pager 2>/dev/null | head -n 25 | while IFS= read -r line; do debug_log "[调试] argo_sd: $line"; done
-        debug_log "[调试] argo_debug: journalctl -u cloudflared(50行)："
-        journalctl -u cloudflared -n 50 --no-pager 2>/dev/null | while IFS= read -r line; do debug_log "[调试] argo_jr: $line"; done
-      elif command -v rc-service >/dev/null 2>&1; then
-        debug_log "[调试] argo_debug: rc-service cloudflared status：$(rc-service cloudflared status 2>/dev/null | tr '\n' ';')"
-        debug_log "[调试] argo_debug: rc-service argo status：$(rc-service argo status 2>/dev/null | tr '\n' ';')"
-      fi
-
-        debug_log "[调试] argo_debug: 采集完成。"
-       # ===== DEBUG 结束 =====
-
     fi
   fi
 
