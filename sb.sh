@@ -165,7 +165,7 @@ install_deps() {
   # - base64/stat/等：coreutils（不同系统差异大时更稳）
   # - xxd：某些本地推导会用到（常见在 vim-common / vim / xxd）
   debug_log "【调试】install_deps安装函数开始了……"
-  
+
   local NEED_CMDS=(
     curl wget jq openssl
     iptables
@@ -1242,7 +1242,8 @@ gen_self_signed_cert() {
 
 # Install and configure Sing-box
 installsb(){
-    echo; echo "=========启用Sing-box内核========="
+    echo; 
+    echo "=========开始下载/安装Sing-box内核========="
 
     if [ ! -e "$HOME/agsb/sing-box" ]; then 
         debug_log "【调试】installsb：Sing-box 不存在，开始下载/安装"
@@ -2840,14 +2841,17 @@ argorestart(){
 
 
 install_step(){
-  echo "VPS系统：$op"; 
+    echo "VPS系统：$op"; 
     echo "CPU架构：$cpu"; 
     echo "agsb脚本开始安装/更新…………" && sleep 1
 
     # 获取操作系统名称
     os_name=$(awk -F= '/^NAME/{print $2}' /etc/os-release)
 
+    debug_log "【调试】开始安装各种乱七八糟的依赖"
     install_deps
+
+    debug_log "【调试】安装各种乱七八糟的依赖完成"
 
     if command -v iptables >/dev/null 2>&1; then
     setenforce 0 >/dev/null 2>&1
