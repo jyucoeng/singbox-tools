@@ -247,13 +247,27 @@ get_public_ip() {
     echo "$IPV4"  # Return the IP address
 }
 
+get_public_ip() {
+    # 超时2秒，重试2次
+    timeout=2        # 超时时间2秒
+    retries=2        # 重试次数2次
+
+    start_time=$(date +%s)  # Start timing
+    IPV4=$(curl -s4 --max-time $timeout --retry $retries https://ifconfig.me || curl -s4 --max-time $timeout --retry $retries https://api.ip.sb/ip)
+    end_time=$(date +%s)    # End timing
+    elapsed_time=$((end_time - start_time))
+    debug_log "获取IPv4地址花费时间: $elapsed_time 秒"
+    
+    echo "$IPV4"  # Return the IP address
+}
+
 get_public_ipv6() {
     # 超时2秒，重试2次
     timeout=2        # 超时时间2秒
     retries=2        # 重试次数2次
 
     start_time=$(date +%s)  # Start timing
-    IPV6=$(curl -s6 --max-time $timeout --retry $retries -A Mozilla https://api.ip.sb/ip || curl -s6 --max-time $timeout --retry $retries -A Mozilla https://ipinfo.io/ip)
+    IPV6=$(curl -s6 --max-time $timeout --retry $retries https://ifconfig.me || curl -s6 --max-time $timeout --retry $retries https://api.ip.sb/ip)
     end_time=$(date +%s)    # End timing
     elapsed_time=$((end_time - start_time))
     debug_log "获取IPv6地址花费时间: $elapsed_time 秒"
@@ -261,28 +275,6 @@ get_public_ipv6() {
     echo "$IPV6"  # Return the IP address
 }
 
-
-get_public_ipv6() {
-        # 超时2秒，重试2次
-    timeout=2        # 超时时间2秒
-    retries=2        # 重试次数2次
-
-    # 使用 curl 命令获取 IP，增加重试和超时设置
-    #curl -s6 --max-time $timeout --retry $retries -A Mozilla https://api.ip.sb/ip || curl -s6 --max-time $timeout --retry $retries -A Mozilla https://ipinfo.io/ip
-    
-      # 超时2秒，重试2次
-    timeout=2        # 超时时间2秒
-    retries=2        # 重试次数2次
-
-    start_time=$(date +%s)  # Start timing
-    IPV6=$(curl -s6 --max-time $timeout --retry $retries -A Mozilla https://api.ip.sb/ip || curl -s6 --max-time $timeout --retry $retries -A Mozilla https://ipinfo.io/ip)
-    end_time=$(date +%s)    # End timing
-    elapsed_time=$((end_time - start_time))
-    debug_log "获取IPv6地址花费时间: $elapsed_time 秒"
-    
-    echo "$IPV6"  # Return the IP address
-
-}
 
 generate_secret() {
     head -c 32 /dev/urandom | od -A n -t x1 | tr -d ' \n'
