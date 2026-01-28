@@ -2548,12 +2548,21 @@ check_ip_connectivity() {
   v4="$(curl -s4 -m"$timeout" --connect-timeout "$timeout" "$v46url" 2>/dev/null \
         || wget -4 -qO- --tries=1 --timeout="$timeout" "$v46url" 2>/dev/null)"
 
-  debug_log "[调试] check_ip_connectivitya函数IPv4: $v4"
+  debug_log "[调试] check_ip_connectivity函数IPv4: $v4"
   # IPv6
   v6="$(curl -s6 -m"$timeout" --connect-timeout "$timeout" "$v46url" 2>/dev/null \
         || wget -6 -qO- --tries=1 --timeout="$timeout" "$v46url" 2>/dev/null)"
   debug_log "[调试] check_ip_connectivity函数IPv6: $v6"
-  echo "$v4 $v6"
+  
+  # 去掉换行（curl/wget 往往带 \n）
+  v4_res="$(printf '%s' "$v4" | tr -d '\r\n')"
+  v6_res="$(printf '%s' "$v6" | tr -d '\r\n')"
+  #v4和v6中间用 | 分隔然后返回
+  local result="$v4_res|$v6_res"
+
+  debug_log "[调试] check_ip_connectivity函数返回值: $result"
+  echo "$result"
+
 }
 
 # 从 IP 服务中提取位置
@@ -2594,9 +2603,13 @@ ipchange() {
 
   debug_log "[调试] ipchange函数，拆分v4v6_result操作"
    # 兼容输出中有换行/多空格：先把换行压成空格再拆分
-   set -- $(printf '%s' "$v4v6_result" | tr '\n' ' ')
-   v4="${1:-}"
-   v6="${2:-}"
+    # v4v6_result 可能带换行，先压成一行再 read
+IFS='|' read -r v4 v6 <<EOF
+$(printf '%s' "$v4v6_result" | tr -d '\r\n')
+EOF
+
+  v4="${v4:-}"
+  v6="${v6:-}"
 
   debug_log "[调试] ipchange函数，IPv4: $v4"
   debug_log "[调试] ipchange函数，IPv6: $v6"
