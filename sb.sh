@@ -676,24 +676,31 @@ install_nginx_pkg() {
   if command -v apt-get >/dev/null 2>&1; then
     export DEBIAN_FRONTEND=noninteractive
 
-    # 1) 等待 apt/dpkg 锁（默认最多等 180s，可用 APT_LOCK_WAIT 覆盖）
-    local max_wait="${APT_LOCK_WAIT:-180}"
+    # 1) 等待 apt/dpkg 锁（默认最多等 20s，可用 APT_LOCK_WAIT 覆盖）
+    local max_wait="${APT_LOCK_WAIT:-20}"
     local waited=0
     while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
           fuser /var/lib/dpkg/lock >/dev/null 2>&1; do
       waited=$((waited + 1))
+
+      # 每 5 秒提示一次，避免用户觉得“卡住没反应”
+      if [ $((waited % 5)) -eq 0 ]; then
+        yellow "⏳ 等待 apt/dpkg 锁释放... (${waited}/${max_wait}s)"
+      fi
+
       if [ "$waited" -ge "$max_wait" ]; then
-        red "❌ apt/dpkg 正在被占用超过 ${max_wait} 秒（可能是 apt-daily / unattended-upgrades）"
-        yellow "👉 你可以稍后再试，或临时增大等待：APT_LOCK_WAIT=600"
+        red "❌ 等待 apt/dpkg 锁超时：${max_wait}s"
+        yellow "❗ 常见原因：apt-daily / unattended-upgrades 在后台更新"
+        yellow "👉 解决：稍后重试，或临时加长：APT_LOCK_WAIT=180"
+        # 给个线索（不杀进程，只展示）
+        ps aux 2>/dev/null | grep -E 'apt|dpkg|unattended|apt-daily' | grep -v grep | head -n 10 || true
         return 1
       fi
+
       sleep 1
     done
 
-    # 2) 尝试修复 dpkg 中断（不一定每次都需要，但能显著减少“莫名其妙失败”）
-    if [ -f /var/lib/dpkg/lock ] || [ -f /var/lib/dpkg/lock-frontend ]; then
-      : # 锁文件存在不代表被占用，上面已 fuser 检查过
-    fi
+    # 2) 尝试修复 dpkg 中断（减少“莫名其妙失败”）
     dpkg --configure -a >>"$log" 2>&1 || true
     apt-get -f install -y >>"$log" 2>&1 || true
 
@@ -718,7 +725,7 @@ install_nginx_pkg() {
     fi
 
   elif command -v apt >/dev/null 2>&1; then
-    # 建议脚本里尽量用 apt-get（apt 更偏交互），这里留个兜底
+    # 兜底：尽量用 apt-get，但这里保留 apt
     export DEBIAN_FRONTEND=noninteractive
     if ! apt update >>"$log" 2>&1 || ! apt install -y nginx >>"$log" 2>&1; then
       red "❌ Nginx 安装失败，详见：$log"
@@ -743,6 +750,7 @@ install_nginx_pkg() {
   green "✅ Nginx 安装完成"
   return 0
 }
+
 
 
 # Check if the given port is in the list of HTTPS CDN ports
