@@ -234,15 +234,33 @@ install_base_deps() {
 
 
 get_public_ip() {
-    #curl -s4 https://api.ip.sb/ip -A Mozilla || curl -s4 https://ipinfo.io/ip -A Mozilla
     # 超时2秒，重试2次
     timeout=2        # 超时时间2秒
     retries=2        # 重试次数2次
 
-    # 使用 curl 命令获取 IP，增加重试和超时设置
-    #curl -s4 --max-time $timeout --retry $retries -A Mozilla https://api.ip.sb/ip || curl -s4 --max-time $timeout --retry $retries -A Mozilla https://ipinfo.io/ip
-    curl -s4 https://api.ip.sb/ip -A Mozilla || curl -s4 https://ipinfo.io/ip -A Mozilla
+    start_time=$(date +%s)  # Start timing
+    IPV4=$(curl -s4 --max-time $timeout --retry $retries -A Mozilla https://api.ip.sb/ip || curl -s4 --max-time $timeout --retry $retries -A Mozilla https://ipinfo.io/ip)
+    end_time=$(date +%s)    # End timing
+    elapsed_time=$((end_time - start_time))
+    debug_log "获取IPv4地址花费时间: $elapsed_time 秒"
+    
+    echo "$IPV4"  # Return the IP address
 }
+
+get_public_ipv6() {
+    # 超时2秒，重试2次
+    timeout=2        # 超时时间2秒
+    retries=2        # 重试次数2次
+
+    start_time=$(date +%s)  # Start timing
+    IPV6=$(curl -s6 --max-time $timeout --retry $retries -A Mozilla https://api.ip.sb/ip || curl -s6 --max-time $timeout --retry $retries -A Mozilla https://ipinfo.io/ip)
+    end_time=$(date +%s)    # End timing
+    elapsed_time=$((end_time - start_time))
+    debug_log "获取IPv6地址花费时间: $elapsed_time 秒"
+    
+    echo "$IPV6"  # Return the IP address
+}
+
 
 get_public_ipv6() {
         # 超时2秒，重试2次
@@ -251,7 +269,18 @@ get_public_ipv6() {
 
     # 使用 curl 命令获取 IP，增加重试和超时设置
     #curl -s6 --max-time $timeout --retry $retries -A Mozilla https://api.ip.sb/ip || curl -s6 --max-time $timeout --retry $retries -A Mozilla https://ipinfo.io/ip
-    curl -s6 https://api.ip.sb/ip -A Mozilla || curl -s6 https://ipinfo.io/ip -A Mozilla
+    
+      # 超时2秒，重试2次
+    timeout=2        # 超时时间2秒
+    retries=2        # 重试次数2次
+
+    start_time=$(date +%s)  # Start timing
+    IPV6=$(curl -s6 --max-time $timeout --retry $retries -A Mozilla https://api.ip.sb/ip || curl -s6 --max-time $timeout --retry $retries -A Mozilla https://ipinfo.io/ip)
+    end_time=$(date +%s)    # End timing
+    elapsed_time=$((end_time - start_time))
+    debug_log "获取IPv6地址花费时间: $elapsed_time 秒"
+    
+    echo "$IPV6"  # Return the IP address
 
 }
 
