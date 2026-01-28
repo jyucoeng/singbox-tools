@@ -214,8 +214,8 @@ get_public_ip() {
     retries=2        # 重试次数2次
 
     # 使用 curl 命令获取 IP，增加重试和超时设置
-    curl -s4 --max-time $timeout --retry $retries -A Mozilla https://api.ip.sb/ip || curl -s4 --max-time $timeout --retry $retries -A Mozilla https://ipinfo.io/ip
-
+    #curl -s4 --max-time $timeout --retry $retries -A Mozilla https://api.ip.sb/ip || curl -s4 --max-time $timeout --retry $retries -A Mozilla https://ipinfo.io/ip
+    curl -s4 https://api.ip.sb/ip -A Mozilla || curl -s4 https://ipinfo.io/ip -A Mozilla
 }
 
 get_public_ipv6() {
@@ -224,7 +224,8 @@ get_public_ipv6() {
     retries=2        # 重试次数2次
 
     # 使用 curl 命令获取 IP，增加重试和超时设置
-    curl -s6 --max-time $timeout --retry $retries -A Mozilla https://api.ip.sb/ip || curl -s6 --max-time $timeout --retry $retries -A Mozilla https://ipinfo.io/ip
+    #curl -s6 --max-time $timeout --retry $retries -A Mozilla https://api.ip.sb/ip || curl -s6 --max-time $timeout --retry $retries -A Mozilla https://ipinfo.io/ip
+    curl -s6 https://api.ip.sb/ip -A Mozilla || curl -s6 https://ipinfo.io/ip -A Mozilla
 
 }
 
@@ -485,6 +486,8 @@ EOF
     # Proceed with the installation using the variables
     create_service_python 1
     check_service_status mtp-python
+    debug_log "【调试】 show_info_python函数开始打印节点信息……"
+    yellow "准备打印节点信息，请稍候……"
     show_info_python "$PORT" "$SECRET" "$DOMAIN" "$IP_MODE" "$PORT_V6"
 }
 
@@ -522,6 +525,8 @@ install_mtp_go() {
     # Proceed with the installation using the variables
     create_service_mtg "$PORT" "$SECRET" "$DOMAIN" "$IP_MODE" "$PORT_V6"
     check_service_status mtg
+    debug_log "【调试】 show_info_mtg函数开始打印节点信息……"
+    yellow "准备打印节点信息，请稍候……"
     show_info_mtg "$PORT" "$SECRET" "$DOMAIN" "$IP_MODE" "$PORT_V6"
 }
 
