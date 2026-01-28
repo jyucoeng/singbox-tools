@@ -15,14 +15,14 @@ PORT=31009 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-to
 ### 高级用法
 
 ```
-PORT=32000 DOMAIN='你的伪装域名' IP_MODE='v4/v6/dual' INSTALL_MODE='go/py' SECRET='' PORT_V6='?'   bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp.sh) rep
+PORT=32000 DOMAIN='你的伪装域名,不填默认为www.microsoft.com' IP_MODE='v4/v6/dual' INSTALL_MODE='go/py' SECRET='' PORT_V6='?'   bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp.sh) rep
 ```
 
 ## 环境变量说明
 
 #### 1️⃣、  PORT= 端口号 （填写了就是非交互式安装，不填就是为菜单式安装，）
 
-#### 2️⃣、 DOMAIN='www.apple.com' （伪装域名，不填就默认为 www.apple.com ）
+#### 2️⃣、 DOMAIN='www.microsoft.com' （伪装域名，不填就默认为 www.microsoft.com ）
 
 #### 3️⃣、  IP_MODE='?' 
 
@@ -45,7 +45,7 @@ PORT=32000 DOMAIN='你的伪装域名' IP_MODE='v4/v6/dual' INSTALL_MODE='go/py'
 #### 6️⃣、 PORT_V6='?'  (当IP_MODE='dual'时，PORT_V6才会启用「而且是python模式下才有用-只有pyhton版的dual才支持分端口，go版，这个参数直接默认等于v4端口」，IP_MODE='dual'，如果PORT_V6不填，则 PORT_V6会取PORT的值)
 
 
-#### 7️⃣、 脚本后边的rep、list参数代表覆盖安装和查看节点信息，什么都不跟的时候代表默认安装。
+#### 7️⃣、 脚本后边的rep、list参数代表覆盖安装和查看节点信息，ins参数或者什么都不跟的时候代表默认安装。
 
 
 ### 2、卸载已安装的服务：
@@ -69,7 +69,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 ```
 ### 6、重启已安装的服务：
 ```
- bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp.sh) stop
+ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp.sh) restart
 ```
 
 

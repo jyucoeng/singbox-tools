@@ -1491,6 +1491,9 @@ main() {
             restart)
                 control_service restart
                 ;;
+            ins)
+                install_entry
+                ;;
             *)
                 echo -e "${RED}未知命令: $1。有效命令: del, list, start, stop,restart${PLAIN}"
                 exit 1
