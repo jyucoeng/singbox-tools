@@ -208,11 +208,24 @@ install_base_deps() {
 
 
 get_public_ip() {
-    curl -s4 -m2 --connect-timeout 2 -k "$v46url" 2>/dev/null || wget -4 -qO- --tries=2 --timeout=2 "$v46url" 2>/dev/null
+    #curl -s4 https://api.ip.sb/ip -A Mozilla || curl -s4 https://ipinfo.io/ip -A Mozilla
+    # 超时2秒，重试2次
+    timeout=2        # 超时时间2秒
+    retries=2        # 重试次数2次
+
+    # 使用 curl 命令获取 IP，增加重试和超时设置
+    curl -s4 --max-time $timeout --retry $retries -A Mozilla https://api.ip.sb/ip || curl -s4 --max-time $timeout --retry $retries -A Mozilla https://ipinfo.io/ip
+
 }
 
 get_public_ipv6() {
-    curl -s6 -m2 --connect-timeout 2 -k "$v46url" 2>/dev/null || wget -6 -qO- --tries=2 --timeout=2 "$v46url" 2>/dev/null
+        # 超时2秒，重试2次
+    timeout=2        # 超时时间2秒
+    retries=2        # 重试次数2次
+
+    # 使用 curl 命令获取 IP，增加重试和超时设置
+    curl -s6 --max-time $timeout --retry $retries -A Mozilla https://api.ip.sb/ip || curl -s6 --max-time $timeout --retry $retries -A Mozilla https://ipinfo.io/ip
+
 }
 
 generate_secret() {
