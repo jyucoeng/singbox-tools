@@ -1828,7 +1828,7 @@ post_install_finalize_legacy() {
 
   # 只要 sing-box 或 cloudflared 进程存在，认为安装启动成功
   if pgrep -f "$HOME/agsb/sing-box" >/dev/null 2>&1 || pgrep -f "$HOME/agsb/cloudflared" >/dev/null 2>&1; then
-    green "✅ 安装完成：已检测到 sing-box/cloudflared 正在运行"
+    white "✅ 安装完成：已检测到 sing-box/cloudflared 正在运行"
     # ❗ legacy 收尾：这里只做检测与提示，不做 agsb 快捷方式/下载主脚本/写 PATH/建软链
     return 0
   fi
