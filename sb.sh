@@ -2489,10 +2489,11 @@ check_ip_connectivity() {
   v4="$(curl -s4 -m"$timeout" --connect-timeout "$timeout" "$v46url" 2>/dev/null \
         || wget -4 -qO- --tries=1 --timeout="$timeout" "$v46url" 2>/dev/null)"
 
+  debug_log "[调试] IPv4: $v4"
   # IPv6
   v6="$(curl -s6 -m"$timeout" --connect-timeout "$timeout" "$v46url" 2>/dev/null \
         || wget -6 -qO- --tries=1 --timeout="$timeout" "$v46url" 2>/dev/null)"
-
+  debug_log "[调试] IPv6: $v6"
   echo "$v4 $v6"
 }
 
@@ -2530,6 +2531,7 @@ update_server_ip_if_valid() {
 ipchange() {
     # 第一步：检查 IPv4 和 IPv6 的连通性
     v4v6_result=$(check_ip_connectivity "$v46url")
+    debug_log "[调试] IPv4 和 IPv6 连通性检查结果: $v4v6_result"
     v4=$(echo "$v4v6_result" | awk '{print $1}')
     v6=$(echo "$v4v6_result" | awk '{print $2}')
 
