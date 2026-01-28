@@ -31,6 +31,19 @@ export INSTALL_MODE="${INSTALL_MODE:-go}"
 INTERACTIVE_FLAG=1
 
 
+has_systemd() {
+  command -v systemctl >/dev/null 2>&1 || return 1
+  [ -d /run/systemd/system ] || return 1
+  # 可选：更严格，确保 PID1 就是 systemd（不想太严格可删掉这一行）
+  [ "$(ps -p 1 -o comm= 2>/dev/null | tr -d '[:space:]')" = "systemd" ] || return 1
+  return 0
+}
+
+debug_log() {
+  [ "${DEBUG_FLAG:-0}" = "1" ] && echo -e "$*" >&2
+}
+
+
 # 全局输出变量：
 # - SUGGESTED_PORTS: "30001 30002 30003"（空则表示没找到列表，只有随机推荐）
 # - SUGGESTED_RADIUS: 5 / 20 / random / invalid
@@ -624,15 +637,21 @@ EOF
 
 check_service_status() {
     local service=$1
+    debug_log "【调试】 检查服务状态：$service"
     sleep 2
-    if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+     if has_systemd; then
+        debug_log "【调试】 使用 systemd 检查服务状态：$service"
+
         if systemctl is-active --quiet "$service"; then
             echo -e "${GREEN}服务已启动: $service${PLAIN}"
         else
             echo -e "${RED}服务启动失败: $service${PLAIN}"
             journalctl -u "$service" --no-pager -n 20
         fi
-    else
+    fi    
+
+    if command -v rc-service >/dev/null 2>&1; then
+        debug_log "【调试】 使用 openrc 检查服务状态：$service"
         if rc-service "$service" status | grep -q "started"; then
             echo -e "${GREEN}服务已启动: $service${PLAIN}"
         else
@@ -716,7 +735,11 @@ modify_mtg() {
     if echo "$CMD_LINE" | grep -q "prefer-ipv6"; then CUR_IP_MODE="dual"; fi
     
     create_service_mtg "$NEW_PORT" "$NEW_SECRET" "$NEW_DOMAIN" "$CUR_IP_MODE"
+
+     debug_log "【调试】 检查服务状态……"
+
     check_service_status mtg
+    debug_log "【调试】 show_info_mtg函数开始打印节点信息……"
     show_info_mtg "$NEW_PORT" "$NEW_SECRET" "$NEW_DOMAIN" "$CUR_IP_MODE"
 }
 
@@ -1106,7 +1129,7 @@ exit_script() {
 menu() {
     check_sys
     clear
-    AUTHOR
+    
     echo -e "=================================="
     echo -e "     MTProxy 一键部署管理脚本"
     echo -e "     Author: ${GREEN}$SCRIPT_AUTHOR${PLAIN}"
