@@ -71,7 +71,34 @@ any_proto_enabled() {
     is_yes "$vlr" || is_yes "$vmp" || is_yes "$trp" || is_yes "$hyp" || is_yes "$tup"
 }
 
-need_argo() { [ "$argo" = "vmpt" ] || [ "$argo" = "trpt" ]; }
+need_argo() {
+  local argo_needed=0      # 0=false, 1=true（用数字更直观）
+  local argo_src=""        # debug：值来源
+  local argo_val=""        # debug：实际拿来判断的值
+
+  if [ -n "${argo:-}" ]; then
+    argo_src="env"
+    argo_val="$argo"
+    if [ "$argo_val" = "vmpt" ] || [ "$argo_val" = "trpt" ]; then
+      argo_needed=1
+    fi
+  elif [ -s "$HOME/agsb/vlvm" ]; then
+    argo_src="file"
+    argo_val="$(cat "$HOME/agsb/vlvm" 2>/dev/null | tr -d '\r\n')"
+    if [ "$argo_val" = "Vmess" ] || [ "$argo_val" = "Trojan" ]; then
+      argo_needed=1
+    fi
+  else
+    argo_src="none"
+    argo_val=""
+    argo_needed=0
+  fi
+
+  debug_log "[调试] need_argo: src=$argo_src val='$argo_val' -> argo_needed=$argo_needed"
+
+  [ "$argo_needed" -eq 1 ]
+}
+
 
 # 已安装/未安装的参数规则检查
 if pgrep -f 'agsb/sing-box' >/dev/null 2>&1; then
