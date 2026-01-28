@@ -95,140 +95,6 @@ has_systemd() {
 }
 
 
-install_deps() {
-
-
-    local RED="\033[31m"
-    local GREEN="\033[32m"
-    local YELLOW="\033[33m"
-    local RESET="\033[0m"
-
-    # 等待 apt/dpkg 锁的最大秒数（默认 180 秒，可通过环境变量覆盖）
-    local max_wait="${APT_LOCK_WAIT:-180}"
-
-    echo -e "${YELLOW}正在安装依赖...${RESET}"
-
-    # =========================
-    # 依赖包（❗注意：nginx不要在这里暴力安装，因为不是所有场景都要安装nginx的）
-    # =========================
-    # 公共依赖（各发行版基本一致）
-    local COMMON_PKGS=(
-        curl 
-        wget 
-        jq 
-        openssl
-        iptables 
-        bc 
-        lsof
-        psmisc
-        
-    )
-
-    # Debian/Ubuntu
-    local APT_PKGS=(
-        "${COMMON_PKGS[@]}"
-        uuid-runtime
-        cron
-        netfilter-persistent
-    )
-
-    # CentOS/RHEL/Fedora（yum/dnf）
-    local YUM_DNF_PKGS=(
-        "${COMMON_PKGS[@]}"
-        util-linux
-        cronie
-    )
-
-    # Alpine
-    local APK_PKGS=(
-        "${COMMON_PKGS[@]}"
-        util-linux
-        cronie
-    )
-
-    # =========================
-    # Debian / Ubuntu
-    # =========================
-    if command -v apt-get >/dev/null 2>&1; then
-        export DEBIAN_FRONTEND=noninteractive
-
-        # 等待 apt/dpkg 锁（避免死等）
-        local waited=0
-        if command -v fuser >/dev/null 2>&1; then
-            while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
-                  fuser /var/lib/dpkg/lock >/dev/null 2>&1; do
-                waited=$((waited + 1))
-                if [ "$waited" -ge "$max_wait" ]; then
-                    echo -e "${RED}❌ apt/dpkg 正在被占用超过 ${max_wait} 秒，退出。${RESET}"
-                    echo -e "${YELLOW}可能原因：apt-daily / unattended-upgrades 正在后台运行${RESET}"
-                    echo -e "${YELLOW}你可以尝试：${RESET}"
-                    echo -e "  ${YELLOW}sudo systemctl stop apt-daily.service apt-daily.timer 2>/dev/null${RESET}"
-                    echo -e "  ${YELLOW}sudo systemctl stop unattended-upgrades 2>/dev/null${RESET}"
-                    echo -e "${YELLOW}或者等待后台更新结束后再运行脚本${RESET}"
-                    echo -e "${YELLOW}也可以临时加大等待时间：${RESET}${GREEN}APT_LOCK_WAIT=600 bash sb.sh${RESET}"
-                    exit 1
-                fi
-                sleep 1
-            done
-        else
-            echo -e "${YELLOW}❗ 未检测到 fuser（psmisc），跳过 dpkg 锁检测${RESET}"
-        fi
-
-        echo -e "${YELLOW}正在执行 apt-get update...${RESET}"
-        apt-get -o Acquire::Retries=3 \
-                -o Acquire::http::Timeout=15 \
-                -o Acquire::https::Timeout=15 \
-                update || {
-            echo -e "${RED}❌ apt-get update 失败（可能是 DNS / 网络 / 源不可用）${RESET}"
-            exit 1
-        }
-
-        echo -e "${YELLOW}正在安装依赖包...${RESET}"
-        apt-get -o Acquire::Retries=3 \
-                -o Acquire::http::Timeout=15 \
-                -o Acquire::https::Timeout=15 \
-                install -y "${APT_PKGS[@]}" || {
-            echo -e "${RED}❌ Debian/Ubuntu 依赖安装失败${RESET}"
-            exit 1
-        }
-
-    # =========================
-    # CentOS / RHEL (yum)
-    # =========================
-    elif command -v yum >/dev/null 2>&1; then
-        echo -e "${YELLOW}正在使用 yum 安装依赖...${RESET}"
-        yum install -y "${YUM_DNF_PKGS[@]}" || {
-            echo -e "${RED}❌ CentOS/RHEL 依赖安装失败${RESET}"
-            exit 1
-        }
-
-    # =========================
-    # Fedora / RHEL (dnf)
-    # =========================
-    elif command -v dnf >/dev/null 2>&1; then
-        echo -e "${YELLOW}正在使用 dnf 安装依赖...${RESET}"
-        dnf install -y "${YUM_DNF_PKGS[@]}" || {
-            echo -e "${RED}❌ Fedora/RHEL 依赖安装失败${RESET}"
-            exit 1
-        }
-
-    # =========================
-    # Alpine (apk)
-    # =========================
-    elif command -v apk >/dev/null 2>&1; then
-        echo -e "${YELLOW}正在使用 apk 安装依赖...${RESET}"
-        apk add --no-cache "${APK_PKGS[@]}" || {
-            echo -e "${RED}❌ Alpine 依赖安装失败${RESET}"
-            exit 1
-        }
-
-    else
-        echo -e "${RED}❌ 未检测到支持的包管理器（apt/yum/dnf/apk）${RESET}"
-        exit 1
-    fi
-
-    echo -e "${GREEN}✅ 依赖安装完成${RESET}"
-}
 
 
 # Environment variables for controlling CDN host and SNI values
@@ -283,6 +149,219 @@ CN_BING="www.bing.com"
 
 v4_ok=false
 v6_ok=false
+
+install_deps() {
+  # 只负责安装“脚本运行必需的通用依赖”
+  # ❗不要在这里强装 nginx / cloudflared / glibc（按需安装放到对应函数里）
+
+  # 你脚本里常用的基础命令（按需增删）
+  # - curl/wget：下载
+  # - jq：解析 JSON
+  # - openssl：证书/派生
+  # - iptables：放行端口/保存规则
+  # - ss：端口检测（来自 iproute2）
+  # - lsof：端口占用检测
+  # - fuser：用于等待 apt/dpkg 锁（psmisc）
+  # - base64/stat/等：coreutils（不同系统差异大时更稳）
+  # - xxd：某些本地推导会用到（常见在 vim-common / vim / xxd）
+  local NEED_CMDS=(
+    curl wget jq openssl
+    iptables
+    ss
+    lsof
+    fuser
+    base64
+    xxd
+  )
+
+  # 失败包记录文件
+  local fail_log="$HOME/agsb/deps_failed.log"
+  mkdir -p "$HOME/agsb" 2>/dev/null || true
+
+  # 找出缺的命令
+  local -a missing=()
+  local c
+  for c in "${NEED_CMDS[@]}"; do
+    command -v "$c" >/dev/null 2>&1 || missing+=("$c")
+  done
+
+  # 都齐了就直接返回
+  if [ "${#missing[@]}" -eq 0 ]; then
+    return 0
+  fi
+
+  yellow "👉 正在安装依赖...（缺少：${missing[*]}）"
+
+  # ==========================================================
+  # 通用安装器：先批量安装，失败则逐个安装并记录失败包
+  # 参数：
+  #   $1 label: 仅用于日志显示
+  #   $2 cmd_arr_name: 命令前缀数组名（例如 APT_CMD）
+  #   $3 pkgs_arr_name: 包数组名（例如 APT_PKGS）
+  # 返回：
+  #   0：不代表全成功（因为逐个失败会跳过），最终靠“关键命令兜底检查”
+  # ==========================================================
+  install_pkgs_resilient() {
+    local label="$1"
+    local -n _cmd="$2"
+    local -n _pkgs="$3"
+
+    # 先批量（最快）
+    if "${_cmd[@]}" "${_pkgs[@]}"; then
+      return 0
+    fi
+
+    yellow "❗ ${label} 批量安装失败，改为逐个安装并记录失败包..."
+
+    local -a failed=()
+    local p
+    for p in "${_pkgs[@]}"; do
+      if ! "${_cmd[@]}" "$p" >/dev/null 2>&1; then
+        failed+=("$p")
+      fi
+    done
+
+    if [ "${#failed[@]}" -gt 0 ]; then
+      yellow "❗ 以下包安装失败（已跳过）："
+      yellow "   ${failed[*]}"
+      {
+        echo "----- $(date '+%F %T') ${label} failed pkgs -----"
+        printf '%s\n' "${failed[@]}"
+      } >> "$fail_log" 2>/dev/null || true
+      yellow "📌 失败包已记录到：${fail_log}"
+    fi
+
+    return 0
+  }
+
+  # =========================
+  # Debian/Ubuntu (apt-get)
+  # =========================
+  if command -v apt-get >/dev/null 2>&1; then
+    export DEBIAN_FRONTEND=noninteractive
+
+    # 等待 apt/dpkg 锁（避免死等；默认 180s，可用 APT_LOCK_WAIT 覆盖）
+    local max_wait="${APT_LOCK_WAIT:-180}"
+    local waited=0
+    while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
+          fuser /var/lib/dpkg/lock >/dev/null 2>&1; do
+      waited=$((waited + 1))
+      if [ "$waited" -ge "$max_wait" ]; then
+        red "❌ apt/dpkg 正在被占用超过 ${max_wait} 秒，退出。"
+        yellow "❗ 可能是 apt-daily / unattended-upgrades 在后台更新。"
+        yellow "👉 你可以稍后再试，或临时增大等待时间：APT_LOCK_WAIT=600"
+        return 1
+      fi
+      sleep 1
+    done
+
+    # update 尽量稳一点（重试+超时）
+    apt-get -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=15 \
+            -o Acquire::https::Timeout=15 \
+            update || { red "❌ apt-get update 失败（DNS/网络/源不可用）"; return 1; }
+
+    # 命令 -> 包名映射（Debian/Ubuntu）
+    local -a APT_PKGS=(
+      curl wget jq openssl
+      iptables iproute2
+      lsof
+      psmisc
+      coreutils
+      ca-certificates
+      vim-common   # 提供 xxd（大多数 Debian/Ubuntu）
+    )
+
+    local -a APT_CMD=(
+      apt-get -o Acquire::Retries=3
+              -o Acquire::http::Timeout=15
+              -o Acquire::https::Timeout=15
+              install -y
+    )
+
+    install_pkgs_resilient "apt-get" APT_CMD APT_PKGS
+    green "✅ 依赖安装流程完成（apt-get）"
+  # =========================
+  # RHEL/CentOS (yum) / Fedora (dnf)
+  # =========================
+  elif command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
+    local pm="yum"
+    command -v dnf >/dev/null 2>&1 && pm="dnf"
+
+    local -a YUM_DNF_PKGS=(
+      curl wget jq openssl
+      iptables iproute
+      lsof
+      psmisc
+      coreutils
+      ca-certificates
+      vim-common   # 多数发行版提供 xxd
+    )
+
+    if [ "$pm" = "dnf" ]; then
+      local -a DNF_CMD=(dnf install -y)
+      install_pkgs_resilient "dnf" DNF_CMD YUM_DNF_PKGS
+      green "✅ 依赖安装流程完成（dnf）"
+    else
+      local -a YUM_CMD=(yum install -y)
+      install_pkgs_resilient "yum" YUM_CMD YUM_DNF_PKGS
+      green "✅ 依赖安装流程完成（yum）"
+    fi
+  # =========================
+  # Alpine (apk)
+  # =========================
+  elif command -v apk >/dev/null 2>&1; then
+    # Alpine 关键点：
+    # - 不跑 apk update（你之前遇到过 apk update 被 Killed）
+    # - 直接 apk add --no-cache
+    local -a APK_PKGS=(
+      curl wget jq openssl
+      iptables ip6tables
+      iproute2
+      lsof
+      psmisc
+      coreutils
+      ca-certificates
+    )
+
+    local -a APK_CMD=(apk add --no-cache)
+    install_pkgs_resilient "apk" APK_CMD APK_PKGS
+
+    # xxd：Alpine 有时在 xxd 包或 vim 包里，做成“可选补齐”
+    if ! command -v xxd >/dev/null 2>&1; then
+      apk add --no-cache xxd >/dev/null 2>&1 || apk add --no-cache vim >/dev/null 2>&1 || true
+    fi
+
+    green "✅ 依赖安装流程完成（apk）"
+  else
+    red "❌ 未检测到支持的包管理器（apt-get/yum/dnf/apk）"
+    return 1
+  fi
+
+  # =========================
+  # 关键命令兜底检查：缺了就失败
+  # =========================
+  local -a critical_cmds=(curl jq openssl iptables)
+  local miss=0
+  for c in "${critical_cmds[@]}"; do
+    command -v "$c" >/dev/null 2>&1 || miss=1
+  done
+
+  # 下载工具至少要有一个（curl 或 wget）
+  if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+    miss=1
+  fi
+
+  if [ "$miss" = "1" ]; then
+    red "❌ 关键依赖仍缺失（curl/jq/openssl/iptables 或下载工具）"
+    yellow "📌 你可以查看失败包记录：${fail_log}"
+    yellow "👉 常见原因：源缺失（如 Alpine 缺 community）、网络/DNS、权限不足、低内存被系统杀进程"
+    return 1
+  fi
+
+  return 0
+}
+
 
 #彩虹打印
 gradient() {
