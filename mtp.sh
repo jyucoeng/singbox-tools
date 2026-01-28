@@ -31,6 +31,7 @@ export DEBUG_FLAG=${DEBUG_FLAG:-'0'};
 
 INTERACTIVE_FLAG=1
 
+v46url="https://icanhazip.com"
 
 has_systemd() {
   command -v systemctl >/dev/null 2>&1 || return 1
@@ -207,11 +208,11 @@ install_base_deps() {
 
 
 get_public_ip() {
-    curl -s4 https://api.ip.sb/ip -A Mozilla || curl -s4 https://ipinfo.io/ip -A Mozilla
+    curl -s4 -m2 --connect-timeout 2 -k "$v46url" 2>/dev/null || wget -4 -qO- --tries=2 --timeout=2 "$v46url" 2>/dev/null
 }
 
 get_public_ipv6() {
-    curl -s6 https://api.ip.sb/ip -A Mozilla || curl -s6 https://ifconfig.co/ip -A Mozilla
+    curl -s6 -m2 --connect-timeout 2 -k "$v46url" 2>/dev/null || wget -6 -qO- --tries=2 --timeout=2 "$v46url" 2>/dev/null
 }
 
 generate_secret() {
