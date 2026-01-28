@@ -679,16 +679,16 @@ install_nginx_pkg() {
     # 1) 等待 apt/dpkg 锁（默认最多等 20s，可用 APT_LOCK_WAIT 覆盖）
     local max_wait="${APT_LOCK_WAIT:-20}"
     local waited=0
+
     while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
           fuser /var/lib/dpkg/lock >/dev/null 2>&1; do
       waited=$((waited + 1))
 
-      # 每 5 秒提示一次，避免用户觉得“卡住没反应”
-      if [ $((waited % 5)) -eq 0 ]; then
-        yellow "⏳ 等待 apt/dpkg 锁释放... (${waited}/${max_wait}s)"
-      fi
+      # ✅ 写法B：每秒更新同一行（不刷屏）
+      printf "\r\033[0K\e[1;33m⏳ 等待 apt/dpkg 锁释放... (%s/%ss)\033[0m" "$waited" "$max_wait"
 
       if [ "$waited" -ge "$max_wait" ]; then
+        echo
         red "❌ 等待 apt/dpkg 锁超时：${max_wait}s"
         yellow "❗ 常见原因：apt-daily / unattended-upgrades 在后台更新"
         yellow "👉 解决：稍后重试，或临时加长：APT_LOCK_WAIT=180"
@@ -699,6 +699,7 @@ install_nginx_pkg() {
 
       sleep 1
     done
+    echo  # 结束等待后换行，避免后续输出接在同一行
 
     # 2) 尝试修复 dpkg 中断（减少“莫名其妙失败”）
     dpkg --configure -a >>"$log" 2>&1 || true
@@ -734,13 +735,13 @@ install_nginx_pkg() {
     fi
 
   elif command -v yum >/dev/null 2>&1; then
-    yum install -y nginx >>"$log" 2>&1 || { red "❌ Nginx 安装失败，详见：$log"; tail -n 80 "$log"; return 1; }
+    yum install -y nginx >>"$log" 2>&1 || { red "❌ Nginx 安装失败，详见：$log"; tail -n 80 "$log" 2>/dev/null || true; return 1; }
 
   elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y nginx >>"$log" 2>&1 || { red "❌ Nginx 安装失败，详见：$log"; tail -n 80 "$log"; return 1; }
+    dnf install -y nginx >>"$log" 2>&1 || { red "❌ Nginx 安装失败，详见：$log"; tail -n 80 "$log" 2>/dev/null || true; return 1; }
 
   elif command -v apk >/dev/null 2>&1; then
-    apk add --no-cache nginx >>"$log" 2>&1 || { red "❌ Nginx 安装失败，详见：$log"; tail -n 80 "$log"; return 1; }
+    apk add --no-cache nginx >>"$log" 2>&1 || { red "❌ Nginx 安装失败，详见：$log"; tail -n 80 "$log" 2>/dev/null || true; return 1; }
 
   else
     red "❌ 无法安装 Nginx：不支持的包管理器"
