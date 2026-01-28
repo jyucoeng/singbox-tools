@@ -237,11 +237,11 @@ install_deps() {
     for p in "${_pkgs[@]}"; do
       # 已安装就直接提示
       if pkg_installed "$p"; then
-        green "✅ 已存在：$p"
+        green "✅ 已存在依赖包：$p"
         continue
       fi
 
-      yellow "👉 安装：$p"
+      yellow "👉 正在安装依赖包：$p"
 
       if [ "${DEBUG_FLAG:-0}" = "1" ]; then
         # 调试模式：不静默，方便看具体报错
