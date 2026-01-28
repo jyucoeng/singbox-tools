@@ -741,6 +741,7 @@ modify_mtg() {
 
     check_service_status mtg
     debug_log "【调试】 show_info_mtg函数开始打印节点信息……"
+    yellow "准备打印节点信息，请稍候……"
     show_info_mtg "$NEW_PORT" "$NEW_SECRET" "$NEW_DOMAIN" "$CUR_IP_MODE"
 }
 
