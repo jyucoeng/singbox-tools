@@ -951,9 +951,15 @@ show_detail_info() {
 
 # --- 信息显示 ---
 show_info_python() {
+    debug_log "【调试】 show_info_python函数开始获取ip……"
+
     IPV4=$(get_public_ip)
     IPV6=$(get_public_ipv6)
     IP_MODE=$4
+
+    debug_log "【调试】 获取到的IPV4地址为：$IPV4"
+    debug_log "【调试】 获取到的IPV6地址为：$IPV6"
+    debug_log "【调试】 获取到的IP_MODE为：$IP_MODE"
     
     HEX_DOMAIN=$(echo -n "$3" | od -A n -t x1 | tr -d ' \n')
     FULL_SECRET="ee$2$HEX_DOMAIN"
@@ -990,9 +996,15 @@ show_info_python() {
 }
 
 show_info_mtg() {
+    debug_log "【调试】 show_info_mtg函数开始获取ip……"
+
     IPV4=$(get_public_ip)
     IPV6=$(get_public_ipv6)
     IP_MODE=$4
+
+    debug_log "【调试】 获取到的IPV4地址为：$IPV4"
+    debug_log "【调试】 获取到的IPV6地址为：$IPV6"
+    debug_log "【调试】 获取到的IP_MODE为：$IP_MODE"
     
     HEX_DOMAIN=$(echo -n "$3" | od -A n -t x1 | tr -d ' \n')
     FULL_SECRET="ee$2$HEX_DOMAIN"
