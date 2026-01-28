@@ -27,6 +27,7 @@ export SECRET="${SECRET:-}"
 export IP_MODE="${IP_MODE:-v4}"
 
 export INSTALL_MODE="${INSTALL_MODE:-go}"
+export DEBUG_FLAG=${DEBUG_FLAG:-'0'}; 
 
 INTERACTIVE_FLAG=1
 
