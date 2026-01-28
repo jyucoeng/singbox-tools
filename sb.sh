@@ -668,22 +668,72 @@ install_nginx_pkg() {
 
   yellow "👉 正在安装 Nginx..."
 
+  # 统一把详细输出写到日志，失败时 tail 出来
+  local log="/tmp/agsb_nginx_install.log"
+  : > "$log" 2>/dev/null || true
+
+  # Debian/Ubuntu (apt-get)
   if command -v apt-get >/dev/null 2>&1; then
-    apt-get update -y >/dev/null 2>&1
-    DEBIAN_FRONTEND=noninteractive apt-get install -y nginx >/dev/null 2>&1 || return 1
+    export DEBIAN_FRONTEND=noninteractive
+
+    # 1) 等待 apt/dpkg 锁（默认最多等 180s，可用 APT_LOCK_WAIT 覆盖）
+    local max_wait="${APT_LOCK_WAIT:-180}"
+    local waited=0
+    while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
+          fuser /var/lib/dpkg/lock >/dev/null 2>&1; do
+      waited=$((waited + 1))
+      if [ "$waited" -ge "$max_wait" ]; then
+        red "❌ apt/dpkg 正在被占用超过 ${max_wait} 秒（可能是 apt-daily / unattended-upgrades）"
+        yellow "👉 你可以稍后再试，或临时增大等待：APT_LOCK_WAIT=600"
+        return 1
+      fi
+      sleep 1
+    done
+
+    # 2) 尝试修复 dpkg 中断（不一定每次都需要，但能显著减少“莫名其妙失败”）
+    if [ -f /var/lib/dpkg/lock ] || [ -f /var/lib/dpkg/lock-frontend ]; then
+      : # 锁文件存在不代表被占用，上面已 fuser 检查过
+    fi
+    dpkg --configure -a >>"$log" 2>&1 || true
+    apt-get -f install -y >>"$log" 2>&1 || true
+
+    # 3) update 加重试+超时（稳定很多）
+    if ! apt-get -o Acquire::Retries=3 \
+                 -o Acquire::http::Timeout=15 \
+                 -o Acquire::https::Timeout=15 \
+                 update >>"$log" 2>&1; then
+      red "❌ apt-get update 失败（可能是 DNS/网络/源问题），详见：$log"
+      tail -n 60 "$log" 2>/dev/null || true
+      return 1
+    fi
+
+    # 4) 安装 nginx（同样加重试+超时）
+    if ! apt-get -o Acquire::Retries=3 \
+                 -o Acquire::http::Timeout=15 \
+                 -o Acquire::https::Timeout=15 \
+                 install -y nginx >>"$log" 2>&1; then
+      red "❌ Nginx 安装失败，详见：$log"
+      tail -n 80 "$log" 2>/dev/null || true
+      return 1
+    fi
 
   elif command -v apt >/dev/null 2>&1; then
-    apt update -y >/dev/null 2>&1
-    DEBIAN_FRONTEND=noninteractive apt install -y nginx >/dev/null 2>&1 || return 1
+    # 建议脚本里尽量用 apt-get（apt 更偏交互），这里留个兜底
+    export DEBIAN_FRONTEND=noninteractive
+    if ! apt update >>"$log" 2>&1 || ! apt install -y nginx >>"$log" 2>&1; then
+      red "❌ Nginx 安装失败，详见：$log"
+      tail -n 80 "$log" 2>/dev/null || true
+      return 1
+    fi
 
   elif command -v yum >/dev/null 2>&1; then
-    yum install -y nginx >/dev/null 2>&1 || return 1
+    yum install -y nginx >>"$log" 2>&1 || { red "❌ Nginx 安装失败，详见：$log"; tail -n 80 "$log"; return 1; }
 
   elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y nginx >/dev/null 2>&1 || return 1
+    dnf install -y nginx >>"$log" 2>&1 || { red "❌ Nginx 安装失败，详见：$log"; tail -n 80 "$log"; return 1; }
 
   elif command -v apk >/dev/null 2>&1; then
-    apk add --no-cache nginx >/dev/null 2>&1 || return 1
+    apk add --no-cache nginx >>"$log" 2>&1 || { red "❌ Nginx 安装失败，详见：$log"; tail -n 80 "$log"; return 1; }
 
   else
     red "❌ 无法安装 Nginx：不支持的包管理器"
