@@ -2,6 +2,11 @@
 #!/usr/bin/env bash
 export LANG=en_US.UTF-8
 
+VERSION="1.0.5(2026-01-27)"
+AUTHOR="littleDoraemon"
+
+
+
 export DEBUG_FLAG=${DEBUG_FLAG:-'0'}; 
 
 # 颜色（仅在本函数内使用，避免外部未定义）
@@ -292,26 +297,6 @@ gradient() {
 }
 # ================== 颜色函数 ==================
 
-# ================== 系统bashrc函数 ==================
-# Create .bashrc file if missing
-create_bashrc_if_missing() {
-  if [ ! -f "$HOME/.bashrc" ]; then
-    yellow "检测到系统缺失$HOME/.bashrc 文件,即将创建 $HOME/.bashrc 文件..."
-    touch "$HOME/.bashrc"
-    chmod 644 "$HOME/.bashrc"
-
-    echo "$HOME/.bashrc 文件已创建并设置了权限"
-  
-  fi
-}
-
-create_bashrc_if_missing
-
-# ================== 系统bashrc函数 ==================
-VERSION="1.0.5(2026-01-27)"
-AUTHOR="littleDoraemon"
-
-
 
 enable_autostart() {
   local workdir="/root/agsb"
@@ -461,7 +446,7 @@ fi
 EOF
   chmod +x "$wrapper" 2>/dev/null || true
 
-  # ✅ 用户级入口（不改 bashrc，只建链接）
+  # ✅ 用户级入口（建链接）
   ln -sf "$wrapper" "$link_local1" 2>/dev/null || true
   chmod +x "$link_local1" 2>/dev/null || true
 
@@ -484,7 +469,7 @@ EOF
   hash -r 2>/dev/null || true
   command -v rehash >/dev/null 2>&1 && rehash 2>/dev/null || true
 
-  # ✅ 输出结果（不再依赖 bashrc）
+  # ✅ 输出结果
   if command -v agsb >/dev/null 2>&1; then
     echo ""
     purple " 已创建快捷命令：agsb（$(command -v agsb)）"
@@ -518,7 +503,7 @@ cleanup_agsb_shortcut() {
     rm -f "$link_sys2" 2>/dev/null || true
   fi
 
-  # 2) 刷新命令缓存（不再 source bashrc）
+  # 2) 刷新命令缓存
   hash -r 2>/dev/null || true
   command -v rehash >/dev/null 2>&1 && rehash 2>/dev/null || true
 
@@ -718,7 +703,6 @@ EOF
 }
 
 
-# ================== 系统bashrc函数 ==================
 
 
 echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"; 
@@ -2654,11 +2638,11 @@ cleandel(){
     pkill -15 -f "$HOME/agsb/cloudflared" 2>/dev/null
 
     # 从 .bashrc 文件中删除包含 'agsb' 的行
-    sed -i '/.*agsb.*/d' ~/.bashrc
-    sed -i '/.*export PATH="\$HOME\/bin:\$PATH".*/d' ~/.bashrc
+    # sed -i '/.*agsb.*/d' ~/.bashrc
+   # sed -i '/.*export PATH="\$HOME\/bin:\$PATH".*/d' ~/.bashrc
 
     # 立即应用 .bashrc 的修改
-    . ~/.bashrc 2>/dev/null
+    #. ~/.bashrc 2>/dev/null
 
     # 处理 crontab，兼容 Debian 和 Alpine
     # Debian/Ubuntu 和 Alpine 都支持 crontab，但需要检查 crontab 是否存在
