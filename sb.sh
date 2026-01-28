@@ -2540,7 +2540,8 @@ ipchange() {
 
     # 第三步：根据连通性设置 vps 的 IPv4 和 IPv6 地址以及位置
     if [ -z "$v4" ]; then
-        vps_ipv4='无IPV4'
+        debug_log "[调试] 不存在 IPv4 地址"
+        vps_ipv4='无IPV4'  # Ensure this is set when v4 is missing
         vps_ipv6="$v6"
         location=$v6dq
     elif [ -n "$v4" ] && [ -n "$v6" ]; then
@@ -2548,10 +2549,12 @@ ipchange() {
         vps_ipv6="$v6"
         location=$v4dq
     else
+        debug_log "[调试] 不存在 IPv6 地址"
         vps_ipv4="$v4"
-        vps_ipv6='无IPV6'
+        vps_ipv6='无IPV6'  # Ensure this is set when v6 is missing
         location=$v4dq
     fi
+
 
     # 输出当前的 IPv4 和 IPv6 地址以及位置
     echo
