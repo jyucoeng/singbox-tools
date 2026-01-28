@@ -2592,6 +2592,7 @@ ipchange() {
    v4v6_result="$(check_ip_connectivity "$v46url")"
    debug_log "[调试] ipchange函数，IPv4 和 IPv6 连通性检查结果: $v4v6_result"
 
+  debug_log "[调试] ipchange函数，拆分v4v6_result操作"
    # 兼容输出中有换行/多空格：先把换行压成空格再拆分
    set -- $(printf '%s' "$v4v6_result" | tr '\n' ' ')
    v4="${1:-}"
