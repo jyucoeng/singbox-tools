@@ -2272,7 +2272,7 @@ agsbstatus() {
       echo "cloudflared Argo (版本V${cloudflared_version:-unknown})：✅ $(green "运行中")"
     else
       echo "Argo：❌ $(red "未运行")（已启用 Argo）"
-      yellow "❗ 已启用 Argo，但 cloudflared 未运行：请执行 agsb start 或检查 cloudflared"
+      yellow "❗ 已启用 Argo，但 cloudflared 未运行"
     fi
   fi
 
@@ -2311,7 +2311,7 @@ agsbstatus() {
   else
     echo "Nginx：❌ $(red "未运行")（${sub_desc}，端口：${nginx_port}）"
     if is_true "$subscribe_flag"; then
-      yellow "❗ 订阅已开启，但 Nginx 未运行：请执行 agsb start 或重启 nginx"
+      yellow "❗ 订阅已开启，但 Nginx 未运行：请重启 nginx"
     fi
     if $argo_needed; then
       yellow "❗ 已启用 Argo，但 Nginx 未运行：cloudflared 回源将无法工作"
