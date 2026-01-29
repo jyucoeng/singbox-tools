@@ -2292,17 +2292,15 @@ EOF
   [ -z "$v4dq" ] && v4dq="未知"
   [ -z "$v6dq" ] && v6dq="未知"
 
-  # C) 决定 current_server_ip：优先 out_ip，其次 server_ip.log
+  # C) 决定 current_server_ip： server_ip.log
   local current_server_ip=""
   local out_norm
   out_norm="$(strip_ip_brackets_all "${out_ip:-}")"
-  if [ -n "$out_norm" ] && is_valid_ip_simple "$out_norm"; then
-    current_server_ip="$out_norm"
-  else
-    if [ -s "$HOME/agsb/server_ip.log" ]; then
+
+  if [ -s "$HOME/agsb/server_ip.log" ]; then
       current_server_ip="$(strip_ip_brackets_all "$(cat "$HOME/agsb/server_ip.log" 2>/dev/null)")"
-    fi
   fi
+
 
   # D) 输出本地 IP 地址
   green "=========当前服务器本地IP情况========="
