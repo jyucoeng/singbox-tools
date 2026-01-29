@@ -2177,7 +2177,7 @@ is_valid_ip_simple() {
   }
 
 
-
+# 写入服务器 IP（IPv6 自动加 []，根据ipzz参数来决定写入哪一个ip，当有out_ip时，优先写入out_ip）
 write_server_ip() {
   # 1) 读取偏好：优先用传参，其次 ipzz，再其次 ippz（兼容你现在脚本变量名）
   local ipzz_local="${1:-${ipzz:-${ippz:-}}}"
