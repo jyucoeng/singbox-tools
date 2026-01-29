@@ -2309,16 +2309,16 @@ EOF
 
   # 输出 IPv4 地址
   if [ -n "$v4_local" ]; then
-    echo "$(white "本地IPV4地址：")$(yellow "${v4_local}")$(white "(服务器地区：")$(green "${v4dq}")$(white ")")"
+    echo "$(white "IPV4地址：")$(yellow "${v4_local}")$(white "(服务器地区：")$(green "${v4dq}")$(white ")")"
   else
-    echo "$(white "本地IPV4地址：")$(yellow "无IPV4")"
+    echo "$(white "IPV4地址：")$(yellow "无IPV4")"
   fi
 
   # 输出 IPv6 地址
   if [ -n "$v6_local" ]; then
-    echo "$(white "本地IPV6地址：")$(purple "${v6_local}")$(white "(服务器地区：")$(green "${v6dq}")$(white ")")"
+    echo "$(white "IPV6地址：")$(purple "${v6_local}")$(white "(服务器地区：")$(green "${v6dq}")$(white ")")"
   else
-    echo "$(white "本地IPV6地址：")$(purple "无IPV6")"
+    echo "$(white "IPV6地址：")$(purple "无IPV6")"
   fi
 
   echo
