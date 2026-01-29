@@ -2132,21 +2132,37 @@ ensure_nginx_if_needed() {
 
 
   #工具函数：判断 IP 合法（宽松 IPv6：含冒号并符合基本十六进制/冒号结构）
-  is_valid_ip_simple() {
-    local ip
-    ip="$(strip_ip_brackets_all "${1:-}")"
-    [ -n "$ip" ] || return 1
+is_valid_ip_simple() {
+  local ip
+  ip="$(strip_ip_brackets_all "${1:-}")"  # 去除 IP 地址中的中括号（如果有）
+  
+  # 检查 IP 是否为空
+  [ -n "$ip" ] || return 1  # 如果为空，返回无效（1）
 
-    # IPv4
-    if echo "$ip" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
-      return 0
-    fi
-    # IPv6
-    if echo "$ip" | grep -qE '^([a-fA-F0-9:]+:+)+[a-fA-F0-9]+$'; then
-      return 0
-    fi
-    return 1
-  }
+  # 检查是否为 IPv4 地址
+  if echo "$ip" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+    # 如果是 IPv4 地址格式（如 192.168.0.1）
+    return 0  # 返回有效（0）
+  fi
+
+  # 检查是否为 IPv6 地址（支持压缩格式 ::）
+  # 以下的正则表达式支持：
+  # - 完整 IPv6 地址（如：2001:0db8:0000:0042:0000:8a2e:0370:7334）
+  # - 压缩格式 IPv6 地址（如：2001:db8::ff00:42:8329 或 ::）
+  if echo "$ip" | grep -qE '^([a-fA-F0-9]{1,4}:){7}[a-fA-F0-9]{1,4}$' || \
+     echo "$ip" | grep -qE '^([a-fA-F0-9]{1,4}:){1,7}:$' || \
+     echo "$ip" | grep -qE '^([a-fA-F0-9]{1,4}:){0,6}:([a-fA-F0-9]{1,4}:){1,6}$' || \
+     echo "$ip" | grep -qE '^::([a-fA-F0-9]{1,4}:){1,7}[a-fA-F0-9]{1,4}$' || \
+     [ "$ip" == "::" ]; then
+    # 检查是否为有效的 IPv6 地址
+    # - 匹配常规 IPv6 格式：xxxx:xxxx:xxxx:xxxx:xxxx:xxxx:xxxx:xxxx
+    # - 匹配压缩格式 IPv6 地址：xxxx::xxxx:xxxx 或 ::
+    return 0  # 返回有效（0）
+  fi
+
+  return 1  # 如果都不匹配，返回无效（1）
+}
+
 
   # 4) 工具函数：输出写入 server_ip.log 的最终形式（IPv6 自动加 []）
   format_ip_for_log() {
