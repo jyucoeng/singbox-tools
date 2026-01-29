@@ -2847,7 +2847,7 @@ cip(){
 
     rm -rf "$HOME/agsb/jh.txt"; 
     uuid=$(cat "$HOME/agsb/uuid"); 
-    server_ip=$(cat "$HOME/agsb/server_ip.log"); 
+    server_ip=$(cat "$HOME/agsb/server_ip.log" 2>/dev/null); 
     sxname=$(cat "$HOME/agsb/name" 2>/dev/null);
 
     echo "*********************************************************"; 
