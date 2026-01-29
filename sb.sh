@@ -2325,10 +2325,10 @@ EOF
 
   # E) 打印“当前使用的IP”：
   if [ -n "$v4_local" ] && [ "$v4_local" = "$current_server_ip" ]; then
-    echo "$(green "✅ 当前使用的IP：")$(yellow "${v4_local} (IPv4)")"
+    echo "$(green "✅ 当前使用的IP：")$(yellow "${v4_local}")$(white " (IPv4)")"
   fi
   if [ -n "$v6_local" ] && [ "$v6_local" = "$current_server_ip" ]; then
-    echo "$(green "✅ 当前使用的IP：")$(purple "${v6_local} (IPv6)")"
+    echo "$(green "✅ 当前使用的IP：")$(purple "${v6_local}")$(white " (IPv6)")"
   fi
 
   # F) 如果出口 IP 发生变化，打印变更提示
@@ -2345,7 +2345,7 @@ EOF
     if [ -n "$local_expected" ] && [ "$current_server_ip" != "$local_expected" ]; then
       local show_ip
       show_ip="$(format_ip_for_log "$current_server_ip" 2>/dev/null || echo "$current_server_ip")"
-      yellow " 👉  由于你设置了单独的出口ip,出口IP已变更为：$show_ip   👈"
+      yellow " ❗ 👉  由于你设置了单独的出口ip,出口IP已变更为：$show_ip   👈"
     fi
   fi
 }
