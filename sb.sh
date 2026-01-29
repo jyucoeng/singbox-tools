@@ -2495,8 +2495,11 @@ write2AgsbFolders(){
 agsbstatus() {
   purple "=========当前内核运行状态========="
 
+
+  debug_log "【调试】进入 agsbstatus() 函数，开始判断 sing-box 状态"
   # 1) sing-box
   if pgrep -f "$HOME/agsb/sing-box" >/dev/null 2>&1; then
+ 
     # 兼容：sing-box version r1.12.13
     local singbox_version
     singbox_version=$("$HOME/agsb/sing-box" version 2>/dev/null | sed -n 's/.*r\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')
@@ -2521,6 +2524,7 @@ agsbstatus() {
     nginx_needed=true
   fi
 
+  debug_log "【调试】进入 agsbstatus() 函数，开始判断 cloudflared 状态"
   # ✅ cloudflared 安装状态（不影响 Argo 是否启用）
   if [ -x "$HOME/agsb/cloudflared" ] || command -v cloudflared >/dev/null 2>&1; then
     echo "cloudflared：✅ $(green "已安装")"
@@ -2530,8 +2534,10 @@ agsbstatus() {
 
   # 2) Argo 状态（细分：不需要 / 需要但未运行 / 运行中）
   if ! $argo_needed; then
+    debug_log "【调试】进入 agsbstatus() 函数，当前场景无需 Argo，由于argo_needed=$argo_needed"
     echo "Argo：✅ $(purple "未启用")（当前场景无需 Argo）"
   else
+    debug_log "【调试】进入 agsbstatus() 函数，开始判断 cloudflared 状态，argo_needed=$argo_needed"
     if pgrep -f "$HOME/agsb/cloudflared" >/dev/null 2>&1; then
       # 兼容：cloudflared version 2025.11.1
       local cloudflared_version
@@ -2545,6 +2551,7 @@ agsbstatus() {
   fi
 
   # 3) Nginx + subscribe 状态（细分：不需要 / 未安装 / 未运行 / 运行中）
+  debug_log "【调试】进入 agsbstatus() 函数，开始判断 Nginx 状态"
   local nginx_port sub_desc
   nginx_port="${nginx_pt:-$NGINX_DEFAULT_PORT}"
   [ -s "$HOME/agsb/nginx_port" ] && nginx_port="$(cat "$HOME/agsb/nginx_port" 2>/dev/null)"
@@ -2561,6 +2568,8 @@ agsbstatus() {
     return 0
   fi
 
+
+  debug_log "【调试】进入 agsbstatus() 函数，开始判断 Nginx 状态，进一步区分未安装/未运行/运行中,nginx_needed=$nginx_needed"
   # ✅ 需要 nginx：进一步区分未安装/未运行/运行中
   if ! command -v nginx >/dev/null 2>&1; then
     echo "Nginx：❌ $(red "未安装")（${sub_desc}，端口：${nginx_port}）"
