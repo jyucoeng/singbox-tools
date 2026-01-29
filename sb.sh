@@ -2268,14 +2268,11 @@ show_local_ip_info_with_out_ip_hint() {
   # A) 获取本机 v4/v6
   local v4v6_result v4_local v6_local
   v4v6_result="$(check_ip_connectivity "${v46url:-https://icanhazip.com}")"
-  debug_log "[调试] show_local_ip_info_with_out_ip_hint 函数: v4v6_result: $v4v6_result"
   IFS='|' read -r v4_local v6_local <<EOF
 $(printf '%s' "$v4v6_result" | tr -d '\r\n')
 EOF
   v4_local="$(strip_ip_brackets_all "$v4_local")"
   v6_local="$(strip_ip_brackets_all "$v6_local")"
-
-  debug_log "[调试] show_local_ip_info_with_out_ip_hint 函数: v4_local: $v4_local, v6_local: $v6_local"
 
   # B) 获取地区（按 v4/v6 分开探测）
   local v4dq="" v6dq=""
@@ -2295,11 +2292,19 @@ EOF
   [ -z "$v4dq" ] && v4dq="未知"
   [ -z "$v6dq" ] && v6dq="未知"
 
-  # C) 输出：
-  # - “本地IPV4地址/本地IPV6地址/服务器地区：” 用白色
-  # - IPv4 IP 值用黄色
-  # - IPv6 IP 值用紫色
-  # - 地区值用绿色
+  # C) 决定 current_server_ip：优先 out_ip，其次 server_ip.log
+  local current_server_ip=""
+  local out_norm
+  out_norm="$(strip_ip_brackets_all "${out_ip:-}")"
+  if [ -n "$out_norm" ] && is_valid_ip_simple "$out_norm"; then
+    current_server_ip="$out_norm"
+  else
+    if [ -s "$HOME/agsb/server_ip.log" ]; then
+      current_server_ip="$(strip_ip_brackets_all "$(cat "$HOME/agsb/server_ip.log" 2>/dev/null)")"
+    fi
+  fi
+
+  # D) 输出本地 IP 地址
   green "=========当前服务器本地IP情况========="
 
   # 输出 IPv4 地址
@@ -2318,7 +2323,7 @@ EOF
 
   echo
 
-  # D) 打印“当前使用的IP”：
+  # E) 打印“当前使用的IP”：
   if [ -n "$v4_local" ] && [ "$v4_local" = "$current_server_ip" ]; then
     echo "$(green "✅ 当前使用的IP：")$(yellow "${v4_local} (IPv4)")"
   fi
@@ -2326,19 +2331,7 @@ EOF
     echo "$(green "✅ 当前使用的IP：")$(purple "${v6_local} (IPv6)")"
   fi
 
-  # E) 决定 current_server_ip：优先 out_ip，其次 server_ip.log
-  local current_server_ip=""
-  local out_norm
-  out_norm="$(strip_ip_brackets_all "${out_ip:-}")"
-  if [ -n "$out_norm" ] && is_valid_ip_simple "$out_norm"; then
-    current_server_ip="$out_norm"
-  else
-    if [ -s "$HOME/agsb/server_ip.log" ]; then
-      current_server_ip="$(strip_ip_brackets_all "$(cat "$HOME/agsb/server_ip.log" 2>/dev/null)")"
-    fi
-  fi
-
-  # F) 仅在“出口 IP 发生变化”时提示
+  # F) 如果出口 IP 发生变化，打印变更提示
   if [ -n "$current_server_ip" ] && is_valid_ip_simple "$current_server_ip"; then
     local local_expected=""
 
@@ -2348,16 +2341,14 @@ EOF
       local_expected="$v4_local"
     fi
 
+    # 如果 current_server_ip 与本地的 IP 不匹配，提示出口 IP 已变更
     if [ -n "$local_expected" ] && [ "$current_server_ip" != "$local_expected" ]; then
       local show_ip
       show_ip="$(format_ip_for_log "$current_server_ip" 2>/dev/null || echo "$current_server_ip")"
-      
       yellow " 👉  由于你设置了单独的出口ip,出口IP已变更为：$show_ip   👈"
-      debug_log "[调试] show_local_ip_info_with_out_ip_hint 函数: 出口IP已变更为：$show_ip"
     fi
   fi
 }
-
 
 
 
