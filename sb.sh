@@ -1,15 +1,73 @@
-
 #!/usr/bin/env bash
 export LANG=en_US.UTF-8
+
+ # ================== 常量和环境变量 结束 ==================
 
 VERSION="1.0.5(2026-01-27)"
 AUTHOR="littleDoraemon"
 
+# Environment variables for controlling CDN host and SNI values
+export cdn_host=${cdn_host:-"saas.sin.fan"}  # Default CDN host for vmess or trojan  cdn.7zz.cn 
+export hy_sni=${hy_sni:-"www.microsoft.com"}    # Default SNI for hy2 protocol
+export vl_sni=${vl_sni:-"www.microsoft.com"}   # Default SNI for vless protocol   www.ua.edu www.yahoo.com
+export tu_sni=${tu_sni:-"www.microsoft.com"}    # Default SNI for hy2 protocol
 
 
+# Environment variables for ports and other settings
+export uuid=${uuid:-''}; 
+export port_vm_ws=${vmpt:-''}; 
+export port_tr=${trpt:-''}; 
+export port_hy2=${hypt:-''}; 
+export port_vlr=${vlrt:-''}; 
+export port_tu=${tupt:-''}; 
+
+# 获取到的IP和出口ip不一样的时候，优先使用出口ip也就是out_ip
+export out_ip=${out_ip:-''};
+
+# Argo 相关环境变量
+export argo=${argo:-''}; 
+export ARGO_DOMAIN=${agn:-''}; 
+export ARGO_AUTH=${agk:-''}; 
+export ippz=${ippz:-''}; 
+export name=${name:-''}; 
+
+# 默认端口
+readonly NGINX_DEFAULT_PORT=8080
+readonly ARGO_DEFAULT_PORT=8001
+
+#
+export nginx_pt=${nginx_pt:-$NGINX_DEFAULT_PORT}   # 订阅服务端口（Nginx）
+export argo_pt=${argo_pt:-$ARGO_DEFAULT_PORT}     # Argo 回源入口端口（本地）
+
+# ✅ 新增订阅开关（默认 false = 只装 nginx 不出订阅）
+export subscribe="${subscribe:-false}"
+
+# ✅ Reality 私钥环境变量（仅使用你指定的命名）
+# 只需要传私钥即可：脚本会自动计算/复用公钥，保证节点输出一致
+export reality_private="${reality_private:-""}"
+export reality_public="${reality_public:-""}"
+
+# ✅ Argo 优选端口白名单（仅 https 系端口）
+HTTPS_CDN_PORTS=(443 2053 2083 2087 2096 8443)
+
+# 默认 CDN 端口和 Vless SNI 端口
+cdn_pt="${cdn_pt:-443}"
+vl_sni_pt="${vl_sni_pt:-443}"
+
+
+v46url="https://icanhazip.com"
+agsburl="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh"
+
+CN_BING="www.bing.com"
+
+v4_ok=false
+v6_ok=false
+
+# 调试日志开关
 export DEBUG_FLAG=${DEBUG_FLAG:-'0'}; 
 
-# 颜色（仅在本函数内使用，避免外部未定义）
+ # ================== 常量和环境变量 结束 ==================
+
 
  # ================== 颜色函数 ==================
 white(){ echo -e "\033[1;37m$1\033[0m"; }
@@ -84,6 +142,7 @@ any_proto_enabled() {
     is_yes "$vlr" || is_yes "$vmp" || is_yes "$trp" || is_yes "$hyp" || is_yes "$tup"
 }
 
+# 判断：是否需要 Argo
 need_argo() {
   local argo_needed=0      # 0=false, 1=true（用数字更直观）
   local argo_src=""        # debug：值来源
@@ -126,6 +185,7 @@ else
     fi
 fi
 
+# 判断系统是否支持 systemd
 has_systemd() {
   command -v systemctl >/dev/null 2>&1 || return 1
   [ -d /run/systemd/system ] || return 1
@@ -135,61 +195,7 @@ has_systemd() {
 }
 
 
-
-
-# Environment variables for controlling CDN host and SNI values
-export cdn_host=${cdn_host:-"saas.sin.fan"}  # Default CDN host for vmess or trojan  cdn.7zz.cn 
-export hy_sni=${hy_sni:-"www.microsoft.com"}    # Default SNI for hy2 protocol
-export vl_sni=${vl_sni:-"www.microsoft.com"}   # Default SNI for vless protocol   www.ua.edu www.yahoo.com
-export tu_sni=${tu_sni:-"www.microsoft.com"}    # Default SNI for hy2 protocol
-
-
-# Environment variables for ports and other settings
-export uuid=${uuid:-''}; 
-export port_vm_ws=${vmpt:-''}; 
-export port_tr=${trpt:-''}; 
-export port_hy2=${hypt:-''}; 
-export port_vlr=${vlrt:-''}; 
-export port_tu=${tupt:-''}; 
-
-# 获取到的IP和出口ip不一样的时候，优先使用出口ip也就是out_ip
-export out_ip=${out_ip:-''};
-
-export argo=${argo:-''}; 
-export ARGO_DOMAIN=${agn:-''}; 
-export ARGO_AUTH=${agk:-''}; 
-export ippz=${ippz:-''}; 
-export name=${name:-''}; 
-
-readonly NGINX_DEFAULT_PORT=8080
-readonly ARGO_DEFAULT_PORT=8001
-
-export nginx_pt=${nginx_pt:-$NGINX_DEFAULT_PORT}   # 订阅服务端口（Nginx）
-export argo_pt=${argo_pt:-$ARGO_DEFAULT_PORT}     # Argo 回源入口端口（本地）
-
-# ✅ 新增订阅开关（默认 false = 只装 nginx 不出订阅）
-export subscribe="${subscribe:-false}"
-
-# ✅ Reality 私钥环境变量（仅使用你指定的命名）
-# 只需要传私钥即可：脚本会自动计算/复用公钥，保证节点输出一致
-export reality_private="${reality_private:-""}"
-export reality_public="${reality_public:-""}"
-
-# ✅ Argo 优选端口白名单（仅 https 系端口）
-HTTPS_CDN_PORTS=(443 2053 2083 2087 2096 8443)
-
-cdn_pt="${cdn_pt:-443}"
-vl_sni_pt="${vl_sni_pt:-443}"
-
-
-v46url="https://icanhazip.com"
-agsburl="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh"
-
-CN_BING="www.bing.com"
-
-v4_ok=false
-v6_ok=false
-
+# 安装依赖
 install_deps() {
   # 只负责安装“脚本运行必需的通用依赖”
   # ❗不要在这里强装 nginx / cloudflared / glibc（按需安装放到对应函数里）
@@ -474,7 +480,7 @@ check_ip_connectivity() {
 }
 
 
-
+# 开启自启
 enable_autostart() {
   local workdir="/root/agsb"
   local bin="$workdir/sing-box"
@@ -563,6 +569,7 @@ EOF
   return 1
 }
 
+# 关闭自启
 disable_autostart() {
   local svc="agsb-singbox"
 
@@ -586,8 +593,7 @@ disable_autostart() {
   return 1
 }
 
-# Ensure agsb shortcut
-
+# 确保 agsb 快捷命令
 ensure_agsb_shortcut() {
   local wrapper="$HOME/agsb/agsb"
   local local_script="$HOME/agsb/sb.sh"
@@ -661,6 +667,7 @@ EOF
   fi
 }
 
+# 清理 agsb 快捷命令
 cleanup_agsb_shortcut() {
   local wrapper="$HOME/agsb/agsb"
 
@@ -695,7 +702,7 @@ cleanup_agsb_shortcut() {
 
 
 
-# Show script mode
+# 显示菜单
 showmode(){
     blue "===================================================="
     gradient "       singbox 一键脚本（vmess/trojan Argo选1,vless+hy2+tuic 3个直连）"
@@ -714,6 +721,7 @@ showmode(){
     echo "---------------------------------------------------------"
 }
 
+# 安装 Nginx 包
 install_nginx_pkg() {
   # 已安装就不重复装
   if command -v nginx >/dev/null 2>&1; then
@@ -846,6 +854,7 @@ export cdn_pt
 
 # ================== 处理tunnel的json ==================
 
+# 随机端口
 rand_port() {
     # 优先用 shuf（最常见）
     if command -v shuf >/dev/null 2>&1; then
@@ -1249,6 +1258,7 @@ derive_reality_public_key() {
 
 # ================== Reality Keypair BEGIN ==================
 
+# 打印 Reality Keypair
 print_reality_keypair_hint() {
   [ "${1:-0}" = "1" ] || return 0
   [ -n "${reality_private:-}" ] || return 0
@@ -1259,7 +1269,7 @@ print_reality_keypair_hint() {
   echo
 }
 
-
+# 初始化 Reality Keypair
 init_reality_keypair() {
   local key_file="$HOME/agsb/reality.key"
   local file_priv="" file_pub=""
@@ -1560,7 +1570,7 @@ EOF
 
 
 # ================== Nginx 订阅服务 ==================
-
+# Nginx 配置文件路径
 nginx_conf_path() {
     # Alpine
     if [ -d /etc/nginx/http.d ]; then
@@ -1664,7 +1674,7 @@ EOF
  
 }
 
-
+# 启动 Nginx 服务
 start_nginx_service() {
   debug_log "【调试】start_nginx_service：开始启动 Nginx 服务"
     # systemd
@@ -1724,6 +1734,7 @@ nginx_stop() {
     return 0
 }
 
+# 重启 Nginx 服务
 nginx_restart() {
   debug_log "【调试】nginx_restart：开始重启 Nginx 服务"
     # systemd
@@ -1758,6 +1769,7 @@ nginx_restart() {
     nginx_start
 }
 
+# 检查 Nginx 状态
 nginx_status() {
     if pgrep -x nginx >/dev/null 2>&1; then
         echo "Nginx：$(green "运行中")"
@@ -1768,7 +1780,7 @@ nginx_status() {
     fi
 }
 
-
+# 确保 cloudflared 如果需要
 ensure_cloudflared_if_needed() {
   # ✅ 仅当启用 argo=vmpt/trpt 且 vmag 存在时才需要 cloudflared
   debug_log "【调试】ensure_cloudflared_if_needed：检查是否需要 cloudflared"
@@ -1785,6 +1797,7 @@ ensure_cloudflared_if_needed() {
 
 
 
+# 确保 cloudflared
 ensure_cloudflared() {
   debug_log "【调试】ensure_cloudflared：开始下载/安装 cloudflared"
   # 已存在就不重复下载
@@ -1824,7 +1837,7 @@ ensure_cloudflared() {
 }
 
 
-
+# 安装 Argo 服务（systemd）
 install_argo_service_systemd() {
     local mode="$1" # json|token
     local token="$2"
@@ -1882,6 +1895,7 @@ EOF
 
 
 
+# 安装 Argo 服务（openrc）
 install_argo_service_openrc() {
     local mode="$1" # json|token
     local token="$2"
@@ -1920,9 +1934,7 @@ EOF
 }
 
 
-
-
-
+# 无守护进程启动 Argo
 start_argo_no_daemon() {
     local mode="$1"
     local token="$2"
@@ -1951,7 +1963,7 @@ start_argo_no_daemon() {
     fi
 }
 
-
+# 等待并检查 Argo
 wait_and_check_argo() {
   local argo_tunnel_type="${1:-临时}"  # 第一个参数：隧道类型（固定/临时）
   local argo_log="$HOME/agsb/argo.log"
@@ -2052,7 +2064,7 @@ append_argo_cron_legacy() {
     fi
 }
 
-
+# _legacy 后安装收尾
 post_install_finalize_legacy() {
   # 用“最多等待 10 秒 + 检测到就立刻继续”替代固定 sleep
   for i in 1 2 3 4 5 6 7 8 9 10; do
@@ -2076,7 +2088,7 @@ post_install_finalize_legacy() {
 
 
 
-
+# 确保 Nginx 如果需要
 ensure_nginx_if_needed() {
   # ✅ 需要 Nginx 的条件：
   # 1) 订阅开启 subscribe=true
@@ -2495,8 +2507,11 @@ write2AgsbFolders(){
 agsbstatus() {
   purple "=========当前内核运行状态========="
 
+
+  debug_log "【调试】进入 agsbstatus() 函数，开始判断 sing-box 状态"
   # 1) sing-box
   if pgrep -f "$HOME/agsb/sing-box" >/dev/null 2>&1; then
+ 
     # 兼容：sing-box version r1.12.13
     local singbox_version
     singbox_version=$("$HOME/agsb/sing-box" version 2>/dev/null | sed -n 's/.*r\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')
@@ -2521,6 +2536,7 @@ agsbstatus() {
     nginx_needed=true
   fi
 
+  debug_log "【调试】进入 agsbstatus() 函数，开始判断 cloudflared 状态"
   # ✅ cloudflared 安装状态（不影响 Argo 是否启用）
   if [ -x "$HOME/agsb/cloudflared" ] || command -v cloudflared >/dev/null 2>&1; then
     echo "cloudflared：✅ $(green "已安装")"
@@ -2530,8 +2546,10 @@ agsbstatus() {
 
   # 2) Argo 状态（细分：不需要 / 需要但未运行 / 运行中）
   if ! $argo_needed; then
+    debug_log "【调试】进入 agsbstatus() 函数，当前场景无需 Argo，由于argo_needed=$argo_needed"
     echo "Argo：✅ $(purple "未启用")（当前场景无需 Argo）"
   else
+    debug_log "【调试】进入 agsbstatus() 函数，开始判断 cloudflared 状态，argo_needed=$argo_needed"
     if pgrep -f "$HOME/agsb/cloudflared" >/dev/null 2>&1; then
       # 兼容：cloudflared version 2025.11.1
       local cloudflared_version
@@ -2545,6 +2563,7 @@ agsbstatus() {
   fi
 
   # 3) Nginx + subscribe 状态（细分：不需要 / 未安装 / 未运行 / 运行中）
+  debug_log "【调试】进入 agsbstatus() 函数，开始判断 Nginx 状态"
   local nginx_port sub_desc
   nginx_port="${nginx_pt:-$NGINX_DEFAULT_PORT}"
   [ -s "$HOME/agsb/nginx_port" ] && nginx_port="$(cat "$HOME/agsb/nginx_port" 2>/dev/null)"
@@ -2561,6 +2580,8 @@ agsbstatus() {
     return 0
   fi
 
+
+  debug_log "【调试】进入 agsbstatus() 函数，开始判断 Nginx 状态，进一步区分未安装/未运行/运行中,nginx_needed=$nginx_needed"
   # ✅ 需要 nginx：进一步区分未安装/未运行/运行中
   if ! command -v nginx >/dev/null 2>&1; then
     echo "Nginx：❌ $(red "未安装")（${sub_desc}，端口：${nginx_port}）"
