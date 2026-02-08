@@ -24,7 +24,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ============================================================
 
-# 没有用户名密码的socks5版本
+# 没有用户名密码的socks5版本（❗特别提醒：这个版本不要用在一般自用小鸡里，不然被人扫到，流量跑哭你）
 
 ## 1、 socks5 安装以及卸载
  1.1、安装：
