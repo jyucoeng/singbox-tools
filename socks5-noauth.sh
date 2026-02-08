@@ -122,7 +122,8 @@ handle_params() {
 
   NON_INTERACTIVE=0
 
-  if [[ -n "" ]]; then
+  # 如果 PORT 不为空
+  if [[ -n "$PORT" ]]; then
     NON_INTERACTIVE=1
     yellow "👉 非交互式安装"
   else
@@ -133,6 +134,7 @@ handle_params() {
   # PORT 处理（不再 exit）
   ########################
   while :; do
+    # 如果 PORT 为空
     if [[ -z "$PORT" ]]; then
       if [[ "$NON_INTERACTIVE" == "1" ]]; then
         PORT=$(gen_random_port)
