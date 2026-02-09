@@ -3243,7 +3243,9 @@ check_port_conflicts_or_exit() {
 
   if [ "$has_conflict" -eq 1 ]; then
     echo
-    red "❌ 检测到端口重复（${vars}），已中断退出："
+    # 将变量名列表转换为 CSV 格式，也就是变量之间用逗号分隔
+    local vars_csv="${vars// /, }"
+    red "❌ 检测到端口重复（${vars_csv}），已中断退出："
     local p
     for p in "${!used[@]}"; do
       [[ "${used[$p]}" == *","* ]] && yellow " - 端口 ${p} 冲突变量：${used[$p]}"
