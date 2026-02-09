@@ -3204,7 +3204,7 @@ check_port_conflicts_or_exit() {
     echo
     red "❌ 端口冲突：argo_pt 和 nginx_pt 不能同时等于 8001"
     yellow "原因：由于 8001 作为 argo_pt 的内部默认值（nginx_pt 默认 8080），因此不要把 nginx_pt 也设成 8001"
-    yellow "当前有效值：argo_pt=${argo_eff} | nginx_pt=${nginx_eff}"
+    yellow "当前值：argo_pt=${argo_eff} | nginx_pt=${nginx_eff}"
     echo
     exit 1
   fi
