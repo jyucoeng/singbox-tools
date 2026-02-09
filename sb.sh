@@ -1,3 +1,4 @@
+
 #!/usr/bin/env bash
 export LANG=en_US.UTF-8
 
@@ -3181,7 +3182,84 @@ install_step(){
     cip "key"
 }
 
+
+# ================== 端口冲突检测（subscribe=true 才检查 nginx_pt） ==================
+check_port_conflicts_or_exit() {
+  _is_port_int() {
+    [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
+  }
+
+  # subscribe 只兼容 TRUE/True/true（统一转小写），不改原变量
+  local subscribe_norm="${subscribe,,}"
+  [[ -z "$subscribe_norm" ]] && subscribe_norm="false"
+
+  # ✅ 在函数内部计算“有效端口”（不修改全局变量）
+  #  ❗ argo_pt 默认 8001；nginx_pt 默认 8080
+  #  ❗ :- 不会发生“把 argo_pt 默认值写进去”的副作用；只有 := 才会。
+  local argo_eff="${argo_pt:-8001}"
+  local nginx_eff="${nginx_pt:-8080}"
+
+  # ✅ 规则：argo_pt 和 nginx_pt 不能同时为 8001（按有效端口判断）
+  if [[ "$argo_eff" == "8001" && "$nginx_eff" == "8001" ]]; then
+    echo
+    red "❌ 端口冲突：argo_pt 和 nginx_pt 不能同时等于 8001"
+    yellow "原因：由于 8001 作为 argo_pt 的内部默认值（nginx_pt 默认 8080），因此不要把 nginx_pt 也设成 8001"
+    yellow "当前有效值：argo_pt=${argo_eff} | nginx_pt=${nginx_eff}"
+    echo
+    exit 1
+  fi
+
+  # 固定检查这四个；subscribe=true 时才额外检查 nginx_pt
+  local vars="trpt vlrt hypt tupt"
+  [[ "$subscribe_norm" == "true" ]] && vars="$vars nginx_pt"
+
+  declare -A used   # port -> "name=value, name=value..."
+  local has_conflict=0
+
+  local k v
+  for k in $vars; do
+    if [[ "$k" == "nginx_pt" ]]; then
+      v="$nginx_eff"   # 用有效默认值参与检查，但不改 nginx_pt 本身
+    else
+      v="${!k}"        # 动态取值：trpt/vlrt/hypt/tupt
+    fi
+
+    # 不为空才检查
+    [ -z "${v:-}" ] && continue
+
+    if ! _is_port_int "$v"; then
+      echo
+      red "❌ 端口参数非法：${k}=${v}（必须是 1-65535 的整数）"
+      exit 1
+    fi
+
+    if [ -n "${used[$v]:-}" ]; then
+      has_conflict=1
+      used["$v"]+=", ${k}=${v}"
+    else
+      used["$v"]="${k}=${v}"
+    fi
+  done
+
+  if [ "$has_conflict" -eq 1 ]; then
+    echo
+    red "❌ 检测到端口重复（${vars}），已中断退出："
+    local p
+    for p in "${!used[@]}"; do
+      [[ "${used[$p]}" == *","* ]] && yellow " - 端口 ${p} 冲突变量：${used[$p]}"
+    done
+    echo
+    exit 1
+  fi
+}
+# ================== 端口冲突检测 END ================
+
+
+
+
 main(){
+
+  check_port_conflicts_or_exit
 
   # 启动自定义端口
 if [ "$1" = "autostart" ]; then
