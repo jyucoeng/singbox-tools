@@ -206,21 +206,21 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ```bash
 hypt=2082 \
-bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
 ### 只要vless Reality协议
 
 ```bash
 vlrt=2083 \
-bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
 ### 只要tuic协议
 
 ```bash
 tupt=2082 \
-bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
 ## 组合2️⃣、 仅 2个直连协议（不走 Argo,hypt与vlrt参数都写，代表hy2和vless-reality 协议都会出来）
@@ -228,7 +228,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 ```bash
 hypt=2082 \
 vlrt=2083 \
-bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
 ## 组合3️⃣、 VMess  Argo/ Trojan  Argo（最常用，2个协议选一个）
@@ -242,7 +242,7 @@ argo=trpt \
 agn="test-trojan.xxxx.xyz" \
 agk="ey开头的那一串" \
 name="小叮当-韩国春川"  \
-bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) 
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)  rep
 ```
 
 ## 当使用trojan Argo时
@@ -254,7 +254,7 @@ argo=trpt \
 agn="test-vmess.xxxx.xyz" \
 agk="ey开头的那一串" \
 name="小叮当-韩国春川"  \
-bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) 
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)  rep
 ```
 
 ## 4️⃣ 、VMess + Hysteria2+ vless
@@ -268,7 +268,7 @@ argo=vmpt \
 agn="test-vmess.xxxx.xyz" \
 agk="ey开头的那一串" \
 name="小叮当-韩国春川"  \
-bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) 
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)  rep
 ```
 
 
