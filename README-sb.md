@@ -59,7 +59,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
   ❌ 你自己的服务器域名（会形成循环）
 
   ### 推荐用：
-  ✅ www.microsoft.com
+  ✅ www.microsoft.com (默认)
 
   ✅ www.yahoo.com
 
