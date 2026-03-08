@@ -7,136 +7,136 @@ VERSION="1.0.6(2026-03-07)"
 AUTHOR="littleDoraemon"
 
 # ================== 工作目录常量 ==================
-readonly AGSB_HOME="${HOME}/agsb"
-readonly AGSB_BIN="${AGSB_HOME}/sing-box"
-readonly AGSB_CONFIG="${AGSB_HOME}/sb.json"
-readonly AGSB_UUID_FILE="${AGSB_HOME}/uuid"
-readonly AGSB_REALITY_KEY="${AGSB_HOME}/reality.key"
-readonly AGSB_SHORT_ID="${AGSB_HOME}/short_id"
-readonly AGSB_WEBROOT="$AGSB_WEBROOT"
-readonly AGSB_LOG_DIR="${AGSB_HOME}/logs"
-readonly AGSB_LOG_FILE="${AGSB_LOG_DIR}/agsb.log"
-readonly AGSB_STATE_FILE="${AGSB_HOME}/state.json"
+AGSB_HOME="${HOME}/agsb"
+AGSB_BIN="${AGSB_HOME}/sing-box"
+AGSB_CONFIG="${AGSB_HOME}/sb.json"
+AGSB_UUID_FILE="${AGSB_HOME}/uuid"
+AGSB_REALITY_KEY="${AGSB_HOME}/reality.key"
+AGSB_SHORT_ID="${AGSB_HOME}/short_id"
+AGSB_WEBROOT="$AGSB_WEBROOT"
+AGSB_LOG_DIR="${AGSB_HOME}/logs"
+AGSB_LOG_FILE="${AGSB_LOG_DIR}/agsb.log"
+AGSB_STATE_FILE="${AGSB_HOME}/state.json"
 
 # ================== 默认值常量定义 ==================
 # 【CDN 和 SNI 默认值】
-readonly DEFAULT_CDN_HOST="saas.sin.fan"
-readonly DEFAULT_HY_SNI="www.microsoft.com"
-readonly DEFAULT_VL_SNI="www.microsoft.com"
-readonly DEFAULT_TU_SNI="www.microsoft.com"
+DEFAULT_CDN_HOST="saas.sin.fan"
+DEFAULT_HY_SNI="www.microsoft.com"
+DEFAULT_VL_SNI="www.microsoft.com"
+DEFAULT_TU_SNI="www.microsoft.com"
 
 # 【端口默认值】
-readonly DEFAULT_NGINX_PORT=8080
-readonly DEFAULT_ARGO_PORT=8001
-readonly DEFAULT_CDN_PORT=443
-readonly DEFAULT_VL_SNI_PORT=443
+DEFAULT_NGINX_PORT=8080
+DEFAULT_ARGO_PORT=8001
+DEFAULT_CDN_PORT=443
+DEFAULT_VL_SNI_PORT=443
 
 # 【功能开关默认值】
-readonly DEFAULT_SUBSCRIBE="false"
-readonly DEFAULT_DEBUG_FLAG="0"
+DEFAULT_SUBSCRIBE="false"
+DEFAULT_DEBUG_FLAG="0"
 
 # 【其他默认值】
-readonly DEFAULT_REALITY_PRIVATE=""
-readonly DEFAULT_REALITY_PUBLIC=""
-readonly DEFAULT_OUT_IP=""
+DEFAULT_REALITY_PRIVATE=""
+DEFAULT_REALITY_PUBLIC=""
+DEFAULT_OUT_IP=""
 
 # ================== 文件名常量定义 ==================
 # 【配置和数据文件】
-readonly AGSB_FILE_UUID="uuid"
-readonly AGSB_FILE_CONFIG="sb.json"
-readonly AGSB_FILE_REALITY_KEY="reality.key"
-readonly AGSB_FILE_SHORT_ID="short_id"
-readonly AGSB_FILE_SERVER_IP="server_ip.log"
-readonly AGSB_FILE_NAME="name"
-readonly AGSB_FILE_CDN_HOST="cdn_host"
-readonly AGSB_FILE_STATE="state.json"
+AGSB_FILE_UUID="uuid"
+AGSB_FILE_CONFIG="sb.json"
+AGSB_FILE_REALITY_KEY="reality.key"
+AGSB_FILE_SHORT_ID="short_id"
+AGSB_FILE_SERVER_IP="server_ip.log"
+AGSB_FILE_NAME="name"
+AGSB_FILE_CDN_HOST="cdn_host"
+AGSB_FILE_STATE="state.json"
 
 # 【Argo 相关文件】
-readonly AGSB_FILE_TUNNEL_JSON="tunnel.json"
-readonly AGSB_FILE_TUNNEL_YML="tunnel.yml"
-readonly AGSB_FILE_ARGO_LOG="argo.log"
-readonly AGSB_FILE_ARGO_PORT="argoport.log"
-readonly AGSB_FILE_ARGO_YM="sbargoym.log"
-readonly AGSB_FILE_ARGO_TOKEN="sbargotoken.log"
+AGSB_FILE_TUNNEL_JSON="tunnel.json"
+AGSB_FILE_TUNNEL_YML="tunnel.yml"
+AGSB_FILE_ARGO_LOG="argo.log"
+AGSB_FILE_ARGO_PORT="argoport.log"
+AGSB_FILE_ARGO_YM="sbargoym.log"
+AGSB_FILE_ARGO_TOKEN="sbargotoken.log"
 
 # 【日志和临时文件】
-readonly AGSB_FILE_DEPS_FAILED="deps_failed.log"
-readonly AGSB_FILE_PERF_REPORT="perf_report.txt"
-readonly AGSB_FILE_TEST_REPORT="test_report.txt"
-readonly AGSB_DIR_TMP_REALITY=".tmp_reality"
+AGSB_FILE_DEPS_FAILED="deps_failed.log"
+AGSB_FILE_PERF_REPORT="perf_report.txt"
+AGSB_FILE_TEST_REPORT="test_report.txt"
+AGSB_DIR_TMP_REALITY=".tmp_reality"
 
 # ================== 系统路径常量 ==================
-readonly TMP_DIR="/tmp"
-readonly TMP_CRONTAB="${TMP_DIR}/crontab.tmp"
-readonly REDHAT_RELEASE="/etc/redhat-release"
-readonly OS_RELEASE="/etc/os-release"
-readonly IPTABLES_DIR="/etc/iptables"
-readonly SYSTEMD_DIR="/etc/systemd/system"
-readonly INITD_DIR="/etc/init.d"
-readonly BASHRC_FILE="${HOME}/.bashrc"
+TMP_DIR="/tmp"
+TMP_CRONTAB="${TMP_DIR}/crontab.tmp"
+REDHAT_RELEASE="/etc/redhat-release"
+OS_RELEASE="/etc/os-release"
+IPTABLES_DIR="/etc/iptables"
+SYSTEMD_DIR="/etc/systemd/system"
+INITD_DIR="/etc/init.d"
+BASHRC_FILE="${HOME}/.bashrc"
 
 # ================== 服务名称常量 ==================
-readonly SB_SERVICE_NAME="agsb-singbox"
-readonly NGINX_SERVICE_NAME="nginx"
+SB_SERVICE_NAME="agsb-singbox"
+NGINX_SERVICE_NAME="nginx"
 
 # ================== 错误消息常量定义 ==================
 # 【目录和文件操作错误】
-readonly ERR_CREATE_DIR="❌ 无法创建目录"
-readonly ERR_CREATE_LOG_DIR="❌ 无法创建日志目录"
-readonly ERR_CONFIG_LOAD="❌ 配置文件加载失败"
-readonly ERR_CONFIG_UNREADABLE="❌ 配置文件不可读"
-readonly ERR_CONFIG_SYNTAX="❌ 配置文件语法错误"
-readonly ERR_CONFIG_INVALID="❌ 配置文件无效"
+ERR_CREATE_DIR="❌ 无法创建目录"
+ERR_CREATE_LOG_DIR="❌ 无法创建日志目录"
+ERR_CONFIG_LOAD="❌ 配置文件加载失败"
+ERR_CONFIG_UNREADABLE="❌ 配置文件不可读"
+ERR_CONFIG_SYNTAX="❌ 配置文件语法错误"
+ERR_CONFIG_INVALID="❌ 配置文件无效"
 
 # 【验证错误】
-readonly ERR_UUID_INVALID="❌ UUID 格式无效"
-readonly ERR_PORT_INVALID="❌ 端口无效（必须是 1-65535 的整数）"
-readonly ERR_IP_INVALID="❌ IP 地址无效"
-readonly ERR_DOMAIN_INVALID="❌ 域名格式无效"
-readonly ERR_SNI_INVALID="❌ SNI 格式无效"
-readonly ERR_PORT_CONFLICT="❌ 端口冲突"
+ERR_UUID_INVALID="❌ UUID 格式无效"
+ERR_PORT_INVALID="❌ 端口无效（必须是 1-65535 的整数）"
+ERR_IP_INVALID="❌ IP 地址无效"
+ERR_DOMAIN_INVALID="❌ 域名格式无效"
+ERR_SNI_INVALID="❌ SNI 格式无效"
+ERR_PORT_CONFLICT="❌ 端口冲突"
 
 # 【权限和安全错误】
-readonly ERR_PERMS_UNSAFE="❗ 文件权限不安全，已修复"
-readonly ERR_BACKUP_FAILED="❗ 配置备份失败"
+ERR_PERMS_UNSAFE="❗ 文件权限不安全，已修复"
+ERR_BACKUP_FAILED="❗ 配置备份失败"
 
 # 【文件操作错误】
-readonly ERR_FILE_WRITE="❌ 无法写入文件"
-readonly ERR_FILE_READ="❌ 无法读取文件"
-readonly ERR_FILE_EMPTY="❌ 文件为空或不存在"
-readonly ERR_CHMOD_FAILED="❌ 无法设置执行权限"
-readonly ERR_DOWNLOAD_FAILED="❌ 下载失败"
+ERR_FILE_WRITE="❌ 无法写入文件"
+ERR_FILE_READ="❌ 无法读取文件"
+ERR_FILE_EMPTY="❌ 文件为空或不存在"
+ERR_CHMOD_FAILED="❌ 无法设置执行权限"
+ERR_DOWNLOAD_FAILED="❌ 下载失败"
 
 # 【服务管理错误】
-readonly ERR_SERVICE_RESTART="❌ 服务重启失败"
-readonly ERR_SERVICE_UNSUPPORTED="❌ 不支持的服务管理器"
-readonly ERR_NGINX_CONFIG="❌ Nginx 配置检查失败"
-readonly ERR_NGINX_INSTALL="❌ Nginx 安装失败"
+ERR_SERVICE_RESTART="❌ 服务重启失败"
+ERR_SERVICE_UNSUPPORTED="❌ 不支持的服务管理器"
+ERR_NGINX_CONFIG="❌ Nginx 配置检查失败"
+ERR_NGINX_INSTALL="❌ Nginx 安装失败"
 
 # 【Argo 错误】
-readonly ERR_ARGO_TUNNEL_ID="❌ Argo JSON 中未找到 TunnelID"
-readonly ERR_ARGO_DOMAIN="❌ 未能获取 Argo 域名"
-readonly ERR_ARGO_PROCESS="❌ 未检测到 sing-box/cloudflared 运行"
+ERR_ARGO_TUNNEL_ID="❌ Argo JSON 中未找到 TunnelID"
+ERR_ARGO_DOMAIN="❌ 未能获取 Argo 域名"
+ERR_ARGO_PROCESS="❌ 未检测到 sing-box/cloudflared 运行"
 
 # 【其他错误】
-readonly ERR_TIMER_NOT_FOUND="❌ 计时器不存在"
-readonly ERR_TIMER_NOT_STOPPED="❌ 计时器未停止"
-readonly ERR_PACKAGE_MANAGER="❌ 未检测到支持的包管理器"
-readonly ERR_MISSING_DEPS="❌ 关键依赖仍缺失"
+ERR_TIMER_NOT_FOUND="❌ 计时器不存在"
+ERR_TIMER_NOT_STOPPED="❌ 计时器未停止"
+ERR_PACKAGE_MANAGER="❌ 未检测到支持的包管理器"
+ERR_MISSING_DEPS="❌ 关键依赖仍缺失"
 
 # ================== 日志格式常量定义 ==================
 # 【日志级别】
-readonly LOG_LEVEL_INFO="INFO"
-readonly LOG_LEVEL_WARN="WARN"
-readonly LOG_LEVEL_ERROR="ERROR"
-readonly LOG_LEVEL_DEBUG="DEBUG"
+LOG_LEVEL_INFO="INFO"
+LOG_LEVEL_WARN="WARN"
+LOG_LEVEL_ERROR="ERROR"
+LOG_LEVEL_DEBUG="DEBUG"
 
 # 【日志格式】
-readonly LOG_FORMAT_TIMESTAMP="%s"
-readonly LOG_FORMAT_LEVEL="%s"
-readonly LOG_FORMAT_MESSAGE="%s"
-readonly LOG_SEPARATOR_LONG="=========================================="
-readonly LOG_SEPARATOR_SHORT="=============================="
+LOG_FORMAT_TIMESTAMP="%s"
+LOG_FORMAT_LEVEL="%s"
+LOG_FORMAT_MESSAGE="%s"
+LOG_SEPARATOR_LONG="=========================================="
+LOG_SEPARATOR_SHORT="=============================="
 
 # ================== 协议常量定义 ==================
 # 【Argo 协议映射】协议类型 -> 输出文件内容
@@ -146,19 +146,19 @@ declare -A ARGO_PROTOCOL_MAP=(
 )
 
 # 【支持的 Argo 协议列表】用于验证和扩展
-readonly ARGO_SUPPORTED_PROTOCOLS="vmpt trpt"
+ARGO_SUPPORTED_PROTOCOLS="vmpt trpt"
 
 # ================== 外部资源 URL ==================
-readonly IP_CHECK_URL="https://icanhazip.com"
-readonly SCRIPT_REPO_URL="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb00.sh"
+IP_CHECK_URL="https://icanhazip.com"
+SCRIPT_REPO_URL="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb00.sh"
 
 # ================== Argo 优选端口白名单 ==================
-readonly HTTPS_CDN_PORTS=(443 2053 2083 2087 2096 8443)
+HTTPS_CDN_PORTS=(443 2053 2083 2087 2096 8443)
 
 # ================== Phase 32: 配置文件支持 ==================
 # 配置文件路径（按优先级）
-readonly AGSB_CONFIG_USER="${HOME}/.agsb/config"
-readonly AGSB_CONFIG_SYSTEM="/etc/agsb/config"
+AGSB_CONFIG_USER="${HOME}/.agsb/config"
+AGSB_CONFIG_SYSTEM="/etc/agsb/config"
 
 # 从配置文件加载参数
 # 参数优先级：命令行环境变量 > 配置文件 > 默认值
@@ -253,29 +253,16 @@ export vl_sni_pt="${vl_sni_pt:-$DEFAULT_VL_SNI_PORT}"
 export DEBUG_FLAG=${DEBUG_FLAG:-'$DEFAULT_DEBUG_FLAG'}
 
 # ================== 其他常量 ==================
-readonly CN_BING="www.bing.com"
-
 # 全局变量
 v4_ok=false
 v6_ok=false
 
-# ✅ Argo 优选端口白名单（仅 https 系端口）
-HTTPS_CDN_PORTS=(443 2053 2083 2087 2096 8443)
-
-# 默认 CDN 端口和 Vless SNI 端口
-cdn_pt="${cdn_pt:-443}"
-vl_sni_pt="${vl_sni_pt:-443}"
-
+# 外部资源 URL
 v46url="https://icanhazip.com"
 agsburl="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh"
 
-CN_BING="www.bing.com"
-
-v4_ok=false
-v6_ok=false
-
 # 调试日志开关
-export DEBUG_FLAG=${DEBUG_FLAG:-'0'}; 
+export DEBUG_FLAG=${DEBUG_FLAG:-'0'}
 
  # ================== 常量和环境变量 结束 ==================
 
@@ -4040,7 +4027,7 @@ EOF
 # ================== Phase 33: 性能优化 - 缓存和并行下载 ==================
 
 # 缓存目录
-readonly AGSB_CACHE_DIR="${AGSB_HOME}/.cache"
+AGSB_CACHE_DIR="${AGSB_HOME}/.cache"
 
 # 初始化缓存目录
 init_cache_dir() {
@@ -4321,12 +4308,12 @@ atomic_write_file() {
 # ================== Phase 35: 日志和监控优化 ==================
 
 # 日志级别常量
-readonly LOG_LEVEL_TRACE=0
-readonly LOG_LEVEL_DEBUG=1
-readonly LOG_LEVEL_INFO=2
-readonly LOG_LEVEL_WARN=3
-readonly LOG_LEVEL_ERROR=4
-readonly LOG_LEVEL_FATAL=5
+LOG_LEVEL_TRACE=0
+LOG_LEVEL_DEBUG=1
+LOG_LEVEL_INFO=2
+LOG_LEVEL_WARN=3
+LOG_LEVEL_ERROR=4
+LOG_LEVEL_FATAL=5
 
 # 当前日志级别（可通过环境变量覆盖）
 LOG_LEVEL="${LOG_LEVEL:-$LOG_LEVEL_INFO}"
@@ -4619,8 +4606,8 @@ execute_safe() {
 # ================== Phase 37: 配置管理和状态持久化 ==================
 
 # 配置版本管理
-readonly CONFIG_VERSION="1.0"
-readonly CONFIG_SCHEMA_VERSION="1"
+CONFIG_VERSION="1.0"
+CONFIG_SCHEMA_VERSION="1"
 
 # 保存配置快照
 save_config_snapshot() {
@@ -4945,7 +4932,7 @@ cleanup_logs_and_cache() {
 # ================== Phase 39: API 和集成接口 ==================
 
 # API 版本
-readonly API_VERSION="1.0"
+API_VERSION="1.0"
 
 # 获取 API 版本
 api_get_version() {
