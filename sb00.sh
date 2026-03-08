@@ -3,7 +3,7 @@
 export LANG=en_US.UTF-8
 
 # ================== 版本和作者信息 ==================
-VERSION="1.0.7(2026-03-08)"
+VERSION="1.0.6(2026-03-07)"
 AUTHOR="littleDoraemon"
 
 # ================== 工作目录常量 ==================
@@ -68,11 +68,11 @@ AGSB_DIR_TMP_REALITY=".tmp_reality"
 # ================== 系统路径常量 ==================
 TMP_DIR="/tmp"
 TMP_CRONTAB="${TMP_DIR}/crontab.tmp"
-REDHAT_RELEASE="/etc/redhat-release"
-OS_RELEASE="/etc/os-release"
-IPTABLES_DIR="/etc/iptables"
-SYSTEMD_DIR="/etc/systemd/system"
-INITD_DIR="/etc/init.d"
+REDHAT_RELEASE="$REDHAT_RELEASE"
+OS_RELEASE="$OS_RELEASE"
+IPTABLES_DIR="$IPTABLES_DIR"
+SYSTEMD_DIR="$SYSTEMD_DIR"
+INITD_DIR="$INITD_DIR"
 BASHRC_FILE="${HOME}/.bashrc"
 
 # ================== 服务名称常量 ==================
@@ -155,62 +155,6 @@ SCRIPT_REPO_URL="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/h
 # ================== Argo 优选端口白名单 ==================
 HTTPS_CDN_PORTS=(443 2053 2083 2087 2096 8443)
 
-# ================== Phase 32: 配置文件支持 ==================
-# 配置文件路径（按优先级）
-AGSB_CONFIG_USER="${HOME}/.agsb/config"
-AGSB_CONFIG_SYSTEM="/etc/agsb/config"
-
-# 从配置文件加载参数
-# 参数优先级：命令行环境变量 > 配置文件 > 默认值
-load_config_file() {
-  local config_file=""
-  
-  # 查找配置文件（用户级优先于系统级）
-  if [ -f "$AGSB_CONFIG_USER" ]; then
-    config_file="$AGSB_CONFIG_USER"
-  elif [ -f "$AGSB_CONFIG_SYSTEM" ]; then
-    config_file="$AGSB_CONFIG_SYSTEM"
-  else
-    dlog "未找到配置文件（$AGSB_CONFIG_USER 或 $AGSB_CONFIG_SYSTEM），使用默认值"
-    return 0
-  fi
-  
-  dlog "从配置文件加载参数：$config_file"
-  
-  # 验证配置文件可读性
-  if [ ! -r "$config_file" ]; then
-    yellow "❗ 配置文件不可读：$config_file"
-    return 1
-  fi
-  
-  # 逐行读取配置文件，支持 KEY=VALUE 格式和注释
-  local line key value
-  while IFS='=' read -r key value; do
-    # 跳过空行和注释行
-    [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]] && continue
-    
-    # 去掉前后空格
-    key=$(echo "$key" | xargs)
-    value=$(echo "$value" | xargs)
-    
-    # 跳过空值
-    [ -z "$value" ] && continue
-    
-    # 只有当环境变量未设置时才从配置文件读取
-    # 这样保证命令行参数优先级最高
-    if [ -z "${!key:-}" ]; then
-      export "$key=$value"
-      dlog "从配置文件加载：$key=$value"
-    else
-      dlog "跳过配置文件参数（已由环境变量设置）：$key"
-    fi
-  done < "$config_file"
-  
-  return 0
-}
-
-# ================== Phase 32: 配置文件支持 END ==================
-
 # ================== 环境变量配置 ==================
 # CDN 和 SNI 配置
 export cdn_host=${cdn_host:-"$DEFAULT_CDN_HOST"}
@@ -253,16 +197,29 @@ export vl_sni_pt="${vl_sni_pt:-$DEFAULT_VL_SNI_PORT}"
 export DEBUG_FLAG=${DEBUG_FLAG:-'$DEFAULT_DEBUG_FLAG'}
 
 # ================== 其他常量 ==================
+CN_BING="www.bing.com"
+
 # 全局变量
 v4_ok=false
 v6_ok=false
 
-# 外部资源 URL
+# ✅ Argo 优选端口白名单（仅 https 系端口）
+HTTPS_CDN_PORTS=(443 2053 2083 2087 2096 8443)
+
+# 默认 CDN 端口和 Vless SNI 端口
+cdn_pt="${cdn_pt:-443}"
+vl_sni_pt="${vl_sni_pt:-443}"
+
 v46url="https://icanhazip.com"
 agsburl="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh"
 
+CN_BING="www.bing.com"
+
+v4_ok=false
+v6_ok=false
+
 # 调试日志开关
-export DEBUG_FLAG=${DEBUG_FLAG:-'0'}
+export DEBUG_FLAG=${DEBUG_FLAG:-'0'}; 
 
  # ================== 常量和环境变量 结束 ==================
 
@@ -839,10 +796,10 @@ install_deps() {
   fi
 
   if [ "$miss" = "1" ]; then
-    red "⚠️ 关键依赖仍缺失（curl/jq/openssl/iptables 或下载工具）"
+    red "❌ 关键依赖仍缺失（curl/jq/openssl/iptables 或下载工具）"
     yellow "📌 你可以查看失败包记录：${fail_log}"
     yellow "👉 常见原因：源缺失（如 Alpine 缺 community）、网络/DNS、权限不足、低内存被系统杀进程"
-    yellow "⚠️ 继续安装，但后续协议安装可能会失败"
+    return 1
   fi
 
   return 0
@@ -998,7 +955,6 @@ showmode(){
  
     yellow "主脚本：bash <(curl -Ls ${agsburl}) 或 bash <(wget -qO- ${agsburl})"
     yellow "显示节点信息：agsb list"
-    yellow "生成配置文件：agsb config（生成 ~/.agsb/config 模板）"
     yellow "安装命令：  agsb ins（命令前面需要带上环境变量）"
     yellow "覆盖式安装命令： agsb rep（命令前面需要带上环境变量）"
     yellow "更新Singbox内核：agsb ups(属于预留命令)"
@@ -1007,75 +963,6 @@ showmode(){
     yellow "Nginx相关：agsb nginx_start | agsb nginx_stop | agsb nginx_restart | agsb nginx_status"
     echo "---------------------------------------------------------"
 }
-
-# ================== Phase 32: 配置文件生成函数 ==================
-# 生成配置文件示例
-generate_config_template() {
-  local config_path="${1:-$AGSB_CONFIG_USER}"
-  local config_dir=$(dirname "$config_path")
-  
-  # 创建配置目录
-  mkdir -p "$config_dir" || {
-    red "❌ 无法创建配置目录：$config_dir"
-    return 1
-  }
-  
-  # 生成配置文件模板
-  cat > "$config_path" <<'EOF'
-# agsb 配置文件示例
-# 参数优先级：命令行环境变量 > 配置文件 > 默认值
-# 注意：配置文件中的值会被命令行环境变量覆盖
-
-# ========== CDN 和 SNI 配置 ==========
-cdn_host=saas.sin.fan
-hy_sni=www.microsoft.com
-vl_sni=www.microsoft.com
-tu_sni=www.microsoft.com
-
-# ========== 端口配置 ==========
-# UUID（必填）
-uuid=0631a7f3-09f8-4144-acf2-a4f5bd9ed281
-
-# 协议端口（可选，不设置则自动生成）
-trpt=33952
-vlrt=33953
-hypt=33954
-tupt=33955
-
-# ========== Argo 隧道配置 ==========
-# argo 值：trpt 或 vmpt（选择哪个协议走 Argo）
-argo=trpt
-
-# Argo 域名（agn）
-agn=ca-tower-wong.dora.cc.cd
-
-# Argo 凭据（agk）- JSON 格式
-# agk='{"a":"...","t":"...","s":"..."}'
-
-# ========== 服务端口配置 ==========
-nginx_pt=33956
-argo_pt=8001
-
-# ========== 功能开关 ==========
-subscribe=true
-reality_private=GHCRfqiJFj3hzsOTyy57Gix-r6DJ0Ych-VnXH6Fj2XA
-name=小叮当-加拿大-tower-wong
-
-# ========== CDN 端口配置 ==========
-cdn_pt=443
-vl_sni_pt=443
-
-# ========== 调试开关 ==========
-DEBUG_FLAG=0
-EOF
-
-  chmod 600 "$config_path"
-  green "✅ 配置文件模板已生成：$config_path"
-  yellow "👉 请编辑配置文件并填入你的参数，然后运行脚本"
-  return 0
-}
-
-# ================== Phase 32: 配置文件生成函数 END ==================
 
 # 安装 Nginx 包
 install_nginx_pkg() {
@@ -1335,7 +1222,7 @@ v4v6(){
 }
 
 # Set up name for nodes and IP version preference
-setup_node_name_and_ip_strategy(){
+set_sbyx(){
     if [ -n "$name" ]; then
         sxname=$name-
         write_agsb_file "name" "$sxname"
@@ -1769,120 +1656,87 @@ EOF
 
     # 添加tuic协议
     if [ -n "$tup" ]; then
-        port_tu=$(get_protocol_port "$port_tu" "port_tu")
-        add_tuic_protocol "$port_tu" "$uuid"
+        if [ -n "$port_tu" ]; then
+            write_agsb_file "port_tu" "$port_tu"
+        elif is_file_nonempty $AGSB_HOME/port_tu; then
+            port_tu=$(cat "$AGSB_HOME/port_tu")
+        else
+            port_tu=$(rand_port)
+            write_agsb_file "port_tu" "$port_tu"
+        fi
+
+        port_tu=$(cat "$AGSB_HOME/port_tu"); 
+        password=$uuid
+
+        yellow "Tuic端口：$port_tu"
+
+         cat >> "$AGSB_HOME/sb.json" <<EOF
+{"type": "tuic", "tag": "tuic-sb", "listen": "::", "listen_port": ${port_tu}, "users": [ {  "uuid": "$uuid", "password": "$password" } ],"congestion_control": "bbr", "tls": { "enabled": true,"alpn": ["h3"], "certificate_path": "$AGSB_HOME/cert.pem", "key_path": "$AGSB_HOME/private.key" }},
+EOF
     fi
 
     # 添加hy2协议
     if [ -n "$hyp" ]; then
-        port_hy2=$(get_protocol_port "$port_hy2" "port_hy2")
-        add_hy2_protocol "$port_hy2" "$uuid"
+        port_hy2=$(get_or_generate_port "port_hy2")
+        
+        port_hy2=$(cat "$AGSB_HOME/port_hy2"); 
+        yellow "Hysteria2端口：$port_hy2"
+
+        cat >> "$AGSB_HOME/sb.json" <<EOF
+{"type": "hysteria2", "tag": "hy2-sb", "listen": "::", "listen_port": ${port_hy2},"users": [ { "password": "${uuid}" } ],"tls": { "enabled": true, "alpn": ["h3"], "certificate_path": "$AGSB_HOME/cert.pem", "key_path": "$AGSB_HOME/private.key" }},
+EOF
     fi
     
     # 添加trojan协议
     if [ -n "$trp" ]; then
-        port_tr=$(get_protocol_port "$port_tr" "port_tr")
-        add_trojan_protocol "$port_tr" "$uuid"
+        port_tr=$(get_or_generate_port "port_tr")
+        
+        port_tr=$(cat "$AGSB_HOME/port_tr"); 
+        yellow "Trojan端口(Argo本地使用)：$port_tr"
+
+        cat >> "$AGSB_HOME/sb.json" <<EOF
+{"type": "trojan", "tag": "trojan-ws-sb", "listen": "::", "listen_port": ${port_tr},"users": [ { "password": "${uuid}" } ],"transport": { "type": "ws", "path": "/${uuid}-tr" }},
+EOF
     fi
 
    # 添加vmess协议
     if [ -n "$vmp" ]; then
-        port_vm_ws=$(get_protocol_port "$port_vm_ws" "port_vm_ws")
-        add_vmess_protocol "$port_vm_ws" "$uuid"
+        port_vm_ws=$(get_or_generate_port "port_vm_ws")
+        
+        port_vm_ws=$(cat "$AGSB_HOME/port_vm_ws"); 
+        yellow "Vmess-ws端口 (Argo本地使用)：$port_vm_ws"
+
+        cat >> "$AGSB_HOME/sb.json" <<EOF
+{"type": "vmess", "tag": "vmess-sb", "listen": "::", "listen_port": ${port_vm_ws},"users": [ { "uuid": "${uuid}", "alterId": 0 } ],"transport": { "type": "ws", "path": "/${uuid}-vm" }},
+EOF
     fi
     # 添加vless-reality-vision协议
     if [ -n "$vlr" ]; then
-        port_vlr=$(get_protocol_port "$port_vlr" "port_vlr")
-        add_vless_reality_protocol "$port_vlr" "$uuid" "$vl_sni" "$vl_sni_pt"
-    fi
-}
+        if [ -z "$port_vlr" ] && [ ! -e "$AGSB_HOME/port_vlr" ];  then 
+            port_vlr=$(rand_port); 
+            write_agsb_file "port_vlr" "$port_vlr"; 
+        elif [ -n "$port_vlr" ]; then 
+            write_agsb_file "port_vlr" "$port_vlr"; 
+        fi
+        
+        port_vlr=$(cat "$AGSB_HOME/port_vlr"); 
+        yellow "VLESS-Reality-Vision端口：$port_vlr"
 
-# ================== Phase 21: 协议配置优化 ==================
-# 通用的端口获取或生成函数
-get_protocol_port() {
-  local port_var="$1"
-  local port_file="$2"
-  
-  if [ -n "$port_var" ]; then
-    write_agsb_file "$port_file" "$port_var"
-    echo "$port_var"
-  elif is_file_nonempty "$AGSB_HOME/$port_file"; then
-    cat "$AGSB_HOME/$port_file"
-  else
-    local new_port=$(rand_port)
-    write_agsb_file "$port_file" "$new_port"
-    echo "$new_port"
-  fi
-}
+        if [ ! -f "$AGSB_HOME/reality.key" ]; then 
+            "$AGSB_HOME/sing-box" generate reality-keypair > "$AGSB_HOME/reality.key"; 
+        fi
 
-# 添加TUIC协议配置
-add_tuic_protocol() {
-  local port_tu="$1"
-  local uuid="$2"
-  
-  yellow "Tuic端口：$port_tu"
-  cat >> "$AGSB_HOME/sb.json" <<EOF
-{"type": "tuic", "tag": "tuic-sb", "listen": "::", "listen_port": ${port_tu}, "users": [ {  "uuid": "$uuid", "password": "$uuid" } ],"congestion_control": "bbr", "tls": { "enabled": true,"alpn": ["h3"], "certificate_path": "$AGSB_HOME/cert.pem", "key_path": "$AGSB_HOME/private.key" }},
-EOF
-}
+          # ✅ Reality Keypair：只传私钥即可（自动算公钥/或复用文件），节点输出保持一致
+        init_reality_keypair
+        private_key="${reality_private}"
+        short_id="$(get_short_id "$AGSB_HOME/short_id")"
 
-# 添加Hysteria2协议配置
-add_hy2_protocol() {
-  local port_hy2="$1"
-  local uuid="$2"
-  
-  yellow "Hysteria2端口：$port_hy2"
-  cat >> "$AGSB_HOME/sb.json" <<EOF
-{"type": "hysteria2", "tag": "hy2-sb", "listen": "::", "listen_port": ${port_hy2},"users": [ { "password": "${uuid}" } ],"tls": { "enabled": true, "alpn": ["h3"], "certificate_path": "$AGSB_HOME/cert.pem", "key_path": "$AGSB_HOME/private.key" }},
-EOF
-}
-
-# 添加Trojan协议配置
-add_trojan_protocol() {
-  local port_tr="$1"
-  local uuid="$2"
-  
-  yellow "Trojan端口(Argo本地使用)：$port_tr"
-  cat >> "$AGSB_HOME/sb.json" <<EOF
-{"type": "trojan", "tag": "trojan-ws-sb", "listen": "::", "listen_port": ${port_tr},"users": [ { "password": "${uuid}" } ],"transport": { "type": "ws", "path": "/${uuid}-tr" }},
-EOF
-}
-
-# 添加Vmess协议配置
-add_vmess_protocol() {
-  local port_vm_ws="$1"
-  local uuid="$2"
-  
-  yellow "Vmess-ws端口 (Argo本地使用)：$port_vm_ws"
-  cat >> "$AGSB_HOME/sb.json" <<EOF
-{"type": "vmess", "tag": "vmess-sb", "listen": "::", "listen_port": ${port_vm_ws},"users": [ { "uuid": "${uuid}", "alterId": 0 } ],"transport": { "type": "ws", "path": "/${uuid}-vm" }},
-EOF
-}
-
-# 添加VLESS-Reality-Vision协议配置
-add_vless_reality_protocol() {
-  local port_vlr="$1"
-  local uuid="$2"
-  local vl_sni="$3"
-  local vl_sni_pt="$4"
-  
-  yellow "VLESS-Reality-Vision端口：$port_vlr"
-  
-  if [ ! -f "$AGSB_HOME/reality.key" ]; then 
-    "$AGSB_HOME/sing-box" generate reality-keypair > "$AGSB_HOME/reality.key"
-  fi
-  
-  init_reality_keypair
-  local private_key="${reality_private}"
-  local short_id="$(get_short_id "$AGSB_HOME/short_id")"
-  
-  cat >> "$AGSB_HOME/sb.json" <<EOF
+        # www.ua.edu
+        cat >> "$AGSB_HOME/sb.json" <<EOF
 {"type": "vless", "tag": "vless-reality-vision-sb", "listen": "::", "listen_port": ${port_vlr},"sniff": true,"users": [{"uuid": "${uuid}","flow": "xtls-rprx-vision"}],"tls": {"enabled": true,"server_name": "${vl_sni}","reality": {"enabled": true,"handshake": {"server": "${vl_sni}","server_port": ${vl_sni_pt}},"private_key": "${private_key}","short_id": ["${short_id}"]}}},
 EOF
+    fi
 }
-
-# ================== Phase 21: 协议配置优化 END ==================
-
 #  Generate Sing-box configuration file
 sbbout(){
     if [ -e "$AGSB_HOME/sb.json" ]; then
@@ -2420,7 +2274,7 @@ append_argo_cron_legacy() {
 post_install_finalize_legacy() {
   # 用“最多等待 10 秒 + 检测到就立刻继续”替代固定 sleep
   for i in 1 2 3 4 5 6 7 8 9 10; do
-    if is_agsb_running; then
+    if pgrep -f "$AGSB_HOME/sing-box" >/dev/null 2>&1 || pgrep -f "$AGSB_HOME/cloudflared" >/dev/null 2>&1; then
       break
     fi
     sleep 1
@@ -2428,8 +2282,9 @@ post_install_finalize_legacy() {
   echo
 
   # 只要 sing-box 或 cloudflared 进程存在，认为安装启动成功
-  if is_agsb_running; then
+  if pgrep -f "$AGSB_HOME/sing-box" >/dev/null 2>&1 || pgrep -f "$AGSB_HOME/cloudflared" >/dev/null 2>&1; then
     white "✅ 安装完成：已检测到 sing-box/cloudflared 正在运行"
+    # ❗ legacy 收尾：这里只做检测与提示，不做 agsb 快捷方式/下载主脚本/写 PATH/建软链
     return 0
   fi
 
@@ -2708,7 +2563,7 @@ ins(){
     # 1. 安装并启动 sing-box
     # =====================================================
     installsb
-    setup_node_name_and_ip_strategy
+    set_sbyx
     sbbout
 
     # 把ip写入server_ip.log
@@ -2740,7 +2595,11 @@ ins(){
         write_agsb_file "argoport.log" "$argoport"    
 
         # 仍然记录 Argo 输出节点类型（给 cip 用）
-        record_argo_protocol_type "$argo"
+        if [ "$argo" = "vmpt" ]; then
+          write_agsb_file "vlvm" "Vmess"
+        elif [ "$argo" = "trpt" ]; then
+          write_agsb_file "vlvm" "Trojan"
+        fi
 
         # 2.3 生成 Argo 凭据（JSON / token）
         # 仅用于“当前启动流程”，不用于重启判断
@@ -2750,12 +2609,44 @@ ins(){
         # 2.4 启动 Argo（固定 / 临时）
         if [ -n "$ARGO_DOMAIN" ] && [ -n "$ARGO_AUTH" ]; then
             argo_tunnel_type="固定"
-            dlog "判定为固定 Argo 隧道"
-            handle_fixed_argo_tunnel "$ARGO_DOMAIN" "$ARGO_AUTH" "$ARGO_MODE"
+            dlog "判定为固定 Argo 隧道（ARGO_DOMAIN + ARGO_AUTH 都存在）"
+
+          if [ "${DEBUG_FLAG:-0}" = "1" ]; then
+              _systemctl_path="$(get_cmd_path systemctl)"
+
+              [ -n "$_systemctl_path" ] || _systemctl_path="无"
+              _systemd_dir_status="$([ -d /run/systemd/system ] && echo 存在 || echo 不存在)"
+              _pid1="$(ps -p 1 -o comm= 2>/dev/null | tr -d '[:space:]')"
+              _pid1="$(ps -p 1 -o comm= 2>/dev/null | tr -d '[:space:]')"
+              dlog "systemd 判定：_has_systemd=$(has_systemd)systemctl=${_systemctl_path}，/run/systemd/system=${_systemd_dir_status}，PID1=${_pid1}"
+          fi
+
+          # systemd 判定
+          if has_systemd && [ "$EUID" -eq 0 ]; then
+              dlog "启动方式：systemd 服务（install_argo_service_systemd），模式=${ARGO_MODE}"
+
+              install_argo_service_systemd "$ARGO_MODE" "$ARGO_AUTH"
+
+          elif has_cmd rc-service && [ "$EUID" -eq 0 ]; then
+
+              dlog "启动方式：openrc 服务（install_argo_service_openrc），模式=${ARGO_MODE}"
+              install_argo_service_openrc "$ARGO_MODE" "$ARGO_AUTH"
+          else
+              # 无 systemd / openrc，直接后台启动
+              dlog "启动方式：无 systemd/openrc，直接后台启动（start_argo_no_daemon，模式=${ARGO_MODE}）"
+              start_argo_no_daemon "$ARGO_MODE" "$ARGO_AUTH" "$argoport"
+          fi
+
+            # 与原版一致：固定 Argo 域名直接落盘
+            write_agsb_file "sbargoym.log" "$ARGO_DOMAIN"
+            # token 模式下才会有 sbargotoken.log
+            [ "$ARGO_MODE" = "token" ] && write_agsb_file "sbargotoken.log" "$ARGO_AUTH"
         else
+            # 临时 Argo（trycloudflare）
             argo_tunnel_type="临时"
-            dlog "判定为临时 Argo 隧道"
-            handle_temp_argo_tunnel "$argoport"
+            dlog "判定为临时 Argo 隧道（未提供 ARGO_DOMAIN/ARGO_AUTH，走 trycloudflare）"
+            dlog "启动方式：临时隧道，直接后台启动（start_argo_no_daemon temp），模式=${ARGO_MODE}"
+            start_argo_no_daemon "temp" "" "$argoport"
         fi
 
         # 2.5 等待并检查 Argo 申请结果（原版 sleep + grep 逻辑）
@@ -2775,7 +2666,16 @@ ins(){
 # Write environment variables to files for persistence
 write2AgsbFolders(){
   ensure_dir "$AGSB_HOME"
-  write_config_batch
+
+  # 统一写入配置文件
+  write_agsb_file "vl_sni" "${vl_sni}"
+  write_agsb_file "hy_sni" "${hy_sni}"
+  write_agsb_file "tu_sni" "${tu_sni}"
+  write_agsb_file "cdn_host" "${cdn_host}"
+  write_agsb_file "cdn_pt" "${cdn_pt}"
+  write_agsb_file "nginx_port" "${nginx_pt}"
+  write_agsb_file "vl_sni_pt" "${vl_sni_pt}"
+  write_agsb_file "subscribe" "${subscribe}"
 }
 
 #   show status
@@ -2784,7 +2684,8 @@ agsbstatus() {
 
   dlog "进入 agsbstatus() 函数，开始判断 sing-box 状态"
   # 1) sing-box
-  if is_singbox_running_verbose; then
+  if pgrep -f "$AGSB_HOME/sing-box" >/dev/null 2>&1; then
+ 
     # 兼容：sing-box version r1.12.13
     local singbox_version
     singbox_version=$("$AGSB_HOME/sing-box" version 2>/dev/null | sed -n 's/.*r\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')
@@ -2823,7 +2724,7 @@ agsbstatus() {
     echo "Argo：✅ $(purple "未启用")（当前场景无需 Argo）"
   else
     dlog "进入 agsbstatus() 函数，开始判断 cloudflared 状态，argo_needed=$argo_needed"
-    if is_cloudflared_running_verbose; then
+    if pgrep -f "$AGSB_HOME/cloudflared" >/dev/null 2>&1; then
       # 兼容：cloudflared version 2025.11.1
       local cloudflared_version
       cloudflared_version=$("$AGSB_HOME/cloudflared" version 2>/dev/null | sed -n 's/.*version \([0-9]\{4\}\.[0-9]\+\.[0-9]\+\).*/\1/p')
@@ -3108,101 +3009,6 @@ strip_ip_brackets() {
   echo "$ip"
 }
 
-# ================== Phase 21: 节点链接生成优化 ==================
-# 生成Hysteria2节点链接
-generate_hy2_link() {
-  local uuid="$1"
-  local server_ip="$2"
-  local port_hy2="$3"
-  local hy_sni="$4"
-  local sxname="$5"
-  
-  echo "hysteria2://$uuid@$server_ip:$port_hy2?security=tls&alpn=h3&insecure=1&allowInsecure=1&sni=${hy_sni}#${sxname}hy2-$hostname"
-}
-
-# 生成TUIC节点链接
-generate_tuic_link() {
-  local uuid="$1"
-  local server_ip="$2"
-  local port_tu="$3"
-  local tu_sni="$4"
-  local sxname="$5"
-  
-  echo "tuic://${uuid}:${uuid}@${server_ip}:${port_tu}?sni=${tu_sni}&congestion_control=bbr&security=tls&udp_relay_mode=native&alpn=h3&allow_insecure=1#${sxname}tuic-$hostname"
-}
-
-# 生成VLESS-Reality-Vision节点链接
-generate_vless_reality_link() {
-  local uuid="$1"
-  local server_ip="$2"
-  local port_vlr="$3"
-  local vl_sni="$4"
-  local public_key="$5"
-  local short_id="$6"
-  local sxname="$7"
-  
-  echo "vless://${uuid}@${server_ip}:${port_vlr}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${vl_sni}&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#${sxname}vless-reality-$hostname"
-}
-
-# 生成Vmess-WS-TLS-Argo节点链接
-generate_vmess_argo_link() {
-  local uuid="$1"
-  local cdn_host="$2"
-  local cdn_pt="$3"
-  local argodomain="$4"
-  local sxname="$5"
-  
-  local vmess_json="{\"v\":\"2\",\"ps\":\"${sxname}vmess-ws-tls-argo-$hostname-${cdn_pt}\",\"add\":\"${cdn_host}\",\"port\":\"${cdn_pt}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":\"$argodomain\",\"path\":\"/${uuid}-vm\",\"tls\":\"tls\",\"sni\":\"$argodomain\"}"
-  echo "vmess://$(echo "$vmess_json" | base64 | tr -d '\n\r')"
-}
-
-# 生成Trojan-WS-TLS-Argo节点链接
-generate_trojan_argo_link() {
-  local uuid="$1"
-  local cdn_host="$2"
-  local cdn_pt="$3"
-  local argodomain="$4"
-  local sxname="$5"
-  
-  echo "trojan://${uuid}@${cdn_host}:${cdn_pt}?security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-tr&sni=${argodomain}&fp=chrome#${sxname}trojan-ws-tls-argo-$hostname-${cdn_pt}"
-}
-
-# ================== Phase 21: 节点链接生成优化 END ==================
-
-# ================== Phase 23: 协议检查优化 ==================
-# 检查协议是否启用
-is_protocol_enabled() {
-  local protocol="$1"
-  grep -q "$protocol" "$AGSB_HOME/sb.json" 2>/dev/null
-}
-
-# 检查Hysteria2是否启用
-has_hy2() {
-  is_protocol_enabled "hy2-sb"
-}
-
-# 检查TUIC是否启用
-has_tuic() {
-  is_protocol_enabled "tuic-sb"
-}
-
-# 检查VLESS-Reality是否启用
-has_vless_reality() {
-  is_protocol_enabled "vless-reality-vision-sb"
-}
-
-# 检查Trojan是否启用
-has_trojan() {
-  is_protocol_enabled "trojan-ws-sb"
-}
-
-# 检查Vmess是否启用
-has_vmess() {
-  is_protocol_enabled "vmess-sb"
-}
-
-# ================== Phase 23: 协议检查优化 END ==================
-
 # show nodes
 cip(){
 
@@ -3228,10 +3034,10 @@ cip(){
     purple "agsb脚本输出节点配置如下："; 
     echo;
     # Hysteria2 protocol (hy2)
-    if has_hy2; then 
-        port_hy2=$(read_hy2_port)
+    if grep -q "hy2-sb" "$AGSB_HOME/sb.json"; then 
+        port_hy2=$(cat "$AGSB_HOME/port_hy2"); 
         hy_sni=$(cat "$AGSB_HOME/hy_sni"); 
-        hy2_link=$(generate_hy2_link "$uuid" "$server_ip" "$port_hy2" "$hy_sni" "$sxname")
+        hy2_link="hysteria2://$uuid@$server_ip:$port_hy2?security=tls&alpn=h3&insecure=1&allowInsecure=1&sni=${hy_sni}#${sxname}hy2-$hostname"; 
         yellow "💣【 Hysteria2 】(直连协议)"; 
         green "$hy2_link"
         append_jh "$hy2_link"
@@ -3239,25 +3045,29 @@ cip(){
     fi
     
      # TUIC protocol (tuic or tupt)
-    if has_tuic; then
-        port_tu=$(read_tuic_port)
+    if grep -q "tuic-sb" "$AGSB_HOME/sb.json"; then
+        port_tu=$(cat "$AGSB_HOME/port_tu")
         tu_sni=$(cat "$AGSB_HOME/tu_sni"); 
-        tuic_link=$(generate_tuic_link "$uuid" "$server_ip" "$port_tu" "$tu_sni" "$sxname")
+        password=$uuid
+
+        tuic_link="tuic://${uuid}:${password}@${server_ip}:${port_tu}?sni=${tu_sni}&congestion_control=bbr&security=tls&udp_relay_mode=native&alpn=h3&allow_insecure=1#${sxname}tuic-$hostname"
         yellow "💣【 TUIC 】(直连协议)"
         green "$tuic_link" 
         append_jh "$tuic_link"
         echo;
     fi
     # VLESS-Reality-Vision protocol (vless-reality-vision)
-    if has_vless_reality; then
-        port_vlr=$(read_vless_reality_port)
+    if grep -q "vless-reality-vision-sb" "$AGSB_HOME/sb.json"; then
+        port_vlr=$(cat "$AGSB_HOME/port_vlr")
         public_key=$(sed -n '2p' "$AGSB_HOME/reality.key" | awk '{print $2}')
         short_id=$(cat "$AGSB_HOME/short_id")
         vl_sni=$(cat "$AGSB_HOME/vl_sni")
 
         dlog "cip函数中的short_id,值为:$short_id"
 
-        vless_link=$(generate_vless_reality_link "$uuid" "$server_ip" "$port_vlr" "$vl_sni" "$public_key" "$short_id" "$sxname")
+       # vless_link="vless://${uuid}@${server_ip}:${port_vlr}?encryption=none&security=reality&sni=www.yahoo.com&fp=chrome&flow=xtls-rprx-vision&publicKey=${public_key}&shortId=${short_id}#${sxname}vless-reality-$hostname"
+        
+        vless_link="vless://${uuid}@${server_ip}:${port_vlr}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${vl_sni}&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#${sxname}vless-reality-$hostname" 
         yellow "💣【 VLESS-Reality-Vision 】(直连协议)"; 
         green "$vless_link"
         append_jh "$vless_link"
@@ -3281,10 +3091,11 @@ cip(){
     if [ -n "$argodomain" ]; then
         vlvm=$(cat $AGSB_HOME/vlvm 2>/dev/null); uuid=$(cat "$AGSB_HOME/uuid")
         if [ "$vlvm" = "Vmess" ]; then
-            vmatls_link1=$(generate_vmess_argo_link "$uuid" "$cdn_host" "$cdn_pt" "$argodomain" "$sxname")
+            vmatls_link1="vmess://$(echo "{\"v\":\"2\",\"ps\":\"${sxname}vmess-ws-tls-argo-$hostname-${cdn_pt}\",\"add\":\"${cdn_host}\",\"port\":\"${cdn_pt}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":\"$argodomain\",\"path\":\"/${uuid}-vm\",\"tls\":\"tls\",\"sni\":\"$argodomain\"}" | base64 | tr -d '\n\r')"
+           
             tratls_link1=""
         elif [ "$vlvm" = "Trojan" ]; then
-            tratls_link1=$(generate_trojan_argo_link "$uuid" "$cdn_host" "$cdn_pt" "$argodomain" "$sxname")
+            tratls_link1="trojan://${uuid}@${cdn_host}:${cdn_pt}?security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-tr&sni=${argodomain}&fp=chrome#${sxname}trojan-ws-tls-argo-$hostname-${cdn_pt}"
             vmatls_link1=""
         fi
 
@@ -3342,81 +3153,67 @@ cleanup_nginx() {
     echo "Nginx 已被清理(清理配置文件和禁止自启，nginx 服务已停止)。"
 }
 
-# ================== Phase 22: 清理函数优化 ==================
-# 杀死进程
-kill_agsb_processes() {
-  dlog "杀死 agsb 相关进程"
-  for P in /proc/[0-9]*; do
-    if [ -L "$P/exe" ]; then
-      TARGET=$(readlink -f "$P/exe" 2>/dev/null)
-      if echo "$TARGET" | grep -qE '/agsb/cloudflared|/agsb/sing-box'; then 
-        kill "$(basename "$P")" 2>/dev/null
-      fi
-    fi
-  done
-  
-  pkill -15 -f "$AGSB_HOME/sing-box" 2>/dev/null
-  pkill -15 -f "$AGSB_HOME/cloudflared" 2>/dev/null
-}
-
-# 清理crontab
-cleanup_crontab() {
-  dlog "清理 crontab"
-  crontab -l > $TMP_DIR/crontab.tmp 2>/dev/null || touch $TMP_DIR/crontab.tmp
-  sed -i '/.*agsb.*/d' $TMP_DIR/crontab.tmp
-  crontab $TMP_DIR/crontab.tmp >/dev/null 2>&1
-  rm -f $TMP_DIR/crontab.tmp
-}
-
-# 清理服务
-cleanup_services() {
-  dlog "清理服务"
-  if has_systemd; then
-    for svc in sb argo; do
-      systemctl stop "$svc" >/dev/null 2>&1
-      systemctl disable "$svc" >/dev/null 2>&1
-    done
-    rm -f $SYSTEMD_DIR/{sb.service,argo.service}
-  elif has_cmd rc-service; then
-    for svc in sing-box argo; do
-      rc-service "$svc" stop >/dev/null 2>&1
-      rc-update del "$svc" default >/dev/null 2>&1
-    done
-    rm -f $INITD_DIR/{sing-box,argo}
-  fi
-}
-
-# 清理目录
-cleanup_directories() {
-  dlog "清理目录"
-  if is_dir $HOME/bin/agsb; then
-    rm -rf "$HOME/bin/agsb"
-  fi
-}
-
-# ================== Phase 22: 清理函数优化 END ==================
-
 # Remove agsb folder
 cleandel(){
     # Change to $HOME to avoid issues when deleting directories
    cd "$HOME" || exit 1
 
     yellow "开始卸载sing-box/cloudflared流程..."; 
-    
-    # 杀死进程
-    kill_agsb_processes
-    
-    # 清理crontab
-    cleanup_crontab
-    
-    # 清理服务
-    cleanup_services
-    
-    # 清理目录
-    cleanup_directories
+    # Continue with the cleanup
+    for P in /proc/[0-9]*; do
+        if [ -L "$P/exe" ]; then
+            TARGET=$(readlink -f "$P/exe" 2>/dev/null)
+            if echo "$TARGET" | grep -qE '/agsb/cloudflared|/agsb/sing-box'; then 
+                kill "$(basename "$P")" 2>/dev/null
+            fi
+        fi
+    done
 
-    yellow "开始卸载或者清理nginx流程..."; 
-    cleanup_nginx
+    pkill -15 -f "$AGSB_HOME/sing-box" 2>/dev/null
+    pkill -15 -f "$AGSB_HOME/cloudflared" 2>/dev/null
+
+    # 从 .bashrc 文件中删除包含 'agsb' 的行
+    # sed -i '/.*agsb.*/d' ~/.bashrc
+   # sed -i '/.*export PATH="\$HOME\/bin:\$PATH".*/d' ~/.bashrc
+
+    # 立即应用 .bashrc 的修改
+    #. ~/.bashrc 2>/dev/null
+
+    # 处理 crontab，兼容 Debian 和 Alpine
+    # Debian/Ubuntu 和 Alpine 都支持 crontab，但需要检查 crontab 是否存在
+    crontab -l > $TMP_DIR/crontab.tmp 2>/dev/null || touch $TMP_DIR/crontab.tmp
+    sed -i '/.*agsb.*/d' $TMP_DIR/crontab.tmp
+    crontab $TMP_DIR/crontab.tmp >/dev/null 2>&1
+    rm $TMP_DIR/crontab.tmp
+
+    # 删除 agsb 目录，检查路径是否在 Alpine 或 Debian 上正确
+    if is_dir $HOME/bin/agsb; then
+        rm -rf "$HOME/bin/agsb"
+    fi
+
+    if has_systemd; then
+        for svc in sb argo; do
+            systemctl stop "$svc" >/dev/null 2>&1
+            systemctl disable "$svc" >/dev/null 2>&1
+        done
+        rm -f $SYSTEMD_DIR/{sb.service,argo.service}
+    elif has_cmd rc-service; then
+        for svc in sing-box argo; do
+            rc-service "$svc" stop >/dev/null 2>&1
+            rc-update del "$svc" default >/dev/null 2>&1
+        done
+        rm -f $INITD_DIR/{sing-box,argo}
+    fi
+
+  # 清理 nginx
+  #  pkill -15 nginx >/dev/null 2>&1
+  #  rm -f "$(nginx_conf_path)" 2>/dev/null
+
+  yellow "开始卸载或者清理nginx流程..."; 
+  cleanup_nginx
+
+  yellow "开始卸载或者清理快捷方式流程..."; 
+
 }
 
 # Restart sing-box
@@ -3460,26 +3257,35 @@ argorestart(){
 
     # 1️⃣ JSON 固定隧道（最高优先级）
     if is_file $AGSB_HOME/tunnel.yml; then
-        start_argo_json_tunnel
+        nohup "$AGSB_HOME/cloudflared" tunnel \
+          --edge-ip-version auto \
+          --config "$AGSB_HOME/tunnel.yml" run \
+          >/dev/null 2>&1 &
         return
     fi
 
     # 2️⃣ token 固定隧道
     if is_file $AGSB_HOME/sbargotoken.log; then
-        start_argo_token_tunnel
+        nohup "$AGSB_HOME/cloudflared" tunnel \
+          --no-autoupdate \
+          --edge-ip-version auto run \
+          --token "$(cat "$AGSB_HOME/sbargotoken.log")" \
+          >/dev/null 2>&1 &
         return
     fi
 
     # 3️⃣ 临时 Argo（trycloudflare）
     if is_file $AGSB_HOME/argoport.log; then
-        start_argo_temp_tunnel
+        nohup "$AGSB_HOME/cloudflared" tunnel \
+          --url "http://localhost:$(cat "$AGSB_HOME/argoport.log")" \
+          --edge-ip-version auto \
+          --no-autoupdate \
+          > "$AGSB_HOME/argo.log" 2>&1 &
     fi
 }
 
 install_step(){
     install_init
-    validate_all_params || exit 1
-    validate_extended_params || exit 1
     configure_iptables
     ins
     green "agsb脚本安装完成！即将打印节点信息……"
@@ -3618,9 +3424,6 @@ install_init() {
   # 获取操作系统名称
   os_name=$(awk -F= '/^NAME/{print $2}' $OS_RELEASE)
   
-  # Phase 33: 初始化缓存目录
-  init_cache_dir || dlog "缓存目录初始化失败（非致命）"
-  
   dlog "开始安装各种乱七八糟的依赖"
   install_deps
   dlog "安装各种乱七八糟的依赖完成"
@@ -3714,10 +3517,6 @@ dispatch_command() {
       ;;
     nginx_start|nginx_stop|nginx_restart|nginx_status)
       handle_nginx_cmd "${cmd#nginx_}"
-      ;;
-    config)
-      # Phase 32: 生成配置文件
-      generate_config_template "${arg:-$AGSB_CONFIG_USER}"
       ;;
     del)
       cmd_uninstall
@@ -3830,7 +3629,7 @@ start_argo_unified() {
 install_singbox_phase() {
   dlog "Phase 1: 安装并启动 sing-box"
   installsb
-  setup_node_name_and_ip_strategy
+  set_sbyx
   sbbout
   write_server_ip
 }
@@ -4023,1632 +3822,6 @@ EOF
 
 # ================== Phase 18: 自启动优化 END ==================
 
-# ================== Phase 19: 下载和验证优化 ==================
-# ================== Phase 33: 性能优化 - 缓存和并行下载 ==================
-
-# 缓存目录
-AGSB_CACHE_DIR="${AGSB_HOME}/.cache"
-
-# 初始化缓存目录
-init_cache_dir() {
-  mkdir -p "$AGSB_CACHE_DIR" || return 1
-  chmod 700 "$AGSB_CACHE_DIR"
-  return 0
-}
-
-# 生成缓存键（基于URL的MD5哈希）
-get_cache_key() {
-  local url="$1"
-  echo "$url" | md5sum | awk '{print $1}'
-}
-
-# 获取缓存文件路径
-get_cache_path() {
-  local url="$1"
-  local cache_key=$(get_cache_key "$url")
-  echo "$AGSB_CACHE_DIR/$cache_key"
-}
-
-# 检查缓存是否有效（默认24小时过期）
-is_cache_valid() {
-  local cache_path="$1"
-  local max_age="${2:-86400}"  # 默认24小时
-  
-  if [ ! -f "$cache_path" ]; then
-    return 1
-  fi
-  
-  local file_age=$(($(date +%s) - $(stat -f%m "$cache_path" 2>/dev/null || stat -c%Y "$cache_path" 2>/dev/null)))
-  [ "$file_age" -lt "$max_age" ]
-}
-
-# 从缓存读取（如果有效）
-read_from_cache() {
-  local url="$1"
-  local cache_path=$(get_cache_path "$url")
-  
-  if is_cache_valid "$cache_path"; then
-    dlog "从缓存读取：$url"
-    cat "$cache_path"
-    return 0
-  fi
-  
-  return 1
-}
-
-# 写入缓存
-write_to_cache() {
-  local url="$1"
-  local content="$2"
-  local cache_path=$(get_cache_path "$url")
-  
-  echo "$content" > "$cache_path" 2>/dev/null || true
-  dlog "已缓存：$url"
-}
-
-# 统一的文件下载函数（支持缓存）
-download_file() {
-  local url="$1"
-  local output="$2"
-  local timeout="${3:-120}"
-  local use_cache="${4:-true}"
-  
-  dlog "开始下载：$url -> $output（缓存=$use_cache）"
-  
-  # 如果启用缓存，先尝试从缓存读取
-  if [ "$use_cache" = "true" ]; then
-    if cached_content=$(read_from_cache "$url"); then
-      echo "$cached_content" > "$output"
-      dlog "从缓存恢复：$url"
-      return 0
-    fi
-  fi
-  
-  # 执行下载
-  local downloaded_content=""
-  if downloaded_content=$(curl -s --connect-timeout 5 --max-time "$timeout" --retry 2 --retry-delay 2 --retry-all-errors "$url" 2>/dev/null); then
-    echo "$downloaded_content" > "$output"
-    # 写入缓存
-    [ "$use_cache" = "true" ] && write_to_cache "$url" "$downloaded_content"
-    return 0
-  elif downloaded_content=$(wget -qO- --tries=2 --timeout="$timeout" --dns-timeout=5 --read-timeout=60 "$url" 2>/dev/null); then
-    echo "$downloaded_content" > "$output"
-    # 写入缓存
-    [ "$use_cache" = "true" ] && write_to_cache "$url" "$downloaded_content"
-    return 0
-  fi
-  
-  red "❌ 下载失败：$url"
-  return 1
-}
-
-# 并行下载多个文件
-# 用法：parallel_download_files "url1:output1" "url2:output2" ...
-parallel_download_files() {
-  local -a pids=()
-  local -a specs=("$@")
-  
-  dlog "开始并行下载 ${#specs[@]} 个文件"
-  
-  # 启动所有下载任务
-  for spec in "${specs[@]}"; do
-    local url="${spec%:*}"
-    local output="${spec#*:}"
-    
-    # 后台下载
-    download_file "$url" "$output" 120 true &
-    pids+=($!)
-  done
-  
-  # 等待所有任务完成
-  local failed=0
-  for pid in "${pids[@]}"; do
-    if ! wait "$pid"; then
-      ((failed++))
-    fi
-  done
-  
-  if [ "$failed" -gt 0 ]; then
-    red "❌ 并行下载失败：$failed 个文件"
-    return 1
-  fi
-  
-  green "✅ 并行下载完成"
-  return 0
-}
-
-# ================== Phase 33: 性能优化 END ==================
-
-# ================== Phase 34: 错误恢复和重试机制 ==================
-
-# 重试执行命令（带指数退避）
-retry_with_backoff() {
-  local max_attempts="${1:-3}"
-  local initial_delay="${2:-1}"
-  shift 2
-  local cmd=("$@")
-  
-  local attempt=1
-  local delay=$initial_delay
-  
-  while [ "$attempt" -le "$max_attempts" ]; do
-    dlog "执行命令（尝试 $attempt/$max_attempts）：${cmd[*]}"
-    
-    if "${cmd[@]}"; then
-      dlog "命令执行成功"
-      return 0
-    fi
-    
-    if [ "$attempt" -lt "$max_attempts" ]; then
-      yellow "⏳ 命令失败，${delay}秒后重试..."
-      sleep "$delay"
-      # 指数退避：每次延迟翻倍
-      delay=$((delay * 2))
-    fi
-    
-    ((attempt++))
-  done
-  
-  red "❌ 命令执行失败（已重试 $max_attempts 次）"
-  return 1
-}
-
-# 备份文件（用于回滚）
-backup_file() {
-  local filepath="$1"
-  local backup_dir="${2:-${AGSB_HOME}/.backups}"
-  
-  if [ ! -f "$filepath" ]; then
-    dlog "文件不存在，跳过备份：$filepath"
-    return 0
-  fi
-  
-  mkdir -p "$backup_dir" || return 1
-  
-  local filename=$(basename "$filepath")
-  local timestamp=$(date +%s)
-  local backup_path="${backup_dir}/${filename}.${timestamp}.bak"
-  
-  if cp "$filepath" "$backup_path"; then
-    dlog "文件已备份：$filepath -> $backup_path"
-    echo "$backup_path"
-    return 0
-  else
-    red "❌ 备份失败：$filepath"
-    return 1
-  fi
-}
-
-# 恢复文件（从备份）
-restore_file() {
-  local backup_path="$1"
-  local target_path="$2"
-  
-  if [ ! -f "$backup_path" ]; then
-    red "❌ 备份文件不存在：$backup_path"
-    return 1
-  fi
-  
-  if cp "$backup_path" "$target_path"; then
-    dlog "文件已恢复：$backup_path -> $target_path"
-    green "✅ 文件已恢复"
-    return 0
-  else
-    red "❌ 恢复失败：$backup_path"
-    return 1
-  fi
-}
-
-# 获取最新的备份文件
-get_latest_backup() {
-  local filepath="$1"
-  local backup_dir="${2:-${AGSB_HOME}/.backups}"
-  local filename=$(basename "$filepath")
-  
-  # 查找最新的备份文件
-  ls -t "${backup_dir}/${filename}".*.bak 2>/dev/null | head -n 1
-}
-
-# 自动恢复（如果当前文件损坏）
-auto_restore_if_corrupted() {
-  local filepath="$1"
-  local check_cmd="${2:-}"
-  
-  if [ ! -f "$filepath" ]; then
-    dlog "文件不存在：$filepath"
-    return 1
-  fi
-  
-  # 如果提供了检查命令，执行检查
-  if [ -n "$check_cmd" ]; then
-    if ! eval "$check_cmd '$filepath'" >/dev/null 2>&1; then
-      yellow "⚠️ 文件检查失败，尝试从备份恢复：$filepath"
-      
-      local latest_backup=$(get_latest_backup "$filepath")
-      if [ -n "$latest_backup" ]; then
-        restore_file "$latest_backup" "$filepath"
-        return $?
-      else
-        red "❌ 未找到备份文件"
-        return 1
-      fi
-    fi
-  fi
-  
-  return 0
-}
-
-# 事务性文件操作（原子性）
-# 用法：atomic_write_file "filepath" "content"
-atomic_write_file() {
-  local filepath="$1"
-  local content="$2"
-  local temp_file="${filepath}.tmp.$"
-  
-  # 写入临时文件
-  if ! echo "$content" > "$temp_file"; then
-    red "❌ 无法写入临时文件：$temp_file"
-    rm -f "$temp_file"
-    return 1
-  fi
-  
-  # 原子性移动（同一文件系统内）
-  if ! mv "$temp_file" "$filepath"; then
-    red "❌ 无法移动文件：$temp_file -> $filepath"
-    rm -f "$temp_file"
-    return 1
-  fi
-  
-  dlog "文件已原子性写入：$filepath"
-  return 0
-}
-
-# ================== Phase 34: 错误恢复和重试机制 END ==================
-
-# ================== Phase 35: 日志和监控优化 ==================
-
-# 日志级别常量
-LOG_LEVEL_TRACE=0
-LOG_LEVEL_DEBUG=1
-LOG_LEVEL_INFO=2
-LOG_LEVEL_WARN=3
-LOG_LEVEL_ERROR=4
-LOG_LEVEL_FATAL=5
-
-# 当前日志级别（可通过环境变量覆盖）
-LOG_LEVEL="${LOG_LEVEL:-$LOG_LEVEL_INFO}"
-
-# 结构化日志输出
-log_structured() {
-  local level="$1"
-  local message="$2"
-  local context="${3:-}"
-  local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-  
-  # 构建日志行
-  local log_line="[$timestamp] [$level]"
-  [ -n "$context" ] && log_line="$log_line [$context]"
-  log_line="$log_line $message"
-  
-  # 输出到日志文件
-  echo "$log_line" >> "$AGSB_LOG_FILE" 2>/dev/null || true
-  
-  # 根据日志级别输出到控制台
-  case "$level" in
-    TRACE|DEBUG)
-      [ "$DEBUG_FLAG" = "1" ] && echo "$log_line" >&2
-      ;;
-    INFO)
-      green "ℹ️ $message"
-      ;;
-    WARN)
-      yellow "⚠️ $message"
-      ;;
-    ERROR)
-      red "❌ $message"
-      ;;
-    FATAL)
-      red "💥 $message"
-      ;;
-  esac
-}
-
-# 简化的日志函数
-log_trace() { log_structured "TRACE" "$1" "${2:-}"; }
-log_debug() { log_structured "DEBUG" "$1" "${2:-}"; }
-log_info() { log_structured "INFO" "$1" "${2:-}"; }
-log_warn() { log_structured "WARN" "$1" "${2:-}"; }
-log_error() { log_structured "ERROR" "$1" "${2:-}"; }
-log_fatal() { log_structured "FATAL" "$1" "${2:-}"; }
-
-# 性能计时器
-declare -A PERF_TIMERS
-
-# 启动性能计时
-perf_start() {
-  local timer_name="$1"
-  PERF_TIMERS["${timer_name}_start"]=$(date +%s%N)
-  dlog "性能计时开始：$timer_name"
-}
-
-# 停止性能计时并输出结果
-perf_stop() {
-  local timer_name="$1"
-  local start_time="${PERF_TIMERS[${timer_name}_start]:-}"
-  
-  if [ -z "$start_time" ]; then
-    log_warn "计时器不存在：$timer_name"
-    return 1
-  fi
-  
-  local end_time=$(date +%s%N)
-  local elapsed_ns=$((end_time - start_time))
-  local elapsed_ms=$((elapsed_ns / 1000000))
-  local elapsed_s=$((elapsed_ms / 1000))
-  
-  if [ "$elapsed_s" -gt 0 ]; then
-    log_info "性能计时：$timer_name = ${elapsed_s}s ${elapsed_ms}ms"
-  else
-    log_info "性能计时：$timer_name = ${elapsed_ms}ms"
-  fi
-  
-  # 清理计时器
-  unset PERF_TIMERS["${timer_name}_start"]
-  
-  return 0
-}
-
-# 事件追踪
-declare -a EVENT_LOG
-
-# 记录事件
-track_event() {
-  local event_type="$1"
-  local event_data="$2"
-  local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-  
-  local event_entry="[$timestamp] $event_type: $event_data"
-  EVENT_LOG+=("$event_entry")
-  
-  dlog "事件已记录：$event_entry"
-}
-
-# 显示事件日志
-show_event_log() {
-  local limit="${1:-50}"
-  
-  echo "========== 事件日志 =========="
-  local count=0
-  for event in "${EVENT_LOG[@]}"; do
-    echo "$event"
-    ((count++))
-    [ "$count" -ge "$limit" ] && break
-  done
-  echo "=============================="
-}
-
-# 清空事件日志
-clear_event_log() {
-  EVENT_LOG=()
-  dlog "事件日志已清空"
-}
-
-# 导出事件日志到文件
-export_event_log() {
-  local output_file="${1:-${AGSB_HOME}/event_log.txt}"
-  
-  {
-    echo "========== agsb 事件日志 =========="
-    echo "导出时间：$(date '+%Y-%m-%d %H:%M:%S')"
-    echo "========================================"
-    for event in "${EVENT_LOG[@]}"; do
-      echo "$event"
-    done
-  } > "$output_file"
-  
-  green "✅ 事件日志已导出：$output_file"
-  return 0
-}
-
-# ================== Phase 35: 日志和监控优化 END ==================
-
-# ================== Phase 36: 安全性加固 ==================
-
-# 验证和清理输入（防止注入攻击）
-sanitize_input() {
-  local input="$1"
-  local allowed_chars="${2:-[a-zA-Z0-9._-]}"
-  
-  # 移除不允许的字符
-  echo "$input" | sed "s/[^$allowed_chars]//g"
-}
-
-# 验证文件路径（防止路径遍历）
-validate_file_path() {
-  local filepath="$1"
-  
-  # 检查是否包含 .. 或其他危险模式
-  if [[ "$filepath" =~ \.\. ]] || [[ "$filepath" =~ ^/ ]]; then
-    return 1
-  fi
-  
-  return 0
-}
-
-# 检查文件权限安全性
-check_file_permissions() {
-  local filepath="$1"
-  local expected_perms="${2:-600}"
-  
-  if [ ! -f "$filepath" ]; then
-    return 0
-  fi
-  
-  local current_perms=$(stat -c%a "$filepath" 2>/dev/null || stat -f%A "$filepath" 2>/dev/null)
-  
-  if [ "$current_perms" != "$expected_perms" ]; then
-    log_warn "文件权限不安全：$filepath（当前=$current_perms，期望=$expected_perms）"
-    chmod "$expected_perms" "$filepath" 2>/dev/null || return 1
-    log_info "文件权限已修复：$filepath"
-  fi
-  
-  return 0
-}
-
-# 验证 UUID 格式
-validate_uuid_format() {
-  local uuid="$1"
-  
-  # UUID v4 格式：xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
-  if [[ $uuid =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
-    return 0
-  fi
-  
-  return 1
-}
-
-# 验证 IP 地址格式
-validate_ip_format() {
-  local ip="$1"
-  
-  # IPv4 格式
-  if [[ $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-    # 检查每个八位组是否在 0-255 范围内
-    local IFS='.'
-    local -a octets=($ip)
-    for octet in "${octets[@]}"; do
-      [ "$octet" -gt 255 ] && return 1
-    done
-    return 0
-  fi
-  
-  # IPv6 格式（简单检查）
-  if [[ $ip =~ ^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$ ]]; then
-    return 0
-  fi
-  
-  return 1
-}
-
-# 验证端口范围
-validate_port_range() {
-  local port="$1"
-  local min="${2:-1}"
-  local max="${3:-65535}"
-  
-  if ! [[ "$port" =~ ^[0-9]+$ ]]; then
-    return 1
-  fi
-  
-  [ "$port" -ge "$min" ] && [ "$port" -le "$max" ]
-}
-
-# 检查命令是否存在且可执行
-check_command_safe() {
-  local cmd="$1"
-  
-  # 防止路径遍历
-  if [[ "$cmd" =~ / ]]; then
-    return 1
-  fi
-  
-  has_cmd "$cmd"
-}
-
-# 安全的环境变量设置
-set_env_safe() {
-  local var_name="$1"
-  local var_value="$2"
-  
-  # 验证变量名
-  if ! [[ "$var_name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
-    log_error "无效的环境变量名：$var_name"
-    return 1
-  fi
-  
-  # 设置环境变量
-  export "$var_name=$var_value"
-  dlog "环境变量已设置：$var_name"
-  
-  return 0
-}
-
-# 安全的命令执行（带超时和输出限制）
-execute_safe() {
-  local timeout="${1:-30}"
-  shift
-  local cmd=("$@")
-  
-  # 使用 timeout 命令限制执行时间
-  if has_cmd timeout; then
-    timeout "$timeout" "${cmd[@]}"
-  else
-    # 备选：使用 bash 的 SECONDS 变量
-    ( "${cmd[@]}" ) &
-    local pid=$!
-    local count=0
-    while kill -0 "$pid" 2>/dev/null && [ "$count" -lt "$timeout" ]; do
-      sleep 1
-      ((count++))
-    done
-    
-    if kill -0 "$pid" 2>/dev/null; then
-      kill -9 "$pid" 2>/dev/null
-      return 124  # timeout 返回码
-    fi
-    
-    wait "$pid"
-  fi
-}
-
-# ================== Phase 36: 安全性加固 END ==================
-
-# ================== Phase 37: 配置管理和状态持久化 ==================
-
-# 配置版本管理
-CONFIG_VERSION="1.0"
-CONFIG_SCHEMA_VERSION="1"
-
-# 保存配置快照
-save_config_snapshot() {
-  local snapshot_dir="${AGSB_HOME}/.snapshots"
-  mkdir -p "$snapshot_dir" || return 1
-  
-  local timestamp=$(date +%s)
-  local snapshot_file="${snapshot_dir}/config_${timestamp}.json"
-  
-  # 收集当前配置
-  local config_json=$(cat <<EOF
-{
-  "version": "$CONFIG_VERSION",
-  "schema_version": "$CONFIG_SCHEMA_VERSION",
-  "timestamp": "$timestamp",
-  "config": {
-    "cdn_host": "$cdn_host",
-    "hy_sni": "$hy_sni",
-    "vl_sni": "$vl_sni",
-    "tu_sni": "$tu_sni",
-    "uuid": "$uuid",
-    "trpt": "$trpt",
-    "vlrt": "$vlrt",
-    "hypt": "$hypt",
-    "tupt": "$tupt",
-    "argo": "$argo",
-    "agn": "$ARGO_DOMAIN",
-    "nginx_pt": "$nginx_pt",
-    "subscribe": "$subscribe",
-    "name": "$name"
-  }
-}
-EOF
-)
-  
-  echo "$config_json" > "$snapshot_file" || return 1
-  dlog "配置快照已保存：$snapshot_file"
-  
-  return 0
-}
-
-# 列出配置快照
-list_config_snapshots() {
-  local snapshot_dir="${AGSB_HOME}/.snapshots"
-  
-  if [ ! -d "$snapshot_dir" ]; then
-    log_info "未找到配置快照"
-    return 0
-  fi
-  
-  echo "========== 配置快照列表 =========="
-  ls -lh "$snapshot_dir"/config_*.json 2>/dev/null | awk '{print $9, "(" $5 ")"}'
-  echo "=================================="
-}
-
-# 恢复配置快照
-restore_config_snapshot() {
-  local snapshot_file="$1"
-  
-  if [ ! -f "$snapshot_file" ]; then
-    log_error "快照文件不存在：$snapshot_file"
-    return 1
-  fi
-  
-  # 验证 JSON 格式
-  if ! jq . "$snapshot_file" >/dev/null 2>&1; then
-    log_error "快照文件格式无效：$snapshot_file"
-    return 1
-  fi
-  
-  # 提取配置并设置环境变量
-  local config=$(jq -r '.config' "$snapshot_file")
-  
-  export cdn_host=$(echo "$config" | jq -r '.cdn_host')
-  export hy_sni=$(echo "$config" | jq -r '.hy_sni')
-  export vl_sni=$(echo "$config" | jq -r '.vl_sni')
-  export tu_sni=$(echo "$config" | jq -r '.tu_sni')
-  export uuid=$(echo "$config" | jq -r '.uuid')
-  export trpt=$(echo "$config" | jq -r '.trpt')
-  export vlrt=$(echo "$config" | jq -r '.vlrt')
-  export hypt=$(echo "$config" | jq -r '.hypt')
-  export tupt=$(echo "$config" | jq -r '.tupt')
-  export argo=$(echo "$config" | jq -r '.argo')
-  export ARGO_DOMAIN=$(echo "$config" | jq -r '.agn')
-  export nginx_pt=$(echo "$config" | jq -r '.nginx_pt')
-  export subscribe=$(echo "$config" | jq -r '.subscribe')
-  export name=$(echo "$config" | jq -r '.name')
-  
-  log_info "配置已从快照恢复：$snapshot_file"
-  return 0
-}
-
-# 状态文件管理
-save_state() {
-  local state_key="$1"
-  local state_value="$2"
-  local state_file="${AGSB_HOME}/.state"
-  
-  # 读取现有状态
-  local state_json="{}"
-  if [ -f "$state_file" ]; then
-    state_json=$(cat "$state_file")
-  fi
-  
-  # 更新状态
-  state_json=$(echo "$state_json" | jq --arg key "$state_key" --arg value "$state_value" '.[$key] = $value')
-  
-  # 保存状态
-  echo "$state_json" > "$state_file" || return 1
-  dlog "状态已保存：$state_key=$state_value"
-  
-  return 0
-}
-
-# 读取状态
-read_state() {
-  local state_key="$1"
-  local default_value="${2:-}"
-  local state_file="${AGSB_HOME}/.state"
-  
-  if [ ! -f "$state_file" ]; then
-    echo "$default_value"
-    return 0
-  fi
-  
-  local state_value=$(jq -r --arg key "$state_key" '.[$key] // empty' "$state_file" 2>/dev/null)
-  
-  if [ -z "$state_value" ]; then
-    echo "$default_value"
-  else
-    echo "$state_value"
-  fi
-}
-
-# 清空状态
-clear_state() {
-  local state_file="${AGSB_HOME}/.state"
-  echo "{}" > "$state_file"
-  dlog "状态已清空"
-}
-
-# 显示所有状态
-show_all_state() {
-  local state_file="${AGSB_HOME}/.state"
-  
-  if [ ! -f "$state_file" ]; then
-    log_info "未找到状态文件"
-    return 0
-  fi
-  
-  echo "========== 系统状态 =========="
-  jq . "$state_file" 2>/dev/null || cat "$state_file"
-  echo "=============================="
-}
-
-# ================== Phase 37: 配置管理和状态持久化 END ==================
-
-# ================== Phase 38: 诊断和调试工具 ==================
-
-# 系统诊断报告
-generate_diagnostic_report() {
-  local report_file="${AGSB_HOME}/diagnostic_report.txt"
-  
-  {
-    echo "========== agsb 系统诊断报告 =========="
-    echo "生成时间：$(date '+%Y-%m-%d %H:%M:%S')"
-    echo ""
-    
-    echo "========== 系统信息 =========="
-    echo "操作系统：$(uname -s)"
-    echo "内核版本：$(uname -r)"
-    echo "CPU架构：$(uname -m)"
-    echo "主机名：$(hostname)"
-    echo ""
-    
-    echo "========== 磁盘空间 =========="
-    df -h | head -n 5
-    echo ""
-    
-    echo "========== 内存使用 =========="
-    free -h 2>/dev/null || vm_stat 2>/dev/null || true
-    echo ""
-    
-    echo "========== 网络连接 =========="
-    echo "IPv4 连接性："
-    curl -s4 -m 2 https://icanhazip.com 2>/dev/null || echo "无法连接"
-    echo "IPv6 连接性："
-    curl -s6 -m 2 https://icanhazip.com 2>/dev/null || echo "无法连接"
-    echo ""
-    
-    echo "========== 关键进程 =========="
-    pgrep -f "sing-box" >/dev/null && echo "✅ sing-box 运行中" || echo "❌ sing-box 未运行"
-    pgrep -f "cloudflared" >/dev/null && echo "✅ cloudflared 运行中" || echo "❌ cloudflared 未运行"
-    pgrep -f "nginx" >/dev/null && echo "✅ nginx 运行中" || echo "❌ nginx 未运行"
-    echo ""
-    
-    echo "========== 关键端口 =========="
-    ss -tlnp 2>/dev/null | grep -E ":(${trpt}|${vlrt}|${hypt}|${tupt}|${nginx_pt})" || echo "未检测到关键端口"
-    echo ""
-    
-    echo "========== 日志文件 =========="
-    [ -f "$AGSB_LOG_FILE" ] && echo "✅ 日志文件存在：$AGSB_LOG_FILE（大小：$(du -h "$AGSB_LOG_FILE" | awk '{print $1}')）" || echo "❌ 日志文件不存在"
-    echo ""
-    
-    echo "========== 配置文件 =========="
-    [ -f "$AGSB_CONFIG" ] && echo "✅ 配置文件存在：$AGSB_CONFIG" || echo "❌ 配置文件不存在"
-    echo ""
-    
-    echo "========== 环境变量 =========="
-    echo "DEBUG_FLAG=$DEBUG_FLAG"
-    echo "subscribe=$subscribe"
-    echo "argo=$argo"
-    echo ""
-    
-    echo "========== 依赖检查 =========="
-    for cmd in curl wget jq openssl iptables ss lsof; do
-      has_cmd "$cmd" && echo "✅ $cmd" || echo "❌ $cmd"
-    done
-    echo ""
-    
-    echo "========== 最后更新 =========="
-    [ -f "$AGSB_BIN" ] && echo "sing-box 修改时间：$(stat -f%Sm -t '%Y-%m-%d %H:%M:%S' "$AGSB_BIN" 2>/dev/null || stat -c%y "$AGSB_BIN" 2>/dev/null | cut -d' ' -f1-2)"
-    echo ""
-    
-    echo "========== 诊断完成 =========="
-  } > "$report_file"
-  
-  green "✅ 诊断报告已生成：$report_file"
-  cat "$report_file"
-  
-  return 0
-}
-
-# 性能分析
-analyze_performance() {
-  local analysis_file="${AGSB_HOME}/performance_analysis.txt"
-  
-  {
-    echo "========== agsb 性能分析 =========="
-    echo "分析时间：$(date '+%Y-%m-%d %H:%M:%S')"
-    echo ""
-    
-    echo "========== 进程资源使用 =========="
-    ps aux 2>/dev/null | grep -E "sing-box|cloudflared|nginx" | grep -v grep || echo "未找到相关进程"
-    echo ""
-    
-    echo "========== 网络连接统计 =========="
-    netstat -an 2>/dev/null | grep -E "ESTABLISHED|LISTEN" | wc -l
-    echo ""
-    
-    echo "========== 文件描述符使用 =========="
-    for pid in $(pgrep -f "sing-box|cloudflared|nginx"); do
-      echo "PID $pid: $(ls -1 /proc/$pid/fd 2>/dev/null | wc -l) 个文件描述符"
-    done
-    echo ""
-    
-    echo "========== 磁盘 I/O =========="
-    iostat -x 1 2 2>/dev/null | tail -n 5 || echo "iostat 不可用"
-    echo ""
-    
-  } > "$analysis_file"
-  
-  green "✅ 性能分析已生成：$analysis_file"
-  cat "$analysis_file"
-  
-  return 0
-}
-
-# 调试模式启用
-enable_debug_mode() {
-  export DEBUG_FLAG=1
-  save_state "debug_mode" "enabled"
-  log_info "调试模式已启用"
-  return 0
-}
-
-# 调试模式禁用
-disable_debug_mode() {
-  export DEBUG_FLAG=0
-  save_state "debug_mode" "disabled"
-  log_info "调试模式已禁用"
-  return 0
-}
-
-# 显示调试信息
-show_debug_info() {
-  echo "========== 调试信息 =========="
-  echo "DEBUG_FLAG=$DEBUG_FLAG"
-  echo "AGSB_HOME=$AGSB_HOME"
-  echo "AGSB_CONFIG=$AGSB_CONFIG"
-  echo "AGSB_LOG_FILE=$AGSB_LOG_FILE"
-  echo "当前参数："
-  echo "  cdn_host=$cdn_host"
-  echo "  uuid=$uuid"
-  echo "  argo=$argo"
-  echo "  subscribe=$subscribe"
-  echo "  name=$name"
-  echo "=============================="
-}
-
-# 清理日志和缓存
-cleanup_logs_and_cache() {
-  local days="${1:-7}"
-  
-  log_info "清理 $days 天前的日志和缓存..."
-  
-  # 清理日志
-  find "$AGSB_LOG_DIR" -type f -mtime "+$days" -delete 2>/dev/null || true
-  
-  # 清理缓存
-  find "$AGSB_CACHE_DIR" -type f -mtime "+$days" -delete 2>/dev/null || true
-  
-  # 清理备份
-  find "${AGSB_HOME}/.backups" -type f -mtime "+$days" -delete 2>/dev/null || true
-  
-  log_info "清理完成"
-  return 0
-}
-
-# ================== Phase 38: 诊断和调试工具 END ==================
-
-# ================== Phase 39: API 和集成接口 ==================
-
-# API 版本
-API_VERSION="1.0"
-
-# 获取 API 版本
-api_get_version() {
-  echo "$API_VERSION"
-}
-
-# 获取脚本版本
-api_get_script_version() {
-  echo "$VERSION"
-}
-
-# 获取系统状态
-api_get_status() {
-  local status_json=$(cat <<EOF
-{
-  "version": "$API_VERSION",
-  "script_version": "$VERSION",
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "status": {
-    "singbox_running": $(pgrep -f "sing-box" >/dev/null && echo "true" || echo "false"),
-    "cloudflared_running": $(pgrep -f "cloudflared" >/dev/null && echo "true" || echo "false"),
-    "nginx_running": $(pgrep -f "nginx" >/dev/null && echo "true" || echo "false")
-  },
-  "config": {
-    "argo": "$argo",
-    "subscribe": "$subscribe",
-    "name": "$name"
-  }
-}
-EOF
-)
-  echo "$status_json"
-}
-
-# 获取节点信息
-api_get_node_info() {
-  local node_json=$(cat <<EOF
-{
-  "name": "$name",
-  "protocols": {
-    "trojan": $([ -n "$trpt" ] && echo "true" || echo "false"),
-    "vless": $([ -n "$vlrt" ] && echo "true" || echo "false"),
-    "hysteria2": $([ -n "$hypt" ] && echo "true" || echo "false"),
-    "tuic": $([ -n "$tupt" ] && echo "true" || echo "false")
-  },
-  "argo": {
-    "enabled": $([ -n "$argo" ] && echo "true" || echo "false"),
-    "type": "$argo"
-  },
-  "subscribe": $([ "$subscribe" = "true" ] && echo "true" || echo "false")
-}
-EOF
-)
-  echo "$node_json"
-}
-
-# 获取日志
-api_get_logs() {
-  local lines="${1:-100}"
-  
-  if [ -f "$AGSB_LOG_FILE" ]; then
-    tail -n "$lines" "$AGSB_LOG_FILE"
-  else
-    echo "[]"
-  fi
-}
-
-# 执行命令（受限的 API）
-api_execute_command() {
-  local cmd="$1"
-  
-  case "$cmd" in
-    restart)
-      cmd_restart_services
-      ;;
-    status)
-      api_get_status
-      ;;
-    logs)
-      api_get_logs
-      ;;
-    *)
-      log_error "未知命令：$cmd"
-      return 1
-      ;;
-  esac
-}
-
-# Webhook 支持
-declare -A WEBHOOKS
-
-# 注册 webhook
-register_webhook() {
-  local event="$1"
-  local url="$2"
-  
-  WEBHOOKS["$event"]="$url"
-  dlog "Webhook 已注册：$event -> $url"
-}
-
-# 触发 webhook
-trigger_webhook() {
-  local event="$1"
-  local data="${2:-}"
-  local url="${WEBHOOKS[$event]:-}"
-  
-  if [ -z "$url" ]; then
-    dlog "未找到 webhook：$event"
-    return 0
-  fi
-  
-  dlog "触发 webhook：$event -> $url"
-  
-  # 异步发送 webhook
-  (
-    curl -s -X POST "$url" \
-      -H "Content-Type: application/json" \
-      -d "{\"event\":\"$event\",\"data\":$data,\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
-      >/dev/null 2>&1
-  ) &
-}
-
-# 列出所有 webhook
-list_webhooks() {
-  echo "========== 已注册的 Webhooks =========="
-  for event in "${!WEBHOOKS[@]}"; do
-    echo "$event -> ${WEBHOOKS[$event]}"
-  done
-  echo "======================================"
-}
-
-# 导出 API 文档
-export_api_docs() {
-  local docs_file="${AGSB_HOME}/api_docs.md"
-  
-  cat > "$docs_file" <<'EOF'
-# agsb API 文档
-
-## 版本
-- API 版本：1.0
-- 脚本版本：见 api_get_script_version()
-
-## 可用的 API 函数
-
-### 系统信息
-- `api_get_version()` - 获取 API 版本
-- `api_get_script_version()` - 获取脚本版本
-- `api_get_status()` - 获取系统状态（JSON）
-- `api_get_node_info()` - 获取节点信息（JSON）
-- `api_get_logs [lines]` - 获取日志（默认100行）
-
-### 命令执行
-- `api_execute_command <cmd>` - 执行命令
-  - restart: 重启服务
-  - status: 获取状态
-  - logs: 获取日志
-
-### Webhook 支持
-- `register_webhook <event> <url>` - 注册 webhook
-- `trigger_webhook <event> [data]` - 触发 webhook
-- `list_webhooks` - 列出所有 webhook
-
-## 使用示例
-
-```bash
-# 获取系统状态
-source sb00.sh
-api_get_status | jq .
-
-# 获取节点信息
-api_get_node_info | jq .
-
-# 注册 webhook
-register_webhook "service_restart" "https://example.com/webhook"
-
-# 触发 webhook
-trigger_webhook "service_restart" '{"status":"success"}'
-```
-
-## 返回格式
-
-所有 API 函数返回 JSON 格式的数据。
-
-EOF
-
-  green "✅ API 文档已导出：$docs_file"
-  return 0
-}
-
-# ================== Phase 39: API 和集成接口 END ==================
-
-# ================== Phase 40: 文档和帮助系统 ==================
-
-# 显示帮助信息
-show_help() {
-  cat <<'EOF'
-========== agsb 脚本帮助 ==========
-
-用法：bash sb00.sh [命令] [选项]
-
-命令列表：
-  ins              - 安装 agsb（需要环境变量）
-  rep              - 覆盖式安装（需要环境变量）
-  del              - 卸载 agsb
-  list             - 显示节点信息
-  config           - 生成配置文件模板
-  res              - 重启服务
-  ups              - 更新 sing-box 内核
-  sub              - 显示订阅信息
-  autostart        - 启用开机自启
-  autostart_off    - 禁用开机自启
-  nginx_start      - 启动 Nginx
-  nginx_stop       - 停止 Nginx
-  nginx_restart    - 重启 Nginx
-  nginx_status     - 查看 Nginx 状态
-
-环境变量（安装时使用）：
-  cdn_host         - CDN 主机（默认：saas.sin.fan）
-  hy_sni           - Hysteria2 SNI（默认：www.microsoft.com）
-  vl_sni           - VLESS SNI（默认：www.microsoft.com）
-  tu_sni           - TUIC SNI（默认：www.microsoft.com）
-  uuid             - UUID（必填）
-  trpt             - Trojan 端口
-  vlrt             - VLESS 端口
-  hypt             - Hysteria2 端口
-  tupt             - TUIC 端口
-  argo             - Argo 协议（trpt 或 vmpt）
-  agn              - Argo 域名
-  agk              - Argo 凭据（JSON）
-  nginx_pt         - Nginx 端口（默认：8080）
-  subscribe        - 启用订阅（true/false）
-  name             - 节点名称
-  DEBUG_FLAG       - 调试模式（0/1）
-
-示例：
-  # 安装脚本
-  cdn_host="saas.sin.fan" uuid="xxx" trpt=33952 bash sb00.sh ins
-
-  # 生成配置文件
-  bash sb00.sh config
-
-  # 显示节点信息
-  bash sb00.sh list
-
-  # 重启服务
-  bash sb00.sh res
-
-更多信息：https://github.com/jyucoeng/singbox-tools
-
-EOF
-}
-
-# 显示命令参考
-show_command_reference() {
-  cat <<'EOF'
-========== agsb 命令参考 ==========
-
-【安装和卸载】
-  agsb ins    - 安装（需要环境变量）
-  agsb rep    - 覆盖式安装（需要环境变量）
-  agsb del    - 卸载
-
-【配置管理】
-  agsb config - 生成配置文件模板
-
-【服务管理】
-  agsb res    - 重启所有服务
-  agsb ups    - 更新 sing-box 内核
-
-【信息查询】
-  agsb list   - 显示节点信息
-  agsb sub    - 显示订阅信息
-
-【自启管理】
-  agsb autostart     - 启用开机自启
-  agsb autostart_off - 禁用开机自启
-
-【Nginx 管理】
-  agsb nginx_start   - 启动 Nginx
-  agsb nginx_stop    - 停止 Nginx
-  agsb nginx_restart - 重启 Nginx
-  agsb nginx_status  - 查看 Nginx 状态
-
-====================================
-
-EOF
-}
-
-# 显示环境变量参考
-show_env_reference() {
-  cat <<'EOF'
-========== 环境变量参考 ==========
-
-【必填参数】
-  uuid              - UUID（格式：xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx）
-
-【CDN 和 SNI 配置】
-  cdn_host          - CDN 主机（默认：saas.sin.fan）
-  cdn_pt            - CDN 端口（默认：443）
-  hy_sni            - Hysteria2 SNI（默认：www.microsoft.com）
-  vl_sni            - VLESS SNI（默认：www.microsoft.com）
-  vl_sni_pt         - VLESS SNI 端口（默认：443）
-  tu_sni            - TUIC SNI（默认：www.microsoft.com）
-
-【协议端口】
-  trpt              - Trojan 端口（可选，不设置则自动生成）
-  vlrt              - VLESS 端口（可选，不设置则自动生成）
-  hypt              - Hysteria2 端口（可选，不设置则自动生成）
-  tupt              - TUIC 端口（可选，不设置则自动生成）
-
-【Argo 隧道配置】
-  argo              - Argo 协议（trpt 或 vmpt）
-  agn               - Argo 域名
-  agk               - Argo 凭据（JSON 格式）
-  ippz              - IP 优先级（可选）
-
-【服务端口】
-  nginx_pt          - Nginx 端口（默认：8080）
-  argo_pt           - Argo 端口（默认：8001）
-
-【功能开关】
-  subscribe         - 启用订阅（true/false，默认：false）
-  reality_private   - Reality 私钥
-  reality_public    - Reality 公钥
-  name              - 节点名称
-
-【调试选项】
-  DEBUG_FLAG        - 调试模式（0/1，默认：0）
-
-====================================
-
-EOF
-}
-
-# 显示配置文件示例
-show_config_example() {
-  cat <<'EOF'
-========== 配置文件示例 ==========
-
-# ~/.agsb/config
-
-# CDN 和 SNI 配置
-cdn_host=saas.sin.fan
-hy_sni=www.microsoft.com
-vl_sni=www.microsoft.com
-tu_sni=www.microsoft.com
-
-# 端口配置
-uuid=0631a7f3-09f8-4144-acf2-a4f5bd9ed281
-trpt=33952
-vlrt=33953
-hypt=33954
-tupt=33955
-
-# Argo 隧道配置
-argo=trpt
-agn=ca-tower-wong.dora.cc.cd
-
-# 服务端口
-nginx_pt=33956
-argo_pt=8001
-
-# 功能开关
-subscribe=true
-name=小叮当-加拿大-tower-wong
-
-# 调试开关
-DEBUG_FLAG=0
-
-====================================
-
-EOF
-}
-
-# 生成完整文档
-generate_full_documentation() {
-  local doc_file="${AGSB_HOME}/DOCUMENTATION.md"
-  
-  cat > "$doc_file" <<'EOF'
-# agsb 完整文档
-
-## 目录
-1. [快速开始](#快速开始)
-2. [安装](#安装)
-3. [配置](#配置)
-4. [命令参考](#命令参考)
-5. [环境变量](#环境变量)
-6. [故障排除](#故障排除)
-7. [API 参考](#api-参考)
-
-## 快速开始
-
-### 最简单的安装方式
-
-```bash
-# 使用环境变量安装
-uuid="your-uuid" trpt=33952 bash sb00.sh ins
-```
-
-### 使用配置文件安装
-
-```bash
-# 生成配置文件
-bash sb00.sh config
-
-# 编辑 ~/.agsb/config
-
-# 运行安装
-bash sb00.sh ins
-```
-
-## 安装
-
-### 前置要求
-- Linux 系统（Debian/Ubuntu/CentOS/Alpine）
-- 至少 512MB 内存
-- 至少 1GB 磁盘空间
-
-### 安装步骤
-
-1. 下载脚本
-```bash
-curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb00.sh -o sb00.sh
-```
-
-2. 设置环境变量
-```bash
-export uuid="your-uuid"
-export trpt=33952
-export vlrt=33953
-```
-
-3. 运行安装
-```bash
-bash sb00.sh ins
-```
-
-## 配置
-
-### 配置文件位置
-- 用户级：`~/.agsb/config`
-- 系统级：`/etc/agsb/config`
-
-### 参数优先级
-1. 命令行环境变量（最高）
-2. 配置文件
-3. 默认值（最低）
-
-## 命令参考
-
-### 安装和卸载
-- `bash sb00.sh ins` - 安装
-- `bash sb00.sh rep` - 覆盖式安装
-- `bash sb00.sh del` - 卸载
-
-### 服务管理
-- `bash sb00.sh res` - 重启服务
-- `bash sb00.sh ups` - 更新内核
-
-### 信息查询
-- `bash sb00.sh list` - 显示节点信息
-- `bash sb00.sh sub` - 显示订阅信息
-
-## 环境变量
-
-### 必填参数
-- `uuid` - UUID（必填）
-
-### 可选参数
-- `cdn_host` - CDN 主机
-- `trpt` - Trojan 端口
-- `vlrt` - VLESS 端口
-- `hypt` - Hysteria2 端口
-- `tupt` - TUIC 端口
-- `argo` - Argo 协议
-- `name` - 节点名称
-
-## 故障排除
-
-### 常见问题
-
-**Q: 安装失败，提示缺少依赖**
-A: 脚本会自动安装依赖，如果仍然失败，请检查网络连接和包管理器。
-
-**Q: 节点无法连接**
-A: 检查防火墙设置和端口是否开放。
-
-**Q: 如何查看日志**
-A: 日志文件位于 `~/agsb/logs/agsb.log`
-
-## API 参考
-
-### 获取系统状态
-```bash
-source sb00.sh
-api_get_status | jq .
-```
-
-### 获取节点信息
-```bash
-api_get_node_info | jq .
-```
-
-### 执行命令
-```bash
-api_execute_command restart
-```
-
-EOF
-
-  green "✅ 完整文档已生成：$doc_file"
-  return 0
-}
-
-# ================== Phase 40: 文档和帮助系统 END ==================
-
-# 统一的文件验证函数
-verify_file() {
-  local filepath="$1"
-  local error_msg="${2:-文件验证失败}"
-  
-  if [ ! -s "$filepath" ]; then
-    red "❌ $error_msg：文件为空或不存在 $filepath"
-    return 1
-  fi
-  
-  dlog "文件验证成功：$filepath"
-  return 0
-}
-
-# 统一的二进制文件安装函数
-install_binary() {
-  local filepath="$1"
-  local version_cmd="${2:-}"
-  
-  chmod +x "$filepath" || return 1
-  
-  if [ -n "$version_cmd" ]; then
-    local version=$($version_cmd 2>/dev/null | awk '/version/{print $NF}')
-    dlog "已安装版本：$version"
-    green "✅ 已安装：$version"
-  fi
-  
-  return 0
-}
-
-# ================== Phase 19: 下载和验证优化 END ==================
-
-# ================== Phase 19: 条件判断优化 ==================
-# 统一的条件检查函数
-check_condition() {
-  local condition="$1"
-  local true_action="$2"
-  local false_action="${3:-}"
-  
-  if eval "$condition"; then
-    [ -n "$true_action" ] && eval "$true_action"
-    return 0
-  else
-    [ -n "$false_action" ] && eval "$false_action"
-    return 1
-  fi
-}
-
-# 判断是否需要Nginx
-need_nginx_service() {
-  if is_true "$(get_subscribe_flag)"; then
-    return 0
-  fi
-  
-  if need_argo; then
-    return 0
-  fi
-  
-  return 1
-}
-
-# 统一的服务启动检查
-check_service_status() {
-  local service="$1"
-  
-  if pgrep -f "$service" >/dev/null 2>&1; then
-    return 0
-  else
-    return 1
-  fi
-}
-
-# ================== Phase 19: 条件判断优化 END ==================
-
-# ================== Phase 20: 服务重启优化 ==================
-# 统一的服务重启函数
-restart_service() {
-  local service="$1"
-  local binary="${2:-}"
-  local fallback_cmd="${3:-}"
-  
-  dlog "重启服务：$service"
-  
-  # 先停止现有进程
-  if [ -n "$binary" ]; then
-    pkill -15 -f "$binary" 2>/dev/null
-  fi
-  
-  # 使用systemd重启
-  if has_systemd; then
-    systemctl restart "$service" 2>/dev/null && return 0
-  fi
-  
-  # 使用openrc重启
-  if has_cmd rc-service; then
-    rc-service "$service" restart 2>/dev/null && return 0
-  fi
-  
-  # 使用fallback命令
-  if [ -n "$fallback_cmd" ]; then
-    eval "$fallback_cmd" && return 0
-  fi
-  
-  red "❌ 无法重启服务：$service"
-  return 1
-}
-
-# 统一的服务启动函数
-start_service() {
-  local service="$1"
-  local fallback_cmd="${2:-}"
-  
-  dlog "启动服务：$service"
-  
-  # 使用systemd启动
-  if has_systemd; then
-    systemctl start "$service" 2>/dev/null && return 0
-  fi
-  
-  # 使用openrc启动
-  if has_cmd rc-service; then
-    rc-service "$service" start 2>/dev/null && return 0
-  fi
-  
-  # 使用fallback命令
-  if [ -n "$fallback_cmd" ]; then
-    eval "$fallback_cmd" && return 0
-  fi
-  
-  red "❌ 无法启动服务：$service"
-  return 1
-}
-
-# 统一的服务停止函数
-stop_service() {
-  local service="$1"
-  local binary="${2:-}"
-  
-  dlog "停止服务：$service"
-  
-  # 先停止进程
-  if [ -n "$binary" ]; then
-    pkill -15 -f "$binary" 2>/dev/null
-  fi
-  
-  # 使用systemd停止
-  if has_systemd; then
-    systemctl stop "$service" 2>/dev/null && return 0
-  fi
-  
-  # 使用openrc停止
-  if has_cmd rc-service; then
-    rc-service "$service" stop 2>/dev/null && return 0
-  fi
-  
-  return 0
-}
-
-# ================== Phase 20: 服务重启优化 END ==================
-
-# ================== Phase 20: 错误处理优化 ==================
-# 统一的错误处理函数
-handle_error() {
-  local error_msg="$1"
-  local exit_code="${2:-1}"
-  
-  red "❌ $error_msg"
-  dlog "错误：$error_msg (代码: $exit_code)"
-  
-  if [ "$exit_code" -ne 0 ]; then
-    return "$exit_code"
-  fi
-}
-
-# 统一的成功处理函数
-handle_success() {
-  local success_msg="$1"
-  
-  green "✅ $success_msg"
-  dlog "成功：$success_msg"
-}
-
-# 统一的信息输出函数
-handle_info() {
-  local info_msg="$1"
-  
-  yellow "ℹ️ $info_msg"
-  dlog "信息：$info_msg"
-}
-
-# 统一的警告输出函数
-handle_warning() {
-  local warning_msg="$1"
-  
-  yellow "⚠️ $warning_msg"
-  dlog "警告：$warning_msg"
-}
-
-# ================== Phase 20: 错误处理优化 END ==================
-
 # Nginx按需安装流程
 install_nginx_phase() {
   dlog "Phase 2: 按需安装 Nginx"
@@ -5698,201 +3871,7 @@ install_argo_phase() {
 
 # ================== Phase 16: ins函数优化 END ==================
 
-
-# ================== Phase 24: 进程检查优化 ==================
-# 检查sing-box进程是否运行
-is_singbox_running() {
-  pgrep -f "$AGSB_HOME/sing-box" >/dev/null 2>&1
-}
-
-# 检查cloudflared进程是否运行
-is_cloudflared_running() {
-  pgrep -f "$AGSB_HOME/cloudflared" >/dev/null 2>&1
-}
-
-# 检查sing-box或cloudflared是否运行
-is_agsb_running() {
-  is_singbox_running || is_cloudflared_running
-}
-
-# ================== Phase 24: 进程检查优化 END ==================
-
-# ================== Phase 25: 端口读取优化 ==================
-# 通用的端口读取函数
-read_port() {
-  local port_file="$1"
-  cat "$AGSB_HOME/$port_file" 2>/dev/null
-}
-
-# 读取Hysteria2端口
-read_hy2_port() {
-  read_port "port_hy2"
-}
-
-# 读取TUIC端口
-read_tuic_port() {
-  read_port "port_tu"
-}
-
-# 读取VLESS-Reality端口
-read_vless_reality_port() {
-  read_port "port_vlr"
-}
-
-# 读取Trojan端口
-read_trojan_port() {
-  read_port "port_tr"
-}
-
-# 读取Vmess端口
-read_vmess_port() {
-  read_port "port_vm_ws"
-}
-
-# 读取Argo端口
-read_argo_port() {
-  read_port "argoport.log"
-}
-
-# ================== Phase 25: 端口读取优化 END ==================
-
-# ================== Phase 26: Argo启动流程优化 ==================
-# 记录Argo协议类型
-record_argo_protocol_type() {
-  local argo_type="$1"
-  
-  if [ "$argo_type" = "vmpt" ]; then
-    write_agsb_file "vlvm" "Vmess"
-  elif [ "$argo_type" = "trpt" ]; then
-    write_agsb_file "vlvm" "Trojan"
-  fi
-}
-
-# 启动Argo服务（根据系统类型选择启动方式）
-start_argo_service() {
-  local argo_mode="$1"
-  local argo_auth="$2"
-  local argo_port="$3"
-  
-  dlog "start_argo_service：开始启动Argo服务，模式=${argo_mode}"
-  
-  if has_systemd && [ "$EUID" -eq 0 ]; then
-    dlog "启动方式：systemd 服务"
-    install_argo_service_systemd "$argo_mode" "$argo_auth"
-  elif has_cmd rc-service && [ "$EUID" -eq 0 ]; then
-    dlog "启动方式：openrc 服务"
-    install_argo_service_openrc "$argo_mode" "$argo_auth"
-  else
-    dlog "启动方式：无 systemd/openrc，直接后台启动"
-    start_argo_no_daemon "$argo_mode" "$argo_auth" "$argo_port"
-  fi
-}
-
-# 处理固定Argo隧道
-handle_fixed_argo_tunnel() {
-  local argo_domain="$1"
-  local argo_auth="$2"
-  local argo_mode="$3"
-  
-  dlog "处理固定Argo隧道：domain=${argo_domain}"
-  
-  # 启动Argo服务
-  start_argo_service "$argo_mode" "$argo_auth" "$argoport"
-  
-  # 保存域名和token
-  write_agsb_file "sbargoym.log" "$argo_domain"
-  [ "$argo_mode" = "token" ] && write_agsb_file "sbargotoken.log" "$argo_auth"
-}
-
-# 处理临时Argo隧道
-handle_temp_argo_tunnel() {
-  local argo_port="$1"
-  
-  dlog "处理临时Argo隧道"
-  start_argo_no_daemon "temp" "" "$argo_port"
-}
-
-# ================== Phase 26: Argo启动流程优化 END ==================
-
-# ================== Phase 27: Argo重启优化 ==================
-# 启动JSON固定隧道
-start_argo_json_tunnel() {
-  dlog "启动JSON固定隧道"
-  nohup "$AGSB_HOME/cloudflared" tunnel \
-    --edge-ip-version auto \
-    --config "$AGSB_HOME/tunnel.yml" run \
-    >/dev/null 2>&1 &
-}
-
-# 启动token固定隧道
-start_argo_token_tunnel() {
-  dlog "启动token固定隧道"
-  nohup "$AGSB_HOME/cloudflared" tunnel \
-    --no-autoupdate \
-    --edge-ip-version auto run \
-    --token "$(cat "$AGSB_HOME/sbargotoken.log")" \
-    >/dev/null 2>&1 &
-}
-
-# 启动临时Argo隧道
-start_argo_temp_tunnel() {
-  dlog "启动临时Argo隧道"
-  nohup "$AGSB_HOME/cloudflared" tunnel \
-    --url "http://localhost:$(cat "$AGSB_HOME/argoport.log")" \
-    --edge-ip-version auto \
-    --no-autoupdate \
-    > "$AGSB_HOME/argo.log" 2>&1 &
-}
-
-# ================== Phase 27: Argo重启优化 END ==================
-
-# ================== Phase 28: 批量操作优化 ==================
-# 批量写入配置文件
-write_config_batch() {
-  local -a configs=(
-    "vl_sni:${vl_sni}"
-    "hy_sni:${hy_sni}"
-    "tu_sni:${tu_sni}"
-    "cdn_host:${cdn_host}"
-    "cdn_pt:${cdn_pt}"
-    "nginx_port:${nginx_pt}"
-    "vl_sni_pt:${vl_sni_pt}"
-    "subscribe:${subscribe}"
-  )
-  
-  local config
-  for config in "${configs[@]}"; do
-    local key="${config%%:*}"
-    local value="${config#*:}"
-    write_agsb_file "$key" "$value"
-  done
-}
-
-# 检查sing-box是否运行
-is_singbox_running_verbose() {
-  if pgrep -f "$AGSB_HOME/sing-box" >/dev/null 2>&1; then
-    return 0
-  else
-    return 1
-  fi
-}
-
-# 检查cloudflared是否运行
-is_cloudflared_running_verbose() {
-  if pgrep -f "$AGSB_HOME/cloudflared" >/dev/null 2>&1; then
-    return 0
-  else
-    return 1
-  fi
-}
-
-# ================== Phase 28: 批量操作优化 END ==================
-
-
 main(){
-  # Phase 32: 加载配置文件（参数优先级：命令行 > 配置文件 > 默认值）
-  load_config_file || true
-  
   check_port_conflicts_or_exit
 
   # 如果没有参数，显示菜单
@@ -5912,310 +3891,4 @@ main(){
   exit 1
 }
 
-# ================== Phase 29: 参数验证优化 ==================
-# 验证UUID格式
-validate_uuid() {
-  local uuid="$1"
-  if [[ $uuid =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
-    return 0
-  else
-    return 1
-  fi
-}
-
-# 验证端口号
-validate_port() {
-  local port="$1"
-  if [[ $port =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ]; then
-    return 0
-  else
-    return 1
-  fi
-}
-
-# 验证所有协议端口
-validate_protocol_ports() {
-  local -a ports=(
-    "trpt:$trpt"
-    "vlrt:$vlrt"
-    "hypt:$hypt"
-    "tupt:$tupt"
-  )
-  
-  local port_entry
-  for port_entry in "${ports[@]}"; do
-    local name="${port_entry%%:*}"
-    local port="${port_entry#*:}"
-    
-    if [ -n "$port" ]; then
-      if ! validate_port "$port"; then
-        red "❌ 无效的端口号：${name}=${port}"
-        return 1
-      fi
-    fi
-  done
-  
-  return 0
-}
-
-# 验证协议端口之间没有冲突
-validate_protocol_port_conflicts() {
-  local -a ports=()
-  
-  [ -n "$trpt" ] && ports+=("$trpt")
-  [ -n "$vlrt" ] && ports+=("$vlrt")
-  [ -n "$hypt" ] && ports+=("$hypt")
-  [ -n "$tupt" ] && ports+=("$tupt")
-  
-  # 检查是否有重复
-  local i j
-  for ((i=0; i<${#ports[@]}; i++)); do
-    for ((j=i+1; j<${#ports[@]}; j++)); do
-      if [ "${ports[$i]}" = "${ports[$j]}" ]; then
-        red "❌ 协议端口冲突：多个协议使用同一端口 ${ports[$i]}"
-        return 1
-      fi
-    done
-  done
-  
-  return 0
-}
-
-# 统一的参数验证函数
-validate_all_params() {
-  dlog "开始验证所有参数"
-  
-  # 验证UUID
-  if [ -n "$uuid" ]; then
-    if ! validate_uuid "$uuid"; then
-      red "❌ UUID格式无效：$uuid"
-      return 1
-    fi
-  fi
-  
-  # 验证协议端口
-  if ! validate_protocol_ports; then
-    return 1
-  fi
-  
-  # 验证协议端口冲突
-  if ! validate_protocol_port_conflicts; then
-    return 1
-  fi
-  
-  dlog "参数验证通过"
-  return 0
-}
-
-# ================== Phase 29: 参数验证优化 END ==================
-
-# ================== Phase 30: Argo启动流程统一优化 ==================
-# 统一的Argo启动流程
-start_argo_unified() {
-  dlog "开始统一Argo启动流程"
-  
-  # 1. 确保cloudflared存在
-  ensure_cloudflared_if_needed || {
-    red "❌ 已启用 Argo，但 cloudflared 准备失败，无法继续启用 Argo"
-    return 1
-  }
-  dlog "cloudflared 已准备就绪"
-  
-  # 2. 计算Argo本地端口
-  local argoport="${argo_pt:-$ARGO_DEFAULT_PORT}"
-  dlog "Argo 本地回源端口 argoport=${argoport}"
-  write_agsb_file "argoport.log" "$argoport"
-  
-  # 3. 记录Argo协议类型
-  record_argo_protocol_type "$argo"
-  
-  # 4. 生成Argo凭据
-  prepare_argo_credentials "$ARGO_AUTH" "$ARGO_DOMAIN" "$argoport"
-  dlog "prepare_argo_credentials 完成：ARGO_MODE=${ARGO_MODE:-<未设置>}"
-  
-  # 5. 启动Argo（固定或临时）
-  local argo_tunnel_type
-  if [ -n "$ARGO_DOMAIN" ] && [ -n "$ARGO_AUTH" ]; then
-    argo_tunnel_type="固定"
-    dlog "判定为固定 Argo 隧道"
-    handle_fixed_argo_tunnel "$ARGO_DOMAIN" "$ARGO_AUTH" "$ARGO_MODE"
-  else
-    argo_tunnel_type="临时"
-    dlog "判定为临时 Argo 隧道"
-    handle_temp_argo_tunnel "$argoport"
-  fi
-  
-  # 6. 等待并检查Argo申请结果
-  dlog "开始等待并检查 Argo 申请结果：tunnel_type=${argo_tunnel_type}"
-  wait_and_check_argo "$argo_tunnel_type"
-}
-
-# ================== Phase 30: Argo启动流程统一优化 END ==================
-
-# ================== Phase 31: 扩展参数验证 ==================
-# 验证SNI格式
-validate_sni() {
-  local sni="$1"
-  # SNI应该是有效的域名格式
-  if [[ $sni =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]] || [ "$sni" = "localhost" ]; then
-    return 0
-  else
-    return 1
-  fi
-}
-
-# 验证CDN主机
-validate_cdn_host() {
-  local cdn_host="$1"
-  
-  # 验证域名格式（标准域名）
-  if [[ $cdn_host =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
-    return 0
-  fi
-  
-  # 验证 IPv4 格式（宽松验证，用户一般会注意格式）
-  if [[ $cdn_host =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-    return 0
-  fi
-  
-  # 验证 IPv6 格式（支持多种格式）
-  # 1. 完整格式：xxxx:xxxx:xxxx:xxxx:xxxx:xxxx:xxxx:xxxx
-  if [[ $cdn_host =~ ^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$ ]]; then
-    return 0
-  fi
-  
-  # 2. 压缩格式：::1, ::, 2001:db8::1 等
-  if [[ $cdn_host =~ ^::([0-9a-fA-F]{0,4}:)*[0-9a-fA-F]{0,4}$ ]] || \
-     [[ $cdn_host =~ ^([0-9a-fA-F]{0,4}:)*::([0-9a-fA-F]{0,4}:)*[0-9a-fA-F]{0,4}$ ]] || \
-     [[ $cdn_host =~ ^([0-9a-fA-F]{0,4}:)*[0-9a-fA-F]{0,4}::$ ]]; then
-    return 0
-  fi
-  
-  # 3. IPv6 映射 IPv4 格式：::ffff:192.0.2.1
-  if [[ $cdn_host =~ ^::ffff:([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-    return 0
-  fi
-  
-  # 4. 带方括号的 IPv6（某些场景使用）：[2001:db8::1]
-  if [[ $cdn_host =~ ^\[([0-9a-fA-F]{0,4}:)+[0-9a-fA-F]{0,4}\]$ ]]; then
-    return 0
-  fi
-  
-  return 1
-}
-
-# 验证Reality私钥格式
-validate_reality_private() {
-  local key="$1"
-  # Reality私钥应该是base64格式，长度为44字符
-  if [[ $key =~ ^[A-Za-z0-9_-]{43}=?$ ]]; then
-    return 0
-  else
-    return 1
-  fi
-}
-
-# 验证节点名称
-validate_node_name() {
-  local name="$1"
-  # 节点名称不能为空，长度不超过100
-  if [ -n "$name" ] && [ ${#name} -le 100 ]; then
-    return 0
-  else
-    return 1
-  fi
-}
-
-# 验证Argo域名
-validate_argo_domain() {
-  local domain="$1"
-  # Argo域名应该是有效的域名格式
-  if [[ $domain =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]]; then
-    return 0
-  else
-    return 1
-  fi
-}
-
-# 验证Argo凭据（JSON格式）
-validate_argo_auth() {
-  local auth="$1"
-  # 检查是否是有效的JSON
-  if echo "$auth" | jq . >/dev/null 2>&1; then
-    return 0
-  else
-    return 1
-  fi
-}
-
-# 扩展的参数验证函数
-validate_extended_params() {
-  dlog "开始扩展参数验证"
-  
-  # 验证SNI
-  if [ -n "$hy_sni" ]; then
-    if ! validate_sni "$hy_sni"; then
-      red "❌ Hysteria2 SNI格式无效：$hy_sni"
-      return 1
-    fi
-  fi
-  
-  if [ -n "$vl_sni" ]; then
-    if ! validate_sni "$vl_sni"; then
-      red "❌ VLESS SNI格式无效：$vl_sni"
-      return 1
-    fi
-  fi
-  
-  if [ -n "$tu_sni" ]; then
-    if ! validate_sni "$tu_sni"; then
-      red "❌ TUIC SNI格式无效：$tu_sni"
-      return 1
-    fi
-  fi
-  
-  # 验证CDN主机
-  if [ -n "$cdn_host" ]; then
-    if ! validate_cdn_host "$cdn_host"; then
-      red "❌ CDN主机格式无效：$cdn_host"
-      return 1
-    fi
-  fi
-  
-  # 验证Reality私钥
-  if [ -n "$reality_private" ]; then
-    if ! validate_reality_private "$reality_private"; then
-      red "❌ Reality私钥格式无效：$reality_private"
-      return 1
-    fi
-  fi
-  
-  # 验证节点名称
-  if [ -n "$name" ]; then
-    if ! validate_node_name "$name"; then
-      red "❌ 节点名称无效：$name"
-      return 1
-    fi
-  fi
-  
-  # 验证Argo域名
-  if [ -n "$ARGO_DOMAIN" ]; then
-    if ! validate_argo_domain "$ARGO_DOMAIN"; then
-      red "❌ Argo域名格式无效：$ARGO_DOMAIN"
-      return 1
-    fi
-  fi
-  
-  # 验证Argo凭据
-  if [ -n "$ARGO_AUTH" ]; then
-    if ! validate_argo_auth "$ARGO_AUTH"; then
-      red "❌ Argo凭据格式无效（应为JSON）"
-      return 1
-    fi
-  fi
-  
-  dlog "扩展参数验证通过"
-  return 0
-}
-
-# ================== Phase 31: 扩展参数验证 END ==================
+main "$@"
