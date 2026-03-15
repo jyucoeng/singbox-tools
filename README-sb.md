@@ -377,3 +377,6 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 - [77160860大佬](https://github.com/77160860/proxy)
 
+
+## 版本变更信息
+v1.0.6  去掉快捷指令agsb，以及将主目录名称由agsb 变更为doraemon，用新脚本卸载之前部署好的功能的时候，会把/root/doraemon 和/root/agsb文件夹都删除.
