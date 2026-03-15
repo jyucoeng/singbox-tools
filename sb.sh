@@ -2,9 +2,16 @@
 #!/usr/bin/env bash
 export LANG=en_US.UTF-8
 
+# ================== 文件夹路径配置 ==================
+# 统一定义文件夹名称和路径，方便后续修改
+SB_FOLDER="doraemon"
+SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
+OLD_SINGBOX_FOLDER="/root/agsb"  # 旧路径，用于兼容和清理
+# ================== 文件夹路径配置 结束 ==================
+
  # ================== 常量和环境变量 结束 ==================
 
-VERSION="1.0.5(2026-01-27)"
+VERSION="1.0.6(2026-03-15)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -57,7 +64,7 @@ vl_sni_pt="${vl_sni_pt:-443}"
 
 
 v46url="https://icanhazip.com"
-agsburl="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh"
+SCRIPT_URL="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh"
 
 CN_BING="www.bing.com"
 
@@ -101,9 +108,9 @@ debug_log() {
 
 
 get_subscribe_flag() {
-  # 优先读落盘值（避免用户不带环境变量执行 agsb sub 时失效）
-  if [ -s "$HOME/agsb/subscribe" ]; then
-    cat "$HOME/agsb/subscribe"
+  # 优先读落盘值（避免用户不带环境变量执行脚本时失效）
+  if [ -s "$SINGBOX_FOLDER_PATH/subscribe" ]; then
+    cat "$SINGBOX_FOLDER_PATH/subscribe"
   else
     echo "${subscribe:-false}"
   fi
@@ -155,9 +162,9 @@ need_argo() {
     if [ "$argo_val" = "vmpt" ] || [ "$argo_val" = "trpt" ]; then
       argo_needed=1
     fi
-  elif [ -s "$HOME/agsb/vlvm" ]; then
+  elif [ -s "$SINGBOX_FOLDER_PATH/vlvm" ]; then
     argo_src="file"
-    argo_val="$(cat "$HOME/agsb/vlvm" 2>/dev/null | tr -d '\r\n')"
+    argo_val="$(cat "$SINGBOX_FOLDER_PATH/vlvm" 2>/dev/null | tr -d '\r\n')"
     if [ "$argo_val" = "Vmess" ] || [ "$argo_val" = "Trojan" ]; then
       argo_needed=1
     fi
@@ -174,7 +181,7 @@ need_argo() {
 
 
 # 已安装/未安装的参数规则检查
-if pgrep -f 'agsb/sing-box' >/dev/null 2>&1; then
+if pgrep -f 'sing-box' >/dev/null 2>&1; then
     # 已安装
     if [ "${1:-}" = "rep" ]; then
         any_proto_enabled || { echo "提示：rep重置协议时，请在脚本前至少设置一个协议变量哦，再见！💣"; exit 1; }
@@ -182,7 +189,7 @@ if pgrep -f 'agsb/sing-box' >/dev/null 2>&1; then
 else
     # 未安装
     if [ "${1:-}" != "del" ]; then
-        any_proto_enabled || { echo "提示：未安装agsb脚本，请在脚本前至少设置一个协议变量哦，再见！💣"; exit 1; }
+        any_proto_enabled || { echo "提示：未安装脚本，请在脚本前至少设置一个协议变量哦，再见！💣"; exit 1; }
     fi
 fi
 
@@ -224,8 +231,8 @@ install_deps() {
   )
 
   # 失败包记录文件
-  local fail_log="$HOME/agsb/deps_failed.log"
-  mkdir -p "$HOME/agsb" 2>/dev/null || true
+  local fail_log="$SINGBOX_FOLDER_PATH/deps_failed.log"
+  mkdir -p "$SINGBOX_FOLDER_PATH" 2>/dev/null || true
 
   # 找出缺的命令
   local -a missing=()
@@ -260,7 +267,7 @@ install_deps() {
     local p
 
     # 安装输出日志（避免刷屏；失败时可回看）
-    local run_log="/tmp/agsb_deps_${label}.log"
+    local run_log="/tmp/singbox_deps_${label}.log"
     : > "$run_log" 2>/dev/null || true
 
     pkg_installed() {
@@ -483,10 +490,10 @@ check_ip_connectivity() {
 
 # 开启自启
 enable_autostart() {
-  local workdir="/root/agsb"
+  local workdir="$SINGBOX_FOLDER_PATH"
   local bin="$workdir/sing-box"
   local cfg="$workdir/sb.json"
-  local svc="agsb-singbox"
+  local svc="singbox-service"
 
   # 只做“已安装才启用”，避免误触发安装
   if [ ! -x "$bin" ] || [ ! -s "$cfg" ]; then
@@ -498,7 +505,7 @@ enable_autostart() {
   if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
     cat >/etc/systemd/system/${svc}.service <<EOF
 [Unit]
-Description=agsb sing-box service
+Description=singbox service
 After=network-online.target
 Wants=network-online.target
 
@@ -528,12 +535,12 @@ EOF
   if command -v rc-service >/dev/null 2>&1 && command -v rc-update >/dev/null 2>&1; then
     cat >/etc/init.d/${svc} <<'EOF'
 #!/sbin/openrc-run
-name="agsb sing-box"
-description="agsb sing-box service"
-command="/root/agsb/sing-box"
-command_args="run -c /root/agsb/sb.json"
+name="singbox service"
+description="singbox service"
+command="$SINGBOX_FOLDER_PATH/sing-box"
+command_args="run -c $SINGBOX_FOLDER_PATH/sb.json"
 command_background="yes"
-pidfile="/run/agsb-singbox.pid"
+pidfile="/run/singbox.pid"
 
 depend() {
   need net
@@ -541,8 +548,8 @@ depend() {
 }
 
 start_pre() {
-  [ -x /root/agsb/sing-box ] || return 1
-  [ -s /root/agsb/sb.json ] || return 1
+  [ -x $SINGBOX_FOLDER_PATH/sing-box ] || return 1
+  [ -s $SINGBOX_FOLDER_PATH/sb.json ] || return 1
 }
 
 start() {
@@ -572,7 +579,7 @@ EOF
 
 # 关闭自启
 disable_autostart() {
-  local svc="agsb-singbox"
+  local svc="singbox-service"
 
   if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
     systemctl disable --now "${svc}.service" >/dev/null 2>&1
@@ -594,32 +601,32 @@ disable_autostart() {
   return 1
 }
 
-# 确保 agsb 快捷命令
-ensure_agsb_shortcut() {
-  local wrapper="$HOME/agsb/agsb"
-  local local_script="$HOME/agsb/sb.sh"
+# 确保快捷命令
+ensure_singbox_shortcut() {
+  local wrapper="$SINGBOX_FOLDER_PATH/singbox"
+  local local_script="$SINGBOX_FOLDER_PATH/sb.sh"
 
   # 软链接目标（按优先级）
-  local link_local1="$HOME/.local/bin/agsb"
-  local link_local2="$HOME/bin/agsb"
-  local link_sys1="/usr/local/bin/agsb"
-  local link_sys2="/usr/bin/agsb"
+  local link_local1="$HOME/.local/bin/singbox"
+  local link_local2="$HOME/bin/singbox"
+  local link_sys1="/usr/local/bin/singbox"
+  local link_sys2="/usr/bin/singbox"
 
-  mkdir -p "$HOME/agsb" "$HOME/.local/bin" "$HOME/bin"
+  mkdir -p "$SINGBOX_FOLDER_PATH" "$HOME/.local/bin" "$HOME/bin"
 
-  # ✅ wrapper：优先本地脚本，否则在线拉取 agsburl（curl/wget 二选一，兼容 Alpine）
+  # ✅ wrapper：优先本地脚本，否则在线拉取脚本（curl/wget 二选一，兼容 Alpine）
   cat > "$wrapper" <<EOF
 #!/usr/bin/env bash
 set -e
-LOCAL_SCRIPT="\$HOME/agsb/sb.sh"
+LOCAL_SCRIPT="\$SINGBOX_FOLDER_PATH/sb.sh"
 
 if [ -s "\$LOCAL_SCRIPT" ]; then
   exec bash "\$LOCAL_SCRIPT" "\$@"
 else
   if command -v curl >/dev/null 2>&1; then
-    exec bash <(curl -Ls "$agsburl") "\$@"
+    exec bash <(curl -Ls "$SCRIPT_URL") "\$@"
   elif command -v wget >/dev/null 2>&1; then
-    exec bash <(wget -qO- "$agsburl") "\$@"
+    exec bash <(wget -qO- "$SCRIPT_URL") "\$@"
   else
     echo "ERROR: need curl or wget to fetch script." >&2
     echo "Debian/Ubuntu: apt update && apt install -y curl" >&2
@@ -654,28 +661,28 @@ EOF
   command -v rehash >/dev/null 2>&1 && rehash 2>/dev/null || true
 
   # ✅ 输出结果
-  if command -v agsb >/dev/null 2>&1; then
+  if command -v singbox >/dev/null 2>&1; then
     echo ""
-    purple " 已创建快捷命令：agsb（$(command -v agsb)）"
+    purple " 已创建快捷命令：singbox（$(command -v singbox)）"
   else
-    yellow "❗ 已创建 wrapper/软链接，但当前 PATH 未命中 agsb"
+    yellow "❗ 已创建 wrapper/软链接，但当前 PATH 未命中 singbox"
     yellow "👉 你仍可直接运行："
     green  "   $wrapper"
-    yellow "👉 或用以下任一路径（若已在 PATH 中则可直接敲 agsb）："
+    yellow "👉 或用以下任一路径（若已在 PATH 中则可直接敲 singbox）："
     green  "   $link_local1"
     green  "   $link_local2"
     [ "$(id -u)" -eq 0 ] && { green "   $link_sys1"; green "   $link_sys2"; }
   fi
 }
 
-# 清理 agsb 快捷命令
-cleanup_agsb_shortcut() {
-  local wrapper="$HOME/agsb/agsb"
+# 清理快捷命令
+cleanup_singbox_shortcut() {
+  local wrapper="$SINGBOX_FOLDER_PATH/singbox"
 
-  local link_local1="$HOME/.local/bin/agsb"
-  local link_local2="$HOME/bin/agsb"
-  local link_sys1="/usr/local/bin/agsb"
-  local link_sys2="/usr/bin/agsb"
+  local link_local1="$HOME/.local/bin/singbox"
+  local link_local2="$HOME/bin/singbox"
+  local link_sys1="/usr/local/bin/singbox"
+  local link_sys2="/usr/bin/singbox"
 
   # 1) 删除入口（系统级 + 用户级）
   rm -f "$link_local1" 2>/dev/null || true
@@ -693,11 +700,11 @@ cleanup_agsb_shortcut() {
   command -v rehash >/dev/null 2>&1 && rehash 2>/dev/null || true
 
   # 3) 输出结果
-  if command -v agsb >/dev/null 2>&1; then
-    yellow "❗ cleanup 已执行，但当前会话仍能找到 agsb：$(command -v agsb)"
+  if command -v singbox >/dev/null 2>&1; then
+    yellow "❗ cleanup 已执行，但当前会话仍能找到 singbox：$(command -v singbox)"
     yellow "👉 若你之前把某个路径手动加进 PATH，或 shell 有缓存，重新开一个终端/SSH 会话即可"
   else
-    green "✅ 已清理 agsb 快捷命令（wrapper/软链接）"
+    green "✅ 已清理快捷命令（wrapper/软链接）"
   fi
 }
 
@@ -710,16 +717,6 @@ showmode(){
     green    "       作者：$AUTHOR"
     yellow   "       版本：$VERSION"
     blue "===================================================="
- 
-    yellow "主脚本：bash <(curl -Ls ${agsburl}) 或 bash <(wget -qO- ${agsburl})"
-    yellow "显示节点信息：agsb list"
-    yellow "安装命令：  agsb ins（命令前面需要带上环境变量）"
-    yellow "覆盖式安装命令： agsb rep（命令前面需要带上环境变量）"
-    yellow "更新Singbox内核：agsb ups(属于预留命令)"
-    yellow "重启脚本：agsb res(重启singbox和argo)"
-    yellow "卸载脚本：agsb del"
-    yellow "Nginx相关：agsb nginx_start | agsb nginx_stop | agsb nginx_restart | agsb nginx_status"
-    echo "---------------------------------------------------------"
 }
 
 # 安装 Nginx 包
@@ -732,7 +729,7 @@ install_nginx_pkg() {
   yellow "👉 正在安装 Nginx..."
 
   # 统一把详细输出写到日志，失败时 tail 出来
-  local log="/tmp/agsb_nginx_install.log"
+  local log="/tmp/singbox_nginx_install.log"
   : > "$log" 2>/dev/null || true
 
   # Debian/Ubuntu (apt-get)
@@ -894,7 +891,7 @@ prepare_argo_credentials() {
     # ---------- JSON 凭据 ----------
     if echo "$auth" | grep -q 'TunnelSecret'; then
         yellow "检测到 Argo JSON 凭据，使用 credentials-file 模式"
-        debug_log "【调试】prepare_argo_credentials：识别为 JSON 凭据（将写入 $HOME/agsb/tunnel.json 并生成 tunnel.yml）"
+        debug_log "【调试】prepare_argo_credentials：识别为 JSON 凭据（将写入 $SINGBOX_FOLDER_PATH/tunnel.json 并生成 tunnel.yml）"
 
         if [ -z "$local_port" ]; then
             red "❌ prepare_argo_credentials: LOCAL_PORT 为空"
@@ -902,12 +899,12 @@ prepare_argo_credentials() {
             return 1
         fi
 
-        mkdir -p "$HOME/agsb"
+        mkdir -p "$SINGBOX_FOLDER_PATH"
 
         # 写入 tunnel.json
         #❗ 如果 ARGO_AUTH 里的 JSON 含有 \n、\r、\uXXXX 之类，echo 在某些 shell/实现里可能会解释转义，导致 tunnel.json 内容被破坏。 改法：用 printf 更可靠
-        printf '%s' "$auth" > "$HOME/agsb/tunnel.json"
-        debug_log "【调试】prepare_argo_credentials：tunnel.json 已写入（大小=$(wc -c "$HOME/agsb/tunnel.json" 2>/dev/null | awk '{print $1}') 字节）"
+        printf '%s' "$auth" > "$SINGBOX_FOLDER_PATH/tunnel.json"
+        debug_log "【调试】prepare_argo_credentials：tunnel.json 已写入（大小=$(wc -c "$SINGBOX_FOLDER_PATH/tunnel.json" 2>/dev/null | awk '{print $1}') 字节）"
 
         # 提取 TunnelID
         local tunnel_id
@@ -921,9 +918,9 @@ prepare_argo_credentials() {
         debug_log "【调试】prepare_argo_credentials：已解析 TunnelID（前8位=${tunnel_id:0:8}...）"
 
         # 生成 tunnel.yml（对齐 s4.sh）
-        cat > "$HOME/agsb/tunnel.yml" <<EOF
+        cat > "$SINGBOX_FOLDER_PATH/tunnel.yml" <<EOF
 tunnel: $tunnel_id
-credentials-file: $HOME/agsb/tunnel.json
+credentials-file: $SINGBOX_FOLDER_PATH/tunnel.json
 protocol: http2
 
 ingress:
@@ -952,13 +949,13 @@ EOF
 
 
 echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"; 
-echo "agsb一键无交互脚本💣 (Sing-box内核版)";  
+echo "Sing-box 一键无交互脚本💣 (Sing-box内核版)";  
 echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 
 hostname=$(uname -a | awk '{print $2}'); 
 op=$(cat /etc/redhat-release 2>/dev/null || cat /etc/os-release 2>/dev/null | grep -i pretty_name | cut -d \" -f2); 
 case $(uname -m) in aarch64) cpu=arm64;; x86_64) cpu=amd64;; *) echo "目前脚本不支持$(uname -m)架构" && exit; esac;
- mkdir -p "$HOME/agsb"
+ mkdir -p "$SINGBOX_FOLDER_PATH"
 # Check and set IP version
 v4v6(){
     # Check IPv4 connectivity
@@ -991,7 +988,7 @@ v4v6(){
 set_sbyx(){
     if [ -n "$name" ]; then
         sxname=$name-
-        echo "$sxname" > "$HOME/agsb/name"
+        echo "$sxname" > "$SINGBOX_FOLDER_PATH/name"
         echo
         yellow "所有节点名称前缀：$name"
     fi
@@ -1014,7 +1011,7 @@ set_sbyx(){
 # download Sing-box
 upsingbox(){
     url="https://github.com/jyucoeng/singbox-tools/releases/download/singbox/sing-box-$cpu"
-    out="$HOME/agsb/sing-box"
+    out="$SINGBOX_FOLDER_PATH/sing-box"
     (curl -Lo "$out" -# --connect-timeout 5 --max-time 120  --retry 2 --retry-delay 2 --retry-all-errors "$url") || (wget -O "$out" --tries=2 --timeout=120 --dns-timeout=5 --read-timeout=60 "$url")
 
 
@@ -1028,24 +1025,24 @@ upsingbox(){
     fi
     debug_log "【调试】upsingbox：检查 Sing-box 二进制文件是否下载成功"
 
-    chmod +x "$HOME/agsb/sing-box"
-    sbcore=$("$HOME/agsb/sing-box" version 2>/dev/null | awk '/version/{print $NF}')
+    chmod +x "$SINGBOX_FOLDER_PATH/sing-box"
+    sbcore=$("$SINGBOX_FOLDER_PATH/sing-box" version 2>/dev/null | awk '/version/{print $NF}')
     debug_log "【调试】upsingbox：Sing-box 版本为 $sbcore"
     green "✅  已安装Sing-box正式版内核：$sbcore"
 }
 # Generate UUID and save to file
 insuuid(){
-    if [ ! -e "$HOME/agsb/sing-box" ]; then 
+    if [ ! -e "$SINGBOX_FOLDER_PATH/sing-box" ]; then 
         upsingbox;
     fi
 
-    if [ -z "$uuid" ] && [ ! -e "$HOME/agsb/uuid" ]; then
-        uuid=$("$HOME/agsb/sing-box" generate uuid)
-        echo "$uuid" > "$HOME/agsb/uuid"
+    if [ -z "$uuid" ] && [ ! -e "$SINGBOX_FOLDER_PATH/uuid" ]; then
+        uuid=$("$SINGBOX_FOLDER_PATH/sing-box" generate uuid)
+        echo "$uuid" > "$SINGBOX_FOLDER_PATH/uuid"
     elif [ -n "$uuid" ]; then
-        echo "$uuid" > "$HOME/agsb/uuid"
+        echo "$uuid" > "$SINGBOX_FOLDER_PATH/uuid"
     fi
-    uuid=$(cat "$HOME/agsb/uuid")
+    uuid=$(cat "$SINGBOX_FOLDER_PATH/uuid")
     yellow "UUID密码：$uuid"
 }
 
@@ -1059,7 +1056,7 @@ get_short_id() {
   # 2) 否则                → 读文件；文件无效/不存在则随机生成并落盘
 
 
-  local sid_file="${1:-$HOME/agsb/short_id}"
+  local sid_file="${1:-$SINGBOX_FOLDER_PATH/short_id}"
   local sid=""
 
   # 兼容：如果脚本里没有 yellow/green，就用 echo
@@ -1147,7 +1144,7 @@ derive_reality_public_key() {
   if command -v xxd >/dev/null 2>&1 && command -v openssl >/dev/null 2>&1; then
     debug_log "🔐 【调试】 derive_reality_public_key: 使用【本地推导】(openssl + xxd)"
 
-    local tmp_dir="${HOME}/agsb/.tmp_reality"
+    local tmp_dir="$SINGBOX_FOLDER_PATH/.tmp_reality"
     mkdir -p "$tmp_dir" 2>/dev/null
 
     # base64url -> base64 (字符集替换)
@@ -1272,7 +1269,7 @@ print_reality_keypair_hint() {
 
 # 初始化 Reality Keypair
 init_reality_keypair() {
-  local key_file="$HOME/agsb/reality.key"
+  local key_file="$SINGBOX_FOLDER_PATH/reality.key"
   local file_priv="" file_pub=""
   local env_priv="${reality_private:-}"
   local priv="" pub=""
@@ -1311,7 +1308,7 @@ init_reality_keypair() {
 
         # 推导失败：生成一套新的 keypair（回退）
         local kp
-        kp="$("$HOME/agsb/sing-box" generate reality-keypair 2>/dev/null)"
+        kp="$("$SINGBOX_FOLDER_PATH/sing-box" generate reality-keypair 2>/dev/null)"
         priv="$(awk '/PrivateKey/{print $NF; exit}' <<< "$kp")"
         pub="$(awk '/PublicKey/{print $NF; exit}' <<< "$kp")"
 
@@ -1340,7 +1337,7 @@ init_reality_keypair() {
     debug_log "🆕 【调试】 init_reality_keypair: 无传入私钥且无本地文件，生成新的 Reality Keypair"
 
     local kp
-    kp="$("$HOME/agsb/sing-box" generate reality-keypair 2>/dev/null)"
+    kp="$("$SINGBOX_FOLDER_PATH/sing-box" generate reality-keypair 2>/dev/null)"
     priv="$(awk '/PrivateKey/{print $NF; exit}' <<< "$kp")"
     pub="$(awk '/PublicKey/{print $NF; exit}' <<< "$kp")"
 
@@ -1411,114 +1408,114 @@ installsb(){
     echo; 
     echo "=========开始下载/安装Sing-box内核========="
 
-    if [ ! -e "$HOME/agsb/sing-box" ]; then 
+    if [ ! -e "$SINGBOX_FOLDER_PATH/sing-box" ]; then 
         debug_log "【调试】installsb：Sing-box 不存在，开始下载/安装"
         upsingbox; 
     fi
 
 
-    cat > "$HOME/agsb/sb.json" <<EOF
+    cat > "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
 {"log": { "disabled": false, "level": "info", "timestamp": true },
 "inbounds": [
 EOF
     insuuid
-    write2AgsbFolders
+    write2SingboxFolders
 
    # Generate a self-signed cert for hy2（CN 与 hy_sni 解耦）
-    gen_self_signed_cert "$HOME/agsb/private.key" "$HOME/agsb/cert.pem" "${CN_BING}" 36500
+    gen_self_signed_cert "$SINGBOX_FOLDER_PATH/private.key" "$SINGBOX_FOLDER_PATH/cert.pem" "${CN_BING}" 36500
 
 
     # 添加tuic协议
     if [ -n "$tup" ]; then
         if [ -n "$port_tu" ]; then
-            echo "$port_tu" > "$HOME/agsb/port_tu"
-        elif [ -s "$HOME/agsb/port_tu" ]; then
-            port_tu=$(cat "$HOME/agsb/port_tu")
+            echo "$port_tu" > "$SINGBOX_FOLDER_PATH/port_tu"
+        elif [ -s "$SINGBOX_FOLDER_PATH/port_tu" ]; then
+            port_tu=$(cat "$SINGBOX_FOLDER_PATH/port_tu")
         else
             port_tu=$(rand_port)
-            echo "$port_tu" > "$HOME/agsb/port_tu"
+            echo "$port_tu" > "$SINGBOX_FOLDER_PATH/port_tu"
         fi
 
         
-        port_tu=$(cat "$HOME/agsb/port_tu"); 
+        port_tu=$(cat "$SINGBOX_FOLDER_PATH/port_tu"); 
         password=$uuid
 
         yellow "Tuic端口：$port_tu"
 
-         cat >> "$HOME/agsb/sb.json" <<EOF
-{"type": "tuic", "tag": "tuic-sb", "listen": "::", "listen_port": ${port_tu}, "users": [ {  "uuid": "$uuid", "password": "$password" } ],"congestion_control": "bbr", "tls": { "enabled": true,"alpn": ["h3"], "certificate_path": "$HOME/agsb/cert.pem", "key_path": "$HOME/agsb/private.key" }},
+         cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
+{"type": "tuic", "tag": "tuic-sb", "listen": "::", "listen_port": ${port_tu}, "users": [ {  "uuid": "$uuid", "password": "$password" } ],"congestion_control": "bbr", "tls": { "enabled": true,"alpn": ["h3"], "certificate_path": "$SINGBOX_FOLDER_PATH/cert.pem", "key_path": "$SINGBOX_FOLDER_PATH/private.key" }},
 EOF
     fi
 
     # 添加hy2协议
     if [ -n "$hyp" ]; then
-        if [ -z "$port_hy2" ] && [ ! -e "$HOME/agsb/port_hy2" ]; then port_hy2=$(rand_port); echo "$port_hy2" > "$HOME/agsb/port_hy2"; elif [ -n "$port_hy2" ]; then echo "$port_hy2" > "$HOME/agsb/port_hy2"; fi
+        if [ -z "$port_hy2" ] && [ ! -e "$SINGBOX_FOLDER_PATH/port_hy2" ]; then port_hy2=$(rand_port); echo "$port_hy2" > "$SINGBOX_FOLDER_PATH/port_hy2"; elif [ -n "$port_hy2" ]; then echo "$port_hy2" > "$SINGBOX_FOLDER_PATH/port_hy2"; fi
         
-        port_hy2=$(cat "$HOME/agsb/port_hy2"); 
+        port_hy2=$(cat "$SINGBOX_FOLDER_PATH/port_hy2"); 
         yellow "Hysteria2端口：$port_hy2"
 
-        cat >> "$HOME/agsb/sb.json" <<EOF
-{"type": "hysteria2", "tag": "hy2-sb", "listen": "::", "listen_port": ${port_hy2},"users": [ { "password": "${uuid}" } ],"tls": { "enabled": true, "alpn": ["h3"], "certificate_path": "$HOME/agsb/cert.pem", "key_path": "$HOME/agsb/private.key" }},
+        cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
+{"type": "hysteria2", "tag": "hy2-sb", "listen": "::", "listen_port": ${port_hy2},"users": [ { "password": "${uuid}" } ],"tls": { "enabled": true, "alpn": ["h3"], "certificate_path": "$SINGBOX_FOLDER_PATH/cert.pem", "key_path": "$SINGBOX_FOLDER_PATH/private.key" }},
 EOF
     fi
     
     # 添加trojan协议
     if [ -n "$trp" ]; then
-        if [ -z "$port_tr" ] && [ ! -e "$HOME/agsb/port_tr" ]; then port_tr=$(rand_port); echo "$port_tr" > "$HOME/agsb/port_tr"; elif [ -n "$port_tr" ]; then echo "$port_tr" > "$HOME/agsb/port_tr"; fi
+        if [ -z "$port_tr" ] && [ ! -e "$SINGBOX_FOLDER_PATH/port_tr" ]; then port_tr=$(rand_port); echo "$port_tr" > "$SINGBOX_FOLDER_PATH/port_tr"; elif [ -n "$port_tr" ]; then echo "$port_tr" > "$SINGBOX_FOLDER_PATH/port_tr"; fi
         
-        port_tr=$(cat "$HOME/agsb/port_tr"); 
+        port_tr=$(cat "$SINGBOX_FOLDER_PATH/port_tr"); 
         yellow "Trojan端口(Argo本地使用)：$port_tr"
 
-        cat >> "$HOME/agsb/sb.json" <<EOF
+        cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
 {"type": "trojan", "tag": "trojan-ws-sb", "listen": "::", "listen_port": ${port_tr},"users": [ { "password": "${uuid}" } ],"transport": { "type": "ws", "path": "/${uuid}-tr" }},
 EOF
     fi
 
    # 添加vmess协议
     if [ -n "$vmp" ]; then
-        if [ -z "$port_vm_ws" ] && [ ! -e "$HOME/agsb/port_vm_ws" ]; then port_vm_ws=$(rand_port); echo "$port_vm_ws" > "$HOME/agsb/port_vm_ws"; elif [ -n "$port_vm_ws" ]; then echo "$port_vm_ws" > "$HOME/agsb/port_vm_ws"; fi
+        if [ -z "$port_vm_ws" ] && [ ! -e "$SINGBOX_FOLDER_PATH/port_vm_ws" ]; then port_vm_ws=$(rand_port); echo "$port_vm_ws" > "$SINGBOX_FOLDER_PATH/port_vm_ws"; elif [ -n "$port_vm_ws" ]; then echo "$port_vm_ws" > "$SINGBOX_FOLDER_PATH/port_vm_ws"; fi
         
-        port_vm_ws=$(cat "$HOME/agsb/port_vm_ws"); 
+        port_vm_ws=$(cat "$SINGBOX_FOLDER_PATH/port_vm_ws"); 
         yellow "Vmess-ws端口 (Argo本地使用)：$port_vm_ws"
 
-        cat >> "$HOME/agsb/sb.json" <<EOF
+        cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
 {"type": "vmess", "tag": "vmess-sb", "listen": "::", "listen_port": ${port_vm_ws},"users": [ { "uuid": "${uuid}", "alterId": 0 } ],"transport": { "type": "ws", "path": "/${uuid}-vm" }},
 EOF
     fi
     # 添加vless-reality-vision协议
     if [ -n "$vlr" ]; then
-        if [ -z "$port_vlr" ] && [ ! -e "$HOME/agsb/port_vlr" ];  then 
+        if [ -z "$port_vlr" ] && [ ! -e "$SINGBOX_FOLDER_PATH/port_vlr" ];  then 
             port_vlr=$(rand_port); 
-            echo "$port_vlr" > "$HOME/agsb/port_vlr"; 
+            echo "$port_vlr" > "$SINGBOX_FOLDER_PATH/port_vlr"; 
         elif [ -n "$port_vlr" ]; then 
-            echo "$port_vlr" > "$HOME/agsb/port_vlr"; 
+            echo "$port_vlr" > "$SINGBOX_FOLDER_PATH/port_vlr"; 
         fi
         
-        port_vlr=$(cat "$HOME/agsb/port_vlr"); 
+        port_vlr=$(cat "$SINGBOX_FOLDER_PATH/port_vlr"); 
         yellow "VLESS-Reality-Vision端口：$port_vlr"
 
-        if [ ! -f "$HOME/agsb/reality.key" ]; then 
-            "$HOME/agsb/sing-box" generate reality-keypair > "$HOME/agsb/reality.key"; 
+        if [ ! -f "$SINGBOX_FOLDER_PATH/reality.key" ]; then 
+            "$SINGBOX_FOLDER_PATH/sing-box" generate reality-keypair > "$SINGBOX_FOLDER_PATH/reality.key"; 
         fi
 
           # ✅ Reality Keypair：只传私钥即可（自动算公钥/或复用文件），节点输出保持一致
         init_reality_keypair
         private_key="${reality_private}"
-        short_id="$(get_short_id "$HOME/agsb/short_id")"
+        short_id="$(get_short_id "$SINGBOX_FOLDER_PATH/short_id")"
 
 
         # www.ua.edu
-        cat >> "$HOME/agsb/sb.json" <<EOF
+        cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
 {"type": "vless", "tag": "vless-reality-vision-sb", "listen": "::", "listen_port": ${port_vlr},"sniff": true,"users": [{"uuid": "${uuid}","flow": "xtls-rprx-vision"}],"tls": {"enabled": true,"server_name": "${vl_sni}","reality": {"enabled": true,"handshake": {"server": "${vl_sni}","server_port": ${vl_sni_pt}},"private_key": "${private_key}","short_id": ["${short_id}"]}}},
 EOF
     fi
 }
 #  Generate Sing-box configuration file
 sbbout(){
-    if [ -e "$HOME/agsb/sb.json" ]; then
-        sed -i '$ s/,[[:space:]]*$//' "$HOME/agsb/sb.json"
+    if [ -e "$SINGBOX_FOLDER_PATH/sb.json" ]; then
+        sed -i '$ s/,[[:space:]]*$//' "$SINGBOX_FOLDER_PATH/sb.json"
 
-        cat >> "$HOME/agsb/sb.json" <<EOF
+        cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
 ],
 "outbounds": [ { "type": "direct", "tag": "direct" }, { "type": "block", "tag": "block" } ],
 "route": { "rules": [ { "action": "sniff" }, { "action": "resolve", "strategy": "${sbyx}" } ], "final": "direct" }
@@ -1533,7 +1530,7 @@ After=network.target
 [Service]
 Type=simple
 NoNewPrivileges=yes
-ExecStart=$HOME/agsb/sing-box run -c $HOME/agsb/sb.json
+ExecStart=$SINGBOX_FOLDER_PATH/sing-box run -c $SINGBOX_FOLDER_PATH/sb.json
 Restart=on-failure
 RestartSec=5s
 [Install]
@@ -1549,8 +1546,8 @@ EOF
             cat > /etc/init.d/sing-box <<EOF
 #!/sbin/openrc-run
 description="sb service"
-command="$HOME/agsb/sing-box"
-command_args="run -c $HOME/agsb/sb.json"
+command="$SINGBOX_FOLDER_PATH/sing-box"
+command_args="run -c $SINGBOX_FOLDER_PATH/sb.json"
 command_background=yes
 pidfile="/run/sing-box.pid"
 depend() { need net; }
@@ -1562,7 +1559,7 @@ EOF
             green "✅ sb 服务已启动,并开启开机自启服务（openrc）"
         else
             debug_log "【调试】sbbout：使用 nohup 模式运行 sb 服务"
-            nohup "$HOME/agsb/sing-box" run -c "$HOME/agsb/sb.json" >/dev/null 2>&1 &
+            nohup "$SINGBOX_FOLDER_PATH/sing-box" run -c "$SINGBOX_FOLDER_PATH/sb.json" >/dev/null 2>&1 &
             echo ""
             green "✅  sb 服务已启动, 使用 nohup 模式运行"
         fi
@@ -1575,16 +1572,16 @@ EOF
 nginx_conf_path() {
     # Alpine
     if [ -d /etc/nginx/http.d ]; then
-        echo "/etc/nginx/http.d/agsb.conf"
+        echo "/etc/nginx/http.d/singbox.conf"
     else
-        echo "/etc/nginx/conf.d/agsb.conf"
+        echo "/etc/nginx/conf.d/singbox.conf"
     fi
 }
 
 setup_nginx_subscribe() {
   local port="${nginx_pt:-$NGINX_DEFAULT_PORT}"
   local argo_port="${argo_pt:-$ARGO_DEFAULT_PORT}"
-  echo "$port" > "$HOME/agsb/nginx_port"
+  echo "$port" > "$SINGBOX_FOLDER_PATH/nginx_port"
 
 
     # ✅端口相同会导致 nginx listen 冲突
@@ -1594,14 +1591,14 @@ setup_nginx_subscribe() {
     fi
   
 
-  local webroot="/var/www/agsb"
+  local webroot="/var/www/singbox"
   mkdir -p "$webroot"
-  chmod 755 /var /var/www /var/www/agsb 2>/dev/null
+  chmod 755 /var /var/www /var/www/singbox 2>/dev/null
 
   local vm_port tr_port uuid
-  uuid="$(cat "$HOME/agsb/uuid" 2>/dev/null)"
-  vm_port="$(cat "$HOME/agsb/port_vm_ws" 2>/dev/null)"
-  tr_port="$(cat "$HOME/agsb/port_tr" 2>/dev/null)"
+  uuid="$(cat "$SINGBOX_FOLDER_PATH/uuid" 2>/dev/null)"
+  vm_port="$(cat "$SINGBOX_FOLDER_PATH/port_vm_ws" 2>/dev/null)"
+  tr_port="$(cat "$SINGBOX_FOLDER_PATH/port_tr" 2>/dev/null)"
 
   local conf
   conf="$(nginx_conf_path)"
@@ -1621,7 +1618,7 @@ EOF
     # 订阅输出（base64）
     location ^~ /sub/${uuid} {
         default_type text/plain;
-        alias /var/www/agsb/sub.txt;
+        alias /var/www/singbox/sub.txt;
         add_header Cache-Control "no-store";
     }
 EOF
@@ -1802,7 +1799,7 @@ ensure_cloudflared_if_needed() {
 ensure_cloudflared() {
   debug_log "【调试】ensure_cloudflared：开始下载/安装 cloudflared"
   # 已存在就不重复下载
-  if [ -x "$HOME/agsb/cloudflared" ]; then
+  if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ]; then
     return 0
   fi
 
@@ -1815,7 +1812,7 @@ ensure_cloudflared() {
 
 
   url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$cpu"
-  out="$HOME/agsb/cloudflared"
+  out="$SINGBOX_FOLDER_PATH/cloudflared"
 
   debug_log "【调试】ensure_cloudflared：下载 cloudflared 二进制文件，保存路径 $out"
 
@@ -1860,7 +1857,7 @@ After=network.target
 [Service]
 Type=simple
 NoNewPrivileges=yes
-ExecStart=$HOME/agsb/cloudflared tunnel --edge-ip-version auto --config $HOME/agsb/tunnel.yml run
+ExecStart=$SINGBOX_FOLDER_PATH/cloudflared tunnel --edge-ip-version auto --config $SINGBOX_FOLDER_PATH/tunnel.yml run
 Restart=on-failure
 RestartSec=5s
 
@@ -1878,7 +1875,7 @@ After=network.target
 [Service]
 Type=simple
 NoNewPrivileges=yes
-ExecStart=$HOME/agsb/cloudflared tunnel --no-autoupdate --edge-ip-version auto run --token ${token}
+ExecStart=$SINGBOX_FOLDER_PATH/cloudflared tunnel --no-autoupdate --edge-ip-version auto run --token ${token}
 Restart=on-failure
 RestartSec=5s
 
@@ -1907,12 +1904,12 @@ install_argo_service_openrc() {
         return
     fi
 
-    local command_path="$HOME/agsb/cloudflared"
+    local command_path="$SINGBOX_FOLDER_PATH/cloudflared"
     local args=""
 
     if [ "$mode" = "json" ]; then
         debug_log "【调试】使用 json 模式安装 argo 服务(openrc)"
-        args="tunnel --edge-ip-version auto --config $HOME/agsb/tunnel.yml run"
+        args="tunnel --edge-ip-version auto --config $SINGBOX_FOLDER_PATH/tunnel.yml run"
     else
         debug_log "【调试】使用 token 模式安装 argo 服务(openrc)"
         args="tunnel --no-autoupdate --edge-ip-version auto run --token ${token}"
@@ -1943,32 +1940,32 @@ start_argo_no_daemon() {
 
     if [ "$mode" = "json" ]; then
         debug_log "【调试】使用 json 模式，nohup 启动 argo"
-        nohup "$HOME/agsb/cloudflared" tunnel \
+        nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel \
           --edge-ip-version auto \
-          --config "$HOME/agsb/tunnel.yml" run \
-          > "$HOME/agsb/argo.log" 2>&1 &
+          --config "$SINGBOX_FOLDER_PATH/tunnel.yml" run \
+          > "$SINGBOX_FOLDER_PATH/argo.log" 2>&1 &
     elif [ -n "$token" ]; then
         debug_log "【调试】使用 token 模式，nohup 启动 argo"
-        nohup "$HOME/agsb/cloudflared" tunnel \
+        nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel \
           --no-autoupdate \
           --edge-ip-version auto run \
           --token "$token" \
-          > "$HOME/agsb/argo.log" 2>&1 &
+          > "$SINGBOX_FOLDER_PATH/argo.log" 2>&1 &
     else
         debug_log "【调试】使用 URL 模式，nohup 启动 argo"
-        nohup "$HOME/agsb/cloudflared" tunnel \
+        nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel \
           --url "http://localhost:${port}" \
           --edge-ip-version auto \
           --no-autoupdate \
-          > "$HOME/agsb/argo.log" 2>&1 &
+          > "$SINGBOX_FOLDER_PATH/argo.log" 2>&1 &
     fi
 }
 
 # 等待并检查 Argo
 wait_and_check_argo() {
   local argo_tunnel_type="${1:-临时}"  # 第一个参数：隧道类型（固定/临时）
-  local argo_log="$HOME/agsb/argo.log"
-  local ym_log="$HOME/agsb/sbargoym.log"
+  local argo_log="$SINGBOX_FOLDER_PATH/argo.log"
+  local ym_log="$SINGBOX_FOLDER_PATH/sbargoym.log"
   local argodomain=""
   local i=0
   local max_wait=5
@@ -2051,16 +2048,16 @@ append_argo_cron_legacy() {
     # 固定 Argo（token / JSON）
     if [ -n "${ARGO_DOMAIN}" ] && [ -n "${ARGO_AUTH}" ]; then
         if [ "$ARGO_MODE" = "json" ]; then
-            echo '@reboot sleep 10 && nohup $HOME/agsb/cloudflared tunnel --edge-ip-version auto --config $HOME/agsb/tunnel.yml run >/dev/null 2>&1 &' \
+            echo '@reboot sleep 10 && nohup $SINGBOX_FOLDER_PATH/cloudflared tunnel --edge-ip-version auto --config $SINGBOX_FOLDER_PATH/tunnel.yml run >/dev/null 2>&1 &' \
                 >> /tmp/crontab.tmp
         else
-            echo '@reboot sleep 10 && nohup $HOME/agsb/cloudflared tunnel --no-autoupdate --edge-ip-version auto run --token $(cat $HOME/agsb/sbargotoken.log) >/dev/null 2>&1 &' \
+            echo '@reboot sleep 10 && nohup $SINGBOX_FOLDER_PATH/cloudflared tunnel --no-autoupdate --edge-ip-version auto run --token $(cat $SINGBOX_FOLDER_PATH/sbargotoken.log) >/dev/null 2>&1 &' \
                 >> /tmp/crontab.tmp
         fi
 
     # 临时 Argo
     else
-        echo '@reboot sleep 10 && nohup $HOME/agsb/cloudflared tunnel --url http://localhost:$(cat $HOME/agsb/argoport.log) --edge-ip-version auto --no-autoupdate > $HOME/agsb/argo.log 2>&1 &' \
+        echo '@reboot sleep 10 && nohup $SINGBOX_FOLDER_PATH/cloudflared tunnel --url http://localhost:$(cat $SINGBOX_FOLDER_PATH/argoport.log) --edge-ip-version auto --no-autoupdate > $SINGBOX_FOLDER_PATH/argo.log 2>&1 &' \
             >> /tmp/crontab.tmp
     fi
 }
@@ -2069,7 +2066,7 @@ append_argo_cron_legacy() {
 post_install_finalize_legacy() {
   # 用“最多等待 10 秒 + 检测到就立刻继续”替代固定 sleep
   for i in 1 2 3 4 5 6 7 8 9 10; do
-    if pgrep -f "$HOME/agsb/sing-box" >/dev/null 2>&1 || pgrep -f "$HOME/agsb/cloudflared" >/dev/null 2>&1; then
+    if pgrep -f "$SINGBOX_FOLDER_PATH/sing-box" >/dev/null 2>&1 || pgrep -f "$SINGBOX_FOLDER_PATH/cloudflared" >/dev/null 2>&1; then
       break
     fi
     sleep 1
@@ -2077,9 +2074,9 @@ post_install_finalize_legacy() {
   echo
 
   # 只要 sing-box 或 cloudflared 进程存在，认为安装启动成功
-  if pgrep -f "$HOME/agsb/sing-box" >/dev/null 2>&1 || pgrep -f "$HOME/agsb/cloudflared" >/dev/null 2>&1; then
+  if pgrep -f "$SINGBOX_FOLDER_PATH/sing-box" >/dev/null 2>&1 || pgrep -f "$SINGBOX_FOLDER_PATH/cloudflared" >/dev/null 2>&1; then
     white "✅ 安装完成：已检测到 sing-box/cloudflared 正在运行"
-    # ❗ legacy 收尾：这里只做检测与提示，不做 agsb 快捷方式/下载主脚本/写 PATH/建软链
+    # ❗ legacy 收尾：这里只做检测与提示，不做快捷方式/下载主脚本/写 PATH/建软链
     return 0
   fi
 
@@ -2121,7 +2118,7 @@ ensure_nginx_if_needed() {
 
   # ✅ 只有订阅开启时才清空/准备 sub.txt
   if is_true "$(get_subscribe_flag)"; then
-    : > /var/www/agsb/sub.txt
+    : > /var/www/singbox/sub.txt
   fi
 
   # ✅ 启动 nginx
@@ -2261,15 +2258,15 @@ EOF
   fi
 
   debug_log "【调试】pick_server_ip_for_install：最终选择的服务器IP，server_ip=$server_ip"
-  # 9) 最终写入：IPv6 加 []，写入 $HOME/agsb/server_ip.log
-  mkdir -p "$HOME/agsb" 2>/dev/null || true
+  # 9) 最终写入：IPv6 加 []，写入 $SINGBOX_FOLDER_PATH/server_ip.log
+  mkdir -p "$SINGBOX_FOLDER_PATH" 2>/dev/null || true
 
   local ip_final
   ip_final="$(format_ip_for_log "$server_ip" 2>/dev/null || true)"
   debug_log "【调试】pick_server_ip_for_install：最终写入的IP文件形式，ip_final=$ip_final"
-  echo "$ip_final" > "$HOME/agsb/server_ip.log"
+  echo "$ip_final" > "$SINGBOX_FOLDER_PATH/server_ip.log"
 
-  debug_log "【调试】pick_server_ip_for_install：已写入 $HOME/agsb/server_ip.log, ip_final=$ip_final"
+  debug_log "【调试】pick_server_ip_for_install：已写入 $SINGBOX_FOLDER_PATH/server_ip.log, ip_final=$ip_final"
 
 }
 
@@ -2310,8 +2307,8 @@ EOF
   local out_norm
   out_norm="$(strip_ip_brackets_all "${out_ip:-}")"
 
-  if [ -s "$HOME/agsb/server_ip.log" ]; then
-      current_server_ip="$(strip_ip_brackets_all "$(cat "$HOME/agsb/server_ip.log" 2>/dev/null)")"
+  if [ -s "$SINGBOX_FOLDER_PATH/server_ip.log" ]; then
+      current_server_ip="$(strip_ip_brackets_all "$(cat "$SINGBOX_FOLDER_PATH/server_ip.log" 2>/dev/null)")"
   fi
 
 
@@ -2402,14 +2399,14 @@ ins(){
          # 2.2 计算 Argo 本地端口
         argoport="${argo_pt:-$ARGO_DEFAULT_PORT}"
         debug_log "【调试】Argo 本地回源端口 argoport=${argoport}（来自 argo_pt 或默认 ARGO_DEFAULT_PORT）"
-        echo "$argoport" > "$HOME/agsb/argoport.log"    
+        echo "$argoport" > "$SINGBOX_FOLDER_PATH/argoport.log"    
 
 
         # 仍然记录 Argo 输出节点类型（给 cip 用）
         if [ "$argo" = "vmpt" ]; then
-          echo "Vmess" > "$HOME/agsb/vlvm"
+          echo "Vmess" > "$SINGBOX_FOLDER_PATH/vlvm"
         elif [ "$argo" = "trpt" ]; then
-          echo "Trojan" > "$HOME/agsb/vlvm"
+          echo "Trojan" > "$SINGBOX_FOLDER_PATH/vlvm"
         fi
 
 
@@ -2453,9 +2450,9 @@ ins(){
           fi
 
             # 与原版一致：固定 Argo 域名直接落盘
-            echo "$ARGO_DOMAIN" > "$HOME/agsb/sbargoym.log"
+            echo "$ARGO_DOMAIN" > "$SINGBOX_FOLDER_PATH/sbargoym.log"
             # token 模式下才会有 sbargotoken.log
-            [ "$ARGO_MODE" = "token" ] && echo "$ARGO_AUTH" > "$HOME/agsb/sbargotoken.log"
+            [ "$ARGO_MODE" = "token" ] && echo "$ARGO_AUTH" > "$SINGBOX_FOLDER_PATH/sbargotoken.log"
         else
             # 临时 Argo（trycloudflare）
             argo_tunnel_type="临时"
@@ -2465,7 +2462,7 @@ ins(){
         fi
 
         # 2.5 等待并检查 Argo 申请结果（原版 sleep + grep 逻辑）
-        debug_log "【调试】开始等待并检查 Argo 申请结果：tunnel_type=${argo_tunnel_type}，日志文件：$HOME/agsb/argo.log"
+        debug_log "【调试】开始等待并检查 Argo 申请结果：tunnel_type=${argo_tunnel_type}，日志文件：$SINGBOX_FOLDER_PATH/argo.log"
         wait_and_check_argo "$argo_tunnel_type"
     fi
 
@@ -2476,8 +2473,8 @@ ins(){
     post_install_finalize_legacy
     debug_log "【调试】post_install_finalize_legacy 已执行完成"
 
-    ensure_agsb_shortcut
-    debug_log "【调试】ensure_agsb_shortcut 已执行完成（快捷命令/链接）"
+    # ensure_singbox_shortcut
+    # debug_log "【调试】ensure_singbox_shortcut 已执行完成（快捷命令/链接）"
 }
 
 
@@ -2485,37 +2482,37 @@ ins(){
 
 
 # Write environment variables to files for persistence
-write2AgsbFolders(){
-  mkdir -p "$HOME/agsb"
+write2SingboxFolders(){
+  mkdir -p "$SINGBOX_FOLDER_PATH"
 
-  echo "${vl_sni}"    > "$HOME/agsb/vl_sni"
-  echo "${hy_sni}"    > "$HOME/agsb/hy_sni"
-  echo "${tu_sni}"    > "$HOME/agsb/tu_sni"
-  echo "${cdn_host}"  > "$HOME/agsb/cdn_host"
-  echo "${cdn_pt}"   > "$HOME/agsb/cdn_pt"
+  echo "${vl_sni}"    > "$SINGBOX_FOLDER_PATH/vl_sni"
+  echo "${hy_sni}"    > "$SINGBOX_FOLDER_PATH/hy_sni"
+  echo "${tu_sni}"    > "$SINGBOX_FOLDER_PATH/tu_sni"
+  echo "${cdn_host}"  > "$SINGBOX_FOLDER_PATH/cdn_host"
+  echo "${cdn_pt}"   > "$SINGBOX_FOLDER_PATH/cdn_pt"
 
   # ✅ 只写新变量
-  echo "${nginx_pt}"  > "$HOME/agsb/nginx_port"
+  echo "${nginx_pt}"  > "$SINGBOX_FOLDER_PATH/nginx_port"
 
-  echo "${vl_sni_pt}" > "$HOME/agsb/vl_sni_pt"
+  echo "${vl_sni_pt}" > "$SINGBOX_FOLDER_PATH/vl_sni_pt"
 
   # ✅ 订阅开关落盘（默认 false）
-  echo "${subscribe}" > "$HOME/agsb/subscribe"
+  echo "${subscribe}" > "$SINGBOX_FOLDER_PATH/subscribe"
 }
 
 
 #   show status
-agsbstatus() {
+singbox_status() {
   purple "=========当前内核运行状态========="
 
 
-  debug_log "【调试】进入 agsbstatus() 函数，开始判断 sing-box 状态"
+  debug_log "【调试】进入 singbox_status() 函数，开始判断 sing-box 状态"
   # 1) sing-box
-  if pgrep -f "$HOME/agsb/sing-box" >/dev/null 2>&1; then
+  if pgrep -f "$SINGBOX_FOLDER_PATH/sing-box" >/dev/null 2>&1; then
  
     # 兼容：sing-box version r1.12.13
     local singbox_version
-    singbox_version=$("$HOME/agsb/sing-box" version 2>/dev/null | sed -n 's/.*r\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')
+    singbox_version=$("$SINGBOX_FOLDER_PATH/sing-box" version 2>/dev/null | sed -n 's/.*r\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')
     echo "Sing-box (版本V${singbox_version:-unknown})：✅ $(green "运行中")"
   else
     echo "Sing-box：❌ $(red "未运行")"
@@ -2537,9 +2534,9 @@ agsbstatus() {
     nginx_needed=true
   fi
 
-  debug_log "【调试】进入 agsbstatus() 函数，开始判断 cloudflared 状态"
+  debug_log "【调试】进入 singbox_status() 函数，开始判断 cloudflared 状态"
   # ✅ cloudflared 安装状态（不影响 Argo 是否启用）
-  if [ -x "$HOME/agsb/cloudflared" ] || command -v cloudflared >/dev/null 2>&1; then
+  if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ] || command -v cloudflared >/dev/null 2>&1; then
     echo "cloudflared：✅ $(green "已安装")"
   else
     echo "cloudflared：❌ $(red "未安装")"
@@ -2547,14 +2544,14 @@ agsbstatus() {
 
   # 2) Argo 状态（细分：不需要 / 需要但未运行 / 运行中）
   if ! $argo_needed; then
-    debug_log "【调试】进入 agsbstatus() 函数，当前场景无需 Argo，由于argo_needed=$argo_needed"
+    debug_log "【调试】进入 singbox_status() 函数，当前场景无需 Argo，由于argo_needed=$argo_needed"
     echo "Argo：✅ $(purple "未启用")（当前场景无需 Argo）"
   else
-    debug_log "【调试】进入 agsbstatus() 函数，开始判断 cloudflared 状态，argo_needed=$argo_needed"
-    if pgrep -f "$HOME/agsb/cloudflared" >/dev/null 2>&1; then
+    debug_log "【调试】进入 singbox_status() 函数，开始判断 cloudflared 状态，argo_needed=$argo_needed"
+    if pgrep -f "$SINGBOX_FOLDER_PATH/cloudflared" >/dev/null 2>&1; then
       # 兼容：cloudflared version 2025.11.1
       local cloudflared_version
-      cloudflared_version=$("$HOME/agsb/cloudflared" version 2>/dev/null | sed -n 's/.*version \([0-9]\{4\}\.[0-9]\+\.[0-9]\+\).*/\1/p')
+      cloudflared_version=$("$SINGBOX_FOLDER_PATH/cloudflared" version 2>/dev/null | sed -n 's/.*version \([0-9]\{4\}\.[0-9]\+\.[0-9]\+\).*/\1/p')
       echo "cloudflared Argo (版本V${cloudflared_version:-unknown})：✅ $(green "运行中")"
     else
         echo "Argo：❌ 未运行（已启用 Argo）"
@@ -2564,10 +2561,10 @@ agsbstatus() {
   fi
 
   # 3) Nginx + subscribe 状态（细分：不需要 / 未安装 / 未运行 / 运行中）
-  debug_log "【调试】进入 agsbstatus() 函数，开始判断 Nginx 状态"
+  debug_log "【调试】进入 singbox_status() 函数，开始判断 Nginx 状态"
   local nginx_port sub_desc
   nginx_port="${nginx_pt:-$NGINX_DEFAULT_PORT}"
-  [ -s "$HOME/agsb/nginx_port" ] && nginx_port="$(cat "$HOME/agsb/nginx_port" 2>/dev/null)"
+  [ -s "$SINGBOX_FOLDER_PATH/nginx_port" ] && nginx_port="$(cat "$SINGBOX_FOLDER_PATH/nginx_port" 2>/dev/null)"
 
   if is_true "$subscribe_flag"; then
     sub_desc="✅ $(green "订阅已开启")"
@@ -2582,7 +2579,7 @@ agsbstatus() {
   fi
 
 
-  debug_log "【调试】进入 agsbstatus() 函数，开始判断 Nginx 状态，进一步区分未安装/未运行/运行中,nginx_needed=$nginx_needed"
+  debug_log "【调试】进入 singbox_status() 函数，开始判断 Nginx 状态，进一步区分未安装/未运行/运行中,nginx_needed=$nginx_needed"
   # ✅ 需要 nginx：进一步区分未安装/未运行/运行中
   if ! command -v nginx >/dev/null 2>&1; then
     echo "Nginx：❌ $(red "未安装")（${sub_desc}，端口：${nginx_port}）"
@@ -2627,17 +2624,17 @@ update_subscription_file() {
   fi
 
   # ✅ 没有节点文件就不生成
-  if [ ! -s "$HOME/agsb/jh.txt" ]; then
-    purple "❗ 订阅源文件不存在或为空：$HOME/agsb/jh.txt（跳过生成 sub.txt）"
+  if [ ! -s "$SINGBOX_FOLDER_PATH/jh.txt" ]; then
+    purple "❗ 订阅源文件不存在或为空：$SINGBOX_FOLDER_PATH/jh.txt（跳过生成 sub.txt）"
     return 0
   fi
 
-  mkdir -p /var/www/agsb
-  local out="/var/www/agsb/sub.txt"
+  mkdir -p /var/www/singbox
+  local out="/var/www/singbox/sub.txt"
 
   # ✅ 优先用 openssl（更通用）
   if command -v openssl >/dev/null 2>&1; then
-    if openssl base64 -A -in "$HOME/agsb/jh.txt" > "$out" 2>/dev/null; then
+    if openssl base64 -A -in "$SINGBOX_FOLDER_PATH/jh.txt" > "$out" 2>/dev/null; then
       purple "✅ sub.txt 生成成功：$out"
       return 0
     else
@@ -2648,13 +2645,13 @@ update_subscription_file() {
 
   # ✅ fallback：base64（兼容 busybox 与 GNU）
   if command -v base64 >/dev/null 2>&1; then
-    if base64 -w 0 "$HOME/agsb/jh.txt" 2>/dev/null > "$out"; then
+    if base64 -w 0 "$SINGBOX_FOLDER_PATH/jh.txt" 2>/dev/null > "$out"; then
       purple "✅  sub.txt 生成成功：$out"
       return 0
     fi
 
     # busybox base64 没有 -w 参数
-    if base64 "$HOME/agsb/jh.txt" 2>/dev/null | tr -d '\n' > "$out"; then
+    if base64 "$SINGBOX_FOLDER_PATH/jh.txt" 2>/dev/null | tr -d '\n' > "$out"; then
       purple "✅  sub.txt 生成成功：$out"
       return 0
     else
@@ -2675,26 +2672,26 @@ show_sub_url() {
   is_true "$(get_subscribe_flag)" || return 0
 
   local port="${nginx_pt}"
-  [ -s "$HOME/agsb/nginx_port" ] && port="$(cat "$HOME/agsb/nginx_port")"
+  [ -s "$SINGBOX_FOLDER_PATH/nginx_port" ] && port="$(cat "$SINGBOX_FOLDER_PATH/nginx_port")"
 
   local sub_uuid
-  sub_uuid="$(cat "$HOME/agsb/uuid" 2>/dev/null)"
+  sub_uuid="$(cat "$SINGBOX_FOLDER_PATH/uuid" 2>/dev/null)"
 
   [ -z "$sub_uuid" ] && return 0
 
 
-  local argodomain=$(cat "$HOME/agsb/sbargoym.log" 2>/dev/null)
+  local argodomain=$(cat "$SINGBOX_FOLDER_PATH/sbargoym.log" 2>/dev/null)
 
   local need_argo_flag=false
-  vlvm=$(cat $HOME/agsb/vlvm 2>/dev/null);
+  vlvm=$(cat $SINGBOX_FOLDER_PATH/vlvm 2>/dev/null);
   # vlvm不为空，则代表一定有argo  
   if [ -n "$vlvm" ]; then
     need_argo_flag=true
   fi
  
     # 当 need_argo_flag 为 true 且 argodomain 为空且 argo.log 存在时
-    if $need_argo_flag && [ -z "$argodomain" ] && [ -s "$HOME/agsb/argo.log" ]; then
-        argodomain=$(grep -aoE '[a-zA-Z0-9.-]+trycloudflare\.com' "$HOME/agsb/argo.log" 2>/dev/null | tail -n1)
+    if $need_argo_flag && [ -z "$argodomain" ] && [ -s "$SINGBOX_FOLDER_PATH/argo.log" ]; then
+        argodomain=$(grep -aoE '[a-zA-Z0-9.-]+trycloudflare\.com' "$SINGBOX_FOLDER_PATH/argo.log" 2>/dev/null | tail -n1)
     fi
   
   # 当argodomain 不为空时
@@ -2705,7 +2702,7 @@ show_sub_url() {
 
   # 普通 http：IP:PORT
   local server_ip
-  server_ip=$(cat "$HOME/agsb/server_ip.log" 2>/dev/null)
+  server_ip=$(cat "$SINGBOX_FOLDER_PATH/server_ip.log" 2>/dev/null)
 
   if [ -z "$server_ip" ]; then
     server_ip="$( (curl -s4m5 -k https://icanhazip.com) || (wget -4 -qO- --tries=2 https://icanhazip.com) )"
@@ -2721,9 +2718,9 @@ ensure_and_print_reality_private_for_cip() {
   local want_print="${1:-0}"
   [ "$want_print" = "1" ] || return 0
 
-  if [ -z "$reality_private" ] && [ -s "$HOME/agsb/reality.key" ]; then
-    reality_private="$(awk '/PrivateKey/{print $NF; exit}' "$HOME/agsb/reality.key" 2>/dev/null)"
-    reality_public="$(awk '/PublicKey/{print $NF; exit}' "$HOME/agsb/reality.key" 2>/dev/null)"
+  if [ -z "$reality_private" ] && [ -s "$SINGBOX_FOLDER_PATH/reality.key" ]; then
+    reality_private="$(awk '/PrivateKey/{print $NF; exit}' "$SINGBOX_FOLDER_PATH/reality.key" 2>/dev/null)"
+    reality_public="$(awk '/PublicKey/{print $NF; exit}' "$SINGBOX_FOLDER_PATH/reality.key" 2>/dev/null)"
   fi
 
   if [ -n "$reality_private" ]; then
@@ -2743,7 +2740,7 @@ print_reality_key(){
 append_jh() {
   # 只写纯文本到聚合文件，禁止任何颜色码污染订阅
   # 用 echo -e 是为了支持变量里自带的 \n 换行
-  echo -e "$1" >> "$HOME/agsb/jh.txt"
+  echo -e "$1" >> "$SINGBOX_FOLDER_PATH/jh.txt"
 }
 
 # 定义验证 IP 地址是否合法的函数
@@ -2860,25 +2857,25 @@ cip(){
     }
     
     echo
-    # 显示 AGSB 状态
-    agsbstatus
+    # 显示 Singbox 状态
+    singbox_status
     echo
     
     # 显示本机 v4/v6 + 地区，并在出口 IP 变更时提示
     show_local_ip_info_with_out_ip_hint
 
-    rm -rf "$HOME/agsb/jh.txt"; 
-    uuid=$(cat "$HOME/agsb/uuid"); 
-    server_ip=$(cat "$HOME/agsb/server_ip.log" 2>/dev/null); 
-    sxname=$(cat "$HOME/agsb/name" 2>/dev/null);
+    rm -rf "$SINGBOX_FOLDER_PATH/jh.txt"; 
+    uuid=$(cat "$SINGBOX_FOLDER_PATH/uuid"); 
+    server_ip=$(cat "$SINGBOX_FOLDER_PATH/server_ip.log" 2>/dev/null); 
+    sxname=$(cat "$SINGBOX_FOLDER_PATH/name" 2>/dev/null);
 
     echo "*********************************************************"; 
-    purple "agsb脚本输出节点配置如下："; 
+    purple "Singbox脚本输出节点配置如下："; 
     echo;
     # Hysteria2 protocol (hy2)
-    if grep -q "hy2-sb" "$HOME/agsb/sb.json"; then 
-        port_hy2=$(cat "$HOME/agsb/port_hy2"); 
-        hy_sni=$(cat "$HOME/agsb/hy_sni"); 
+    if grep -q "hy2-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then 
+        port_hy2=$(cat "$SINGBOX_FOLDER_PATH/port_hy2"); 
+        hy_sni=$(cat "$SINGBOX_FOLDER_PATH/hy_sni"); 
         hy2_link="hysteria2://$uuid@$server_ip:$port_hy2?security=tls&alpn=h3&insecure=1&allowInsecure=1&sni=${hy_sni}#${sxname}hy2-$hostname"; 
         yellow "💣【 Hysteria2 】(直连协议)"; 
         green "$hy2_link"
@@ -2888,9 +2885,9 @@ cip(){
     
     
      # TUIC protocol (tuic or tupt)
-    if grep -q "tuic-sb" "$HOME/agsb/sb.json"; then
-        port_tu=$(cat "$HOME/agsb/port_tu")
-        tu_sni=$(cat "$HOME/agsb/tu_sni"); 
+    if grep -q "tuic-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
+        port_tu=$(cat "$SINGBOX_FOLDER_PATH/port_tu")
+        tu_sni=$(cat "$SINGBOX_FOLDER_PATH/tu_sni"); 
         password=$uuid
 
         tuic_link="tuic://${uuid}:${password}@${server_ip}:${port_tu}?sni=${tu_sni}&congestion_control=bbr&security=tls&udp_relay_mode=native&alpn=h3&allow_insecure=1#${sxname}tuic-$hostname"
@@ -2900,11 +2897,11 @@ cip(){
         echo;
     fi
     # VLESS-Reality-Vision protocol (vless-reality-vision)
-    if grep -q "vless-reality-vision-sb" "$HOME/agsb/sb.json"; then
-        port_vlr=$(cat "$HOME/agsb/port_vlr")
-        public_key=$(sed -n '2p' "$HOME/agsb/reality.key" | awk '{print $2}')
-        short_id=$(cat "$HOME/agsb/short_id")
-        vl_sni=$(cat "$HOME/agsb/vl_sni")
+    if grep -q "vless-reality-vision-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
+        port_vlr=$(cat "$SINGBOX_FOLDER_PATH/port_vlr")
+        public_key=$(sed -n '2p' "$SINGBOX_FOLDER_PATH/reality.key" | awk '{print $2}')
+        short_id=$(cat "$SINGBOX_FOLDER_PATH/short_id")
+        vl_sni=$(cat "$SINGBOX_FOLDER_PATH/vl_sni")
 
         debug_log "【调试】cip函数中的short_id,值为:$short_id"
 
@@ -2919,20 +2916,20 @@ cip(){
         # 查看节点时提示用户保存私钥（方便下次保持节点一致）,一般这里的$1值为"key"
          print_reality_key "$1"
     fi
-    #argodomain=$(cat "$HOME/agsb/sbargoym.log" 2>/dev/null); [ -z "$argodomain" ] && argodomain=$(grep -a trycloudflare.com "$HOME/agsb/argo.log" 2>/dev/null | awk 'NR==2{print}' | awk -F// '{print $2}' | awk '{print $1}')
+    #argodomain=$(cat "$SINGBOX_FOLDER_PATH/sbargoym.log" 2>/dev/null); [ -z "$argodomain" ] && argodomain=$(grep -a trycloudflare.com "$SINGBOX_FOLDER_PATH/argo.log" 2>/dev/null | awk 'NR==2{print}' | awk -F// '{print $2}' | awk '{print $1}')
    
-    argodomain=$(cat "$HOME/agsb/sbargoym.log" 2>/dev/null)
+    argodomain=$(cat "$SINGBOX_FOLDER_PATH/sbargoym.log" 2>/dev/null)
 
-    if need_argo && [ -z "$argodomain" ] && [ -s "$HOME/agsb/argo.log" ]; then
-        argodomain=$(grep -aoE '[a-zA-Z0-9.-]+trycloudflare\.com' "$HOME/agsb/argo.log" 2>/dev/null | tail -n1)
+    if need_argo && [ -z "$argodomain" ] && [ -s "$SINGBOX_FOLDER_PATH/argo.log" ]; then
+        argodomain=$(grep -aoE '[a-zA-Z0-9.-]+trycloudflare\.com' "$SINGBOX_FOLDER_PATH/argo.log" 2>/dev/null | tail -n1)
     fi
 
-    cdn_host=$(cat "$HOME/agsb/cdn_host")
-    cdn_pt=$(cat "$HOME/agsb/cdn_pt" 2>/dev/null)
+    cdn_host=$(cat "$SINGBOX_FOLDER_PATH/cdn_host")
+    cdn_pt=$(cat "$SINGBOX_FOLDER_PATH/cdn_pt" 2>/dev/null)
     cdn_pt="$(normalize_cdn_pt "$cdn_pt" 443)"
 
     if [ -n "$argodomain" ]; then
-        vlvm=$(cat $HOME/agsb/vlvm 2>/dev/null); uuid=$(cat "$HOME/agsb/uuid")
+        vlvm=$(cat $SINGBOX_FOLDER_PATH/vlvm 2>/dev/null); uuid=$(cat "$SINGBOX_FOLDER_PATH/uuid")
         if [ "$vlvm" = "Vmess" ]; then
             vmatls_link1="vmess://$(echo "{\"v\":\"2\",\"ps\":\"${sxname}vmess-ws-tls-argo-$hostname-${cdn_pt}\",\"add\":\"${cdn_host}\",\"port\":\"${cdn_pt}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":\"$argodomain\",\"path\":\"/${uuid}-vm\",\"tls\":\"tls\",\"sni\":\"$argodomain\"}" | base64 | tr -d '\n\r')"
            
@@ -2942,9 +2939,9 @@ cip(){
             vmatls_link1=""
         fi
 
-        sbtk=$(cat "$HOME/agsb/sbargotoken.log" 2>/dev/null); 
+        sbtk=$(cat "$SINGBOX_FOLDER_PATH/sbargotoken.log" 2>/dev/null); 
         yellow "---------------------------------------------------------"
-        yellow "Argo隧道信息 (使用 ${vlvm}-ws 端口: $(cat $HOME/agsb/argoport.log 2>/dev/null))"
+        yellow "Argo隧道信息 (使用 ${vlvm}-ws 端口: $(cat $SINGBOX_FOLDER_PATH/argoport.log 2>/dev/null))"
         yellow "---------------------------------------------------------"
 
         green "Argo域名: ${argodomain}"
@@ -2974,9 +2971,8 @@ cip(){
 
 
     echo; 
-    yellow "聚合节点: cat $HOME/agsb/jh.txt"; 
+    yellow "聚合节点: cat $SINGBOX_FOLDER_PATH/jh.txt"; 
     yellow "========================================================="; 
-    purple "相关快捷方式如下：👇"; 
     showmode
     
 }
@@ -3000,27 +2996,41 @@ cleanup_nginx() {
 }
 
 
-# Remove agsb folder
+# Remove singbox folder
 cleandel(){
     # Change to $HOME to avoid issues when deleting directories
    cd "$HOME" || exit 1
 
     yellow "开始卸载sing-box/cloudflared流程..."; 
-    # Continue with the cleanup
+    
+    # 定义要清理的文件夹列表（兼容旧路径和新路径）
+    local folders_to_clean=(
+        "$SINGBOX_FOLDER_PATH"
+        "$OLD_SINGBOX_FOLDER"
+    )
+    
+    # 继续清理进程
     for P in /proc/[0-9]*; do
         if [ -L "$P/exe" ]; then
             TARGET=$(readlink -f "$P/exe" 2>/dev/null)
-            if echo "$TARGET" | grep -qE '/agsb/cloudflared|/agsb/sing-box'; then 
-                kill "$(basename "$P")" 2>/dev/null
-            fi
+            # 检查是否匹配任何要清理的文件夹
+            for folder in "${folders_to_clean[@]}"; do
+                if echo "$TARGET" | grep -qE "$folder/(cloudflared|sing-box)"; then 
+                    kill "$(basename "$P")" 2>/dev/null
+                    break
+                fi
+            done
         fi
     done
 
-    pkill -15 -f "$HOME/agsb/sing-box" 2>/dev/null
-    pkill -15 -f "$HOME/agsb/cloudflared" 2>/dev/null
+    # 杀死进程（兼容两个路径）
+    pkill -15 -f "$SINGBOX_FOLDER_PATH/sing-box" 2>/dev/null
+    pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2>/dev/null
+    pkill -15 -f "$OLD_SINGBOX_FOLDER/sing-box" 2>/dev/null
+    pkill -15 -f "$OLD_SINGBOX_FOLDER/cloudflared" 2>/dev/null
 
-    # 从 .bashrc 文件中删除包含 'agsb' 的行
-    # sed -i '/.*agsb.*/d' ~/.bashrc
+    # 从配置文件中删除包含 'singbox' 的行
+    # sed -i '/.*singbox.*/d' ~/.bashrc
    # sed -i '/.*export PATH="\$HOME\/bin:\$PATH".*/d' ~/.bashrc
 
     # 立即应用 .bashrc 的修改
@@ -3029,28 +3039,40 @@ cleandel(){
     # 处理 crontab，兼容 Debian 和 Alpine
     # Debian/Ubuntu 和 Alpine 都支持 crontab，但需要检查 crontab 是否存在
     crontab -l > /tmp/crontab.tmp 2>/dev/null || touch /tmp/crontab.tmp
+    sed -i '/.*singbox.*/d' /tmp/crontab.tmp
     sed -i '/.*agsb.*/d' /tmp/crontab.tmp
     crontab /tmp/crontab.tmp >/dev/null 2>&1
     rm /tmp/crontab.tmp
 
-    # 删除 agsb 目录，检查路径是否在 Alpine 或 Debian 上正确
+    # 删除快捷命令（兼容两个名称）
+    if [ -d "$HOME/bin/singbox" ]; then
+        rm -rf "$HOME/bin/singbox"
+    fi
     if [ -d "$HOME/bin/agsb" ]; then
         rm -rf "$HOME/bin/agsb"
     fi
-
+    
+    # 删除软链接（兼容两个名称）
+    rm -f "$HOME/.local/bin/singbox" 2>/dev/null
+    rm -f "$HOME/.local/bin/agsb" 2>/dev/null
+    rm -f "/usr/local/bin/singbox" 2>/dev/null
+    rm -f "/usr/local/bin/agsb" 2>/dev/null
+    rm -f "/usr/bin/singbox" 2>/dev/null
+    rm -f "/usr/bin/agsb" 2>/dev/null
 
     if has_systemd; then
-        for svc in sb argo; do
+        for svc in sb argo singbox-service agsb-singbox; do
             systemctl stop "$svc" >/dev/null 2>&1
             systemctl disable "$svc" >/dev/null 2>&1
         done
-        rm -f /etc/systemd/system/{sb.service,argo.service}
+        rm -f /etc/systemd/system/{sb.service,argo.service,singbox-service.service,agsb-singbox.service}
+        systemctl daemon-reload >/dev/null 2>&1
     elif command -v rc-service >/dev/null 2>&1; then
-        for svc in sing-box argo; do
+        for svc in sing-box argo singbox agsb-singbox; do
             rc-service "$svc" stop >/dev/null 2>&1
             rc-update del "$svc" default >/dev/null 2>&1
         done
-        rm -f /etc/init.d/{sing-box,argo}
+        rm -f /etc/init.d/{sing-box,argo,singbox,agsb-singbox}
     fi
 
   # 清理 nginx
@@ -3060,8 +3082,19 @@ cleandel(){
   yellow "开始卸载或者清理nginx流程..."; 
   cleanup_nginx
 
-  yellow "开始卸载或者清理快捷方式流程..."; 
-  cleanup_agsb_shortcut
+  # 清理文件夹（兼容两个路径）
+  yellow "开始删除文件夹..."; 
+  for folder in "${folders_to_clean[@]}"; do
+    if [ -d "$folder" ]; then
+      yellow "正在删除：$folder"
+      rm -rf "$folder" 2>/dev/null && green "✅ 已删除：$folder" || red "❌ 删除失败：$folder"
+    fi
+  done
+
+  # yellow "开始卸载或者清理快捷方式流程..."; 
+  # cleanup_singbox_shortcut
+  
+  green "✅ 卸载完成"
 
 }
 
@@ -3070,14 +3103,14 @@ cleandel(){
 
 # Restart sing-box
 sbrestart(){
-    pkill -15 -f "$HOME/agsb/sing-box" 2>/dev/null
+    pkill -15 -f "$SINGBOX_FOLDER_PATH/sing-box" 2>/dev/null
 
     if has_systemd; then
         systemctl restart sb
     elif command -v rc-service >/dev/null 2>&1; then
         rc-service sing-box restart
     else
-        nohup "$HOME/agsb/sing-box" run -c "$HOME/agsb/sb.json" >/dev/null 2>&1 &
+        nohup "$SINGBOX_FOLDER_PATH/sing-box" run -c "$SINGBOX_FOLDER_PATH/sb.json" >/dev/null 2>&1 &
     fi
 }
 
@@ -3087,7 +3120,7 @@ sbrestart(){
 # Restart argo
 argorestart(){
     # 先尽力停止现有 cloudflared 进程（原版行为）
-   pkill -15 -f "$HOME/agsb/cloudflared" 2>/dev/null
+   pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2>/dev/null
 
     # ===============================
     # systemd 管理
@@ -3111,31 +3144,31 @@ argorestart(){
     # ===============================
 
     # 1️⃣ JSON 固定隧道（最高优先级）
-    if [ -f "$HOME/agsb/tunnel.yml" ]; then
-        nohup "$HOME/agsb/cloudflared" tunnel \
+    if [ -f "$SINGBOX_FOLDER_PATH/tunnel.yml" ]; then
+        nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel \
           --edge-ip-version auto \
-          --config "$HOME/agsb/tunnel.yml" run \
+          --config "$SINGBOX_FOLDER_PATH/tunnel.yml" run \
           >/dev/null 2>&1 &
         return
     fi
 
     # 2️⃣ token 固定隧道
-    if [ -f "$HOME/agsb/sbargotoken.log" ]; then
-        nohup "$HOME/agsb/cloudflared" tunnel \
+    if [ -f "$SINGBOX_FOLDER_PATH/sbargotoken.log" ]; then
+        nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel \
           --no-autoupdate \
           --edge-ip-version auto run \
-          --token "$(cat "$HOME/agsb/sbargotoken.log")" \
+          --token "$(cat "$SINGBOX_FOLDER_PATH/sbargotoken.log")" \
           >/dev/null 2>&1 &
         return
     fi
 
     # 3️⃣ 临时 Argo（trycloudflare）
-    if [ -f "$HOME/agsb/argoport.log" ]; then
-        nohup "$HOME/agsb/cloudflared" tunnel \
-          --url "http://localhost:$(cat "$HOME/agsb/argoport.log")" \
+    if [ -f "$SINGBOX_FOLDER_PATH/argoport.log" ]; then
+        nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel \
+          --url "http://localhost:$(cat "$SINGBOX_FOLDER_PATH/argoport.log")" \
           --edge-ip-version auto \
           --no-autoupdate \
-          > "$HOME/agsb/argo.log" 2>&1 &
+          > "$SINGBOX_FOLDER_PATH/argo.log" 2>&1 &
     fi
 }
 
@@ -3143,7 +3176,7 @@ argorestart(){
 install_step(){
     echo "VPS系统：$op"; 
     echo "CPU架构：$cpu"; 
-    echo "agsb脚本开始安装/更新…………" && sleep 1
+    echo "Singbox脚本开始安装/更新…………" && sleep 1
 
     # 获取操作系统名称
     os_name=$(awk -F= '/^NAME/{print $2}' /etc/os-release)
@@ -3177,7 +3210,7 @@ install_step(){
         echo "不支持此操作系统"
     fi
     ins; 
-    green "agsb脚本安装完成！即将打印节点信息……"
+    green "Singbox脚本安装完成！即将打印节点信息……"
     # 显示节点信息 这里的key是一个定值，为了打印私钥
     cip "key"
 }
@@ -3309,7 +3342,7 @@ fi
 # 卸载服务
 if [ "$1" = "del" ]; then 
     cleandel; 
-    rm -rf "$HOME/agsb"; 
+    rm -rf "$SINGBOX_FOLDER_PATH"; 
     echo "卸载完成"; 
     showmode; 
     exit;
@@ -3325,7 +3358,7 @@ if [ "$1" = "list" ]; then
 fi
 # 更新sing-box内核
 if [ "$1" = "ups" ]; then 
-    pkill -15 -f "$HOME/agsb/sing-box" 2>/dev/null
+    pkill -15 -f "$SINGBOX_FOLDER_PATH/sing-box" 2>/dev/null
 
     upsingbox && sbrestart && echo "Sing-box内核更新完成" && sleep 2 && cip; 
     exit; 
@@ -3359,7 +3392,7 @@ if [ "$1" = "rep" ]; then
     green "开始覆盖式安装流程..."; 
     green "1、即将开始清理操作..."; 
     cleandel; 
-    rm -rf "$HOME/agsb"/{sb.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,name,short_id,cdn_host,hy_sni,vl_sni,tu_sni,vl_sni_pt,cdn_pt}; 
+    rm -rf "$SINGBOX_FOLDER_PATH"/{sb.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,name,short_id,cdn_host,hy_sni,vl_sni,tu_sni,vl_sni_pt,cdn_pt}; 
     green "1.1、清理操作完成..."; 
     sleep 2; 
 
