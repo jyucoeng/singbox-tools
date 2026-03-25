@@ -1427,8 +1427,10 @@ EOF
     insuuid
     write2SingboxFolders
 
-   # Generate a self-signed cert for hy2（CN 与 hy_sni 解耦）
-    gen_self_signed_cert "$SINGBOX_FOLDER_PATH/private.key" "$SINGBOX_FOLDER_PATH/cert.pem" "${CN_BING}" 36500
+   # Generate a self-signed cert for protocols that need TLS (hy2, tuic, anytls)
+    if [ -n "$hyp" ] || [ -n "$tup" ] || [ -n "$anyp" ]; then
+        gen_self_signed_cert "$SINGBOX_FOLDER_PATH/private.key" "$SINGBOX_FOLDER_PATH/cert.pem" "${CN_BING}" 36500
+    fi
 
 
     # 添加tuic协议
@@ -1526,11 +1528,23 @@ EOF
             echo "$port_any" > "$SINGBOX_FOLDER_PATH/port_any"
         fi
         
+        # any_sni 也应该保持稳定：优先读取文件，不存在才使用新值
+        if [ -s "$SINGBOX_FOLDER_PATH/any_sni" ]; then
+            any_sni=$(cat "$SINGBOX_FOLDER_PATH/any_sni")
+        else
+            echo "$any_sni" > "$SINGBOX_FOLDER_PATH/any_sni"
+        fi
+        
         port_any=$(cat "$SINGBOX_FOLDER_PATH/port_any"); 
         yellow "AnyTLS端口：$port_any"
+        
+        # 确保证书存在（如果 hy2/tuic 未启用，anytls 需要自己生成）
+        if [ ! -s "$SINGBOX_FOLDER_PATH/cert.pem" ] || [ ! -s "$SINGBOX_FOLDER_PATH/private.key" ]; then
+            gen_self_signed_cert "$SINGBOX_FOLDER_PATH/private.key" "$SINGBOX_FOLDER_PATH/cert.pem" "${CN_BING}" 36500
+        fi
 
         cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
-{"type": "tls", "tag": "anytls-sb", "listen": "::", "listen_port": ${port_any},"sniff": true,"users": [{"username": "${uuid}","password": "${uuid}"}],"tls": {"enabled": true,"server_name": "${any_sni}"}},
+{"type": "tls", "tag": "anytls-sb", "listen": "::", "listen_port": ${port_any},"sniff": true,"users": [{"password": "${uuid}"}],"tls": {"enabled": true,"server_name": "${any_sni}","certificate_path": "$SINGBOX_FOLDER_PATH/cert.pem", "key_path": "$SINGBOX_FOLDER_PATH/private.key"}},
 EOF
     fi
 }
@@ -2512,7 +2526,8 @@ write2SingboxFolders(){
   echo "${vl_sni}"    > "$SINGBOX_FOLDER_PATH/vl_sni"
   echo "${hy_sni}"    > "$SINGBOX_FOLDER_PATH/hy_sni"
   echo "${tu_sni}"    > "$SINGBOX_FOLDER_PATH/tu_sni"
-  echo "${any_sni}"   > "$SINGBOX_FOLDER_PATH/any_sni"
+  # any_sni 在 anytls 配置生成时处理，这里不覆盖
+  [ ! -s "$SINGBOX_FOLDER_PATH/any_sni" ] && echo "${any_sni}" > "$SINGBOX_FOLDER_PATH/any_sni"
   echo "${cdn_host}"  > "$SINGBOX_FOLDER_PATH/cdn_host"
   echo "${cdn_pt}"   > "$SINGBOX_FOLDER_PATH/cdn_pt"
 
@@ -2946,7 +2961,7 @@ cip(){
         port_any=$(cat "$SINGBOX_FOLDER_PATH/port_any")
         any_sni=$(cat "$SINGBOX_FOLDER_PATH/any_sni")
 
-        anytls_link="tls://${uuid}@${server_ip}:${port_any}?sni=${any_sni}#${sxname}anytls-$hostname"
+        anytls_link="anytls://${uuid}@${server_ip}:${port_any}?peer=${any_sni}&insecure=1&allowInsecure=1#${sxname}anytls-$hostname"
         yellow "🔐【 AnyTLS 】(直连协议)"; 
         green "$anytls_link"
         append_jh "$anytls_link"
