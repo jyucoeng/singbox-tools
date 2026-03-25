@@ -1,6 +1,6 @@
 #  singbox 一键安装脚本（可选nginx订阅与argo）
 # 1、 singbox 安装以及卸载
-## singbox 一键安装脚本（4协议，vmess argo/trojan argo +hy2+vless-Reality+tuic，这些协议可自由组合）
+## singbox 一键安装脚本（5协议，vmess argo/trojan argo +hy2+vless-Reality+tuic+anytls，这些协议可自由组合）
 cloudflared和nginx 用不到的时候就不会下载，只有配置了相关参数才会自动下载和启动
 
 举🌰说明：
@@ -15,13 +15,15 @@ hy_sni="time.js" \
 vl_sni="www.yahoo.com" \
 vl_sni_pt=443 \
 tu_sni="time.js" \
+any_sni="www.yahoo.com" \
 ippz=4 \
 out_ip='你的特殊出口ip(仅当你的出口ip和服务器ip不一致时有效，需配合ipzz使用，一般情况下留空或者不传值)' \
 trpt=41002 \
 vlrt=41003 \
 hypt=41004 \
 tupt=41005 \
-nginx_pt=41006 \
+anypt=41006 \
+nginx_pt=41007 \
 subscribe=true \
 argo="trpt" \
 agn="california.xxxx.xyz" \
@@ -42,7 +44,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 - 不传uuid → 脚本自动生成 UUID
 - 传uuid → 使用你指定的 UUID
 
-## 3、 cdn_host、cdn_pt、hy_sni、tu_sni、vl_sni、vl_sni_pt、argo_pt（以及cdn域名 和 各协议的伪装域名，可选)
+## 3、 cdn_host、cdn_pt、hy_sni、tu_sni、vl_sni、vl_sni_pt、any_sni、argo_pt（以及cdn域名 和 各协议的伪装域名，可选)
 
 ❗除了vl_sni、vl_sni_pt 属于安装时自定义，其他几个都属于任何时候都可以在客户端 随便修改） 
 ❗注意：这几个值不会填的话就不要瞎传（可直接留空或者干脆删去这个环境变量）
@@ -99,6 +101,8 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
 
 - vl_sni_pt 指的是vless协议的sni(伪装域名)对应的握手端口，默认是443，你可在安装时自定义为https系那几个中的一个。
 
+- any_sni 指的是用anytls协议的sni(伪装域名)，缺省值为www.microsoft.com，你可以自己传你要的值，比如 www.yahoo.com 。 不传就会使用缺省值做兜底。
+
 - argo的对外默认优选端口为443（可自行修改cdn_pt 参数），同样argo_pt对本地的监听端口为8001.也可以自定义（但是不建议改，不然你就要同时去把CF里面的对应的HTTP改成你自定义的端口。）
 
 <img width="1514" height="621" alt="CleanShot 2026-01-25 at 12 50 32" src="https://github.com/user-attachments/assets/ec1d2396-4832-4b1b-9da7-cbda4e9c56f1" />
@@ -133,11 +137,12 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
    trpt=41003 \
    hypt=41001 \
    vlrt=41002 \
-   tupt=41005 \
    vmpt=41004 \
-   nginx_pt=31006 \
+   tupt=41005 \
+   anypt=41006 \
+   nginx_pt=31007 \
    ```
-   这4个分别为trojan、hy2、vless、tuic、vmess、nginx订阅地址的端口
+   这些分别为trojan、hy2、vless、tuic、anytls、vmess、nginx订阅地址的端口
 
 
 
@@ -213,8 +218,9 @@ trpt=41002 \
 vlrt=41003 \
 hypt=41004 \
 tupt=41005 \
+anypt=41006 \
 argo="trpt" \
-nginx_pt=41006 \
+nginx_pt=41007 \
 agn="california.xxxx.xyz" \
 agk='ey开头的那一大串' \
 subscribe=true \
@@ -246,6 +252,13 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ```bash
 tupt=2082 \
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
+```
+
+### 只要anytls协议
+
+```bash
+anypt=2082 \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
@@ -298,7 +311,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 ```
 
 
-## 5️⃣、我自己的测试用例（4协议，hy2+vless+tuic+trojan Argo）
+## 5️⃣、我自己的测试用例（5协议，hy2+vless+tuic+anytls+trojan Argo）
 
 ### argo tunnel的token为普通字符串的场景：
 ```bash
@@ -308,14 +321,16 @@ hy_sni="time.js" \
 vl_sni="www.yahoo.com" \
 vl_sni_pt=443 \
 tu_sni="time.js" \
+any_sni="www.yahoo.com" \
 uuid=0631a7f3-09f8-4144-acf2-a4f5bd9ed281 \
 ippz=4 \
 trpt=41002 \
 vlrt=41003 \
 hypt=41004 \
 tupt=41005 \
+anypt=41006 \
 argo="trpt" \
-nginx_pt=41006 \
+nginx_pt=41007 \
 agn="california.xxxx.xyz" \
 agk='ey开头的那一大串' \
 subscribe=true \
@@ -363,14 +378,17 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 | hypt                         | 1（hy2）                                              |
 | vlrt                         | 1（vless）                                            |
 | tupt                         | 1（tuic）                                             |
+| anypt                        | 1（anytls）                                           |
 | vmpt                         | 0（无直连）                                           |
 | trpt                         | 0（无直连）                                           |
 | vmpt + argo=vmpt             | 1（Argo-vmess）                                       |
 | trpt + argo=trpt             | 1（Argo-trojan）                                      |
 | hypt + vlrt                  | 2（hy2和vless直连）                                   |
 | hypt + vlrt + tupt           | 3（hy2、vless、tuic直连）                             |
+| hypt + vlrt + tupt + anypt   | 4（hy2、vless、tuic、anytls直连）                     |
 | hypt + vlrt + argo           | **3（hy2、vless直连+Argo-vmess或者Argo-trojan）**         |
 | hypt + vlrt + tupt + argo    | **4（hy2、vless、tuic直连+Argo-vmess或者Argo-trojan）**   |
+| hypt + vlrt + tupt + anypt + argo | **5（hy2、vless、tuic、anytls直连+Argo-vmess或者Argo-trojan）** |
 
 ## 感谢
 感谢以下开发者的贡献：
@@ -379,5 +397,8 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 
 ## 版本变更信息
+v1.0.7
+ - 新增 anytls 协议支持，可与其他协议自由组合
+
 v1.0.6  
  - 去掉快捷指令agsb，以及将主目录名称由agsb 变更为doraemon，用新脚本卸载之前部署好的功能的时候，会把/root/doraemon 和/root/agsb文件夹都删除.

@@ -11,7 +11,7 @@ OLD_SINGBOX_FOLDER="/root/agsb"  # 旧路径，用于兼容和清理
 
  # ================== 常量和环境变量 结束 ==================
 
-VERSION="1.0.6(2026-03-15)"
+VERSION="1.0.7(2026-03-25)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -19,6 +19,7 @@ export cdn_host=${cdn_host:-"saas.sin.fan"}  # Default CDN host for vmess or tro
 export hy_sni=${hy_sni:-"www.microsoft.com"}    # Default SNI for hy2 protocol
 export vl_sni=${vl_sni:-"www.microsoft.com"}   # Default SNI for vless protocol   www.ua.edu www.yahoo.com
 export tu_sni=${tu_sni:-"www.microsoft.com"}    # Default SNI for hy2 protocol
+export any_sni=${any_sni:-"www.microsoft.com"}  # Default SNI for anytls protocol
 
 
 # Environment variables for ports and other settings
@@ -28,6 +29,7 @@ export port_tr=${trpt:-''};
 export port_hy2=${hypt:-''}; 
 export port_vlr=${vlrt:-''}; 
 export port_tu=${tupt:-''}; 
+export port_any=${anypt:-''}; 
 
 # 获取到的IP和出口ip不一样的时候，优先使用出口ip也就是out_ip
 export out_ip=${out_ip:-''};
@@ -145,9 +147,13 @@ if [ -n "${tupt+x}" ]; then
     tup=yes
 fi
 
+if [ -n "${anypt+x}" ]; then
+    anyp=yes
+fi
+
 # 判断：至少启用一个协议
 any_proto_enabled() {
-    is_yes "$vlr" || is_yes "$vmp" || is_yes "$trp" || is_yes "$hyp" || is_yes "$tup"
+    is_yes "$vlr" || is_yes "$vmp" || is_yes "$trp" || is_yes "$hyp" || is_yes "$tup" || is_yes "$anyp"
 }
 
 # 判断：是否需要 Argo
@@ -713,7 +719,7 @@ cleanup_singbox_shortcut() {
 # 显示菜单
 showmode(){
     blue "===================================================="
-    gradient "       singbox 一键脚本（vmess/trojan Argo选1,vless+hy2+tuic 3个直连）"
+    gradient "       singbox 一键脚本（vmess/trojan Argo选1,vless+hy2+tuic+anytls 4个直连）"
     green    "       作者：$AUTHOR"
     yellow   "       版本：$VERSION"
     blue "===================================================="
@@ -1507,6 +1513,24 @@ EOF
         # www.ua.edu
         cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
 {"type": "vless", "tag": "vless-reality-vision-sb", "listen": "::", "listen_port": ${port_vlr},"sniff": true,"users": [{"uuid": "${uuid}","flow": "xtls-rprx-vision"}],"tls": {"enabled": true,"server_name": "${vl_sni}","reality": {"enabled": true,"handshake": {"server": "${vl_sni}","server_port": ${vl_sni_pt}},"private_key": "${private_key}","short_id": ["${short_id}"]}}},
+EOF
+    fi
+    # 添加anytls协议
+    if [ -n "$anyp" ]; then
+        if [ -n "$port_any" ]; then
+            echo "$port_any" > "$SINGBOX_FOLDER_PATH/port_any"
+        elif [ -s "$SINGBOX_FOLDER_PATH/port_any" ]; then
+            port_any=$(cat "$SINGBOX_FOLDER_PATH/port_any")
+        else
+            port_any=$(rand_port)
+            echo "$port_any" > "$SINGBOX_FOLDER_PATH/port_any"
+        fi
+        
+        port_any=$(cat "$SINGBOX_FOLDER_PATH/port_any"); 
+        yellow "AnyTLS端口：$port_any"
+
+        cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
+{"type": "tls", "tag": "anytls-sb", "listen": "::", "listen_port": ${port_any},"sniff": true,"users": [{"username": "${uuid}","password": "${uuid}"}],"tls": {"enabled": true,"server_name": "${any_sni}"}},
 EOF
     fi
 }
@@ -2488,6 +2512,7 @@ write2SingboxFolders(){
   echo "${vl_sni}"    > "$SINGBOX_FOLDER_PATH/vl_sni"
   echo "${hy_sni}"    > "$SINGBOX_FOLDER_PATH/hy_sni"
   echo "${tu_sni}"    > "$SINGBOX_FOLDER_PATH/tu_sni"
+  echo "${any_sni}"   > "$SINGBOX_FOLDER_PATH/any_sni"
   echo "${cdn_host}"  > "$SINGBOX_FOLDER_PATH/cdn_host"
   echo "${cdn_pt}"   > "$SINGBOX_FOLDER_PATH/cdn_pt"
 
@@ -2916,6 +2941,17 @@ cip(){
         # 查看节点时提示用户保存私钥（方便下次保持节点一致）,一般这里的$1值为"key"
          print_reality_key "$1"
     fi
+    # AnyTLS protocol output
+    if grep -q "anytls-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
+        port_any=$(cat "$SINGBOX_FOLDER_PATH/port_any")
+        any_sni=$(cat "$SINGBOX_FOLDER_PATH/any_sni")
+
+        anytls_link="tls://${uuid}@${server_ip}:${port_any}?sni=${any_sni}#${sxname}anytls-$hostname"
+        yellow "🔐【 AnyTLS 】(直连协议)"; 
+        green "$anytls_link"
+        append_jh "$anytls_link"
+        echo;
+    fi
     #argodomain=$(cat "$SINGBOX_FOLDER_PATH/sbargoym.log" 2>/dev/null); [ -z "$argodomain" ] && argodomain=$(grep -a trycloudflare.com "$SINGBOX_FOLDER_PATH/argo.log" 2>/dev/null | awk 'NR==2{print}' | awk -F// '{print $2}' | awk '{print $1}')
    
     argodomain=$(cat "$SINGBOX_FOLDER_PATH/sbargoym.log" 2>/dev/null)
@@ -3243,7 +3279,7 @@ check_port_conflicts_or_exit() {
   fi
 
   # 固定检查这四个；subscribe=true 时才额外检查 nginx_pt
-  local vars="trpt vlrt hypt tupt"
+  local vars="trpt vlrt hypt tupt anypt"
   [[ "$subscribe_norm" == "true" ]] && vars="$vars nginx_pt"
 
   declare -A used   # port -> "name=value, name=value..."
@@ -3392,7 +3428,7 @@ if [ "$1" = "rep" ]; then
     green "开始覆盖式安装流程..."; 
     green "1、即将开始清理操作..."; 
     cleandel; 
-    rm -rf "$SINGBOX_FOLDER_PATH"/{sb.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,name,short_id,cdn_host,hy_sni,vl_sni,tu_sni,vl_sni_pt,cdn_pt}; 
+    rm -rf "$SINGBOX_FOLDER_PATH"/{sb.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,name,short_id,cdn_host,hy_sni,vl_sni,tu_sni,any_sni,vl_sni_pt,cdn_pt}; 
     green "1.1、清理操作完成..."; 
     sleep 2; 
 
