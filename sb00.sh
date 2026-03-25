@@ -1544,7 +1544,7 @@ EOF
         fi
 
         cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
-{"type": "tls", "tag": "anytls-sb", "listen": "::", "listen_port": ${port_any},"sniff": true,"users": [{"password": "${uuid}"}],"tls": {"enabled": true,"server_name": "${any_sni}","certificate_path": "$SINGBOX_FOLDER_PATH/cert.pem", "key_path": "$SINGBOX_FOLDER_PATH/private.key"}},
+{"type": "anytls", "tag": "anytls-sb", "listen": "::", "listen_port": ${port_any},"sniff": true,"users": [{"password": "${uuid}"}],"tls": {"enabled": true,"server_name": "${any_sni}","certificate_path": "$SINGBOX_FOLDER_PATH/cert.pem", "key_path": "$SINGBOX_FOLDER_PATH/private.key"}},
 EOF
     fi
 }
@@ -2961,7 +2961,7 @@ cip(){
         port_any=$(cat "$SINGBOX_FOLDER_PATH/port_any")
         any_sni=$(cat "$SINGBOX_FOLDER_PATH/any_sni")
 
-        anytls_link="anytls://${uuid}@${server_ip}:${port_any}?peer=${any_sni}&insecure=1&allowInsecure=1#${sxname}anytls-$hostname"
+        anytls_link="anytls://${uuid}@${server_ip}:${port_any}?security=tls&sni=${any_sni}&fp=firefox&insecure=1&allowInsecure=1&type=tcp#${sxname}anytls-$hostname"
         yellow "🔐【 AnyTLS 】(直连协议)"; 
         green "$anytls_link"
         append_jh "$anytls_link"
