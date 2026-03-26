@@ -205,33 +205,6 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
 
 ## 12、所有的协议都会输出到聚合节点文件中: cat /root/doraemon/jh.txt
 
-## 13、anytls 协议说明
-
-AnyTLS 是一个通用的 TLS 代理协议，支持灵活的配置。
-
-**节点链接格式：**
-```
-anytls://username:password@your.domain.com:port?security=tls&sni=your.domain.com&alpn=h2,http/1.1#NodeName
-```
-
-**参数说明：**
-- `username:password` - 认证凭证（脚本默认使用 UUID 作为用户名和密码）
-- `your.domain.com:port` - 服务器地址和端口
-- `security=tls` - 使用 TLS 加密
-- `sni=your.domain.com` - SNI 伪装域名（通过 `any_sni` 参数设置）
-- `alpn=h2,http/1.1` - 应用层协议协商
-
-**使用示例：**
-```bash
-anypt=41006 \
-any_sni="www.yahoo.com" \
-bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
-```
-
-生成的节点链接示例：
-```
-anytls://0631a7f3-09f8-4144-acf2-a4f5bd9ed281:0631a7f3-09f8-4144-acf2-a4f5bd9ed281@1.2.3.4:41006?security=tls&sni=www.yahoo.com&alpn=h2,http/1.1#MyNode-anytls-hostname
-```
 
 ## 以下为 参数上面有红线代表可以不传的变量
 <img width="1020" height="428" alt="CleanShot 2026-01-23 at 10 30 19" src="https://github.com/user-attachments/assets/bb336e89-df63-493d-8ee3-6c821870b36c" />
