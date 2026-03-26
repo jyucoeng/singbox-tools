@@ -193,7 +193,7 @@ if grep -q "anytls-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
     port_any=$(cat "$SINGBOX_FOLDER_PATH/port_any")
     any_sni=$(cat "$SINGBOX_FOLDER_PATH/any_sni")
 
-    anytls_link="tls://${uuid}@${server_ip}:${port_any}?sni=${any_sni}#${sxname}anytls-$hostname"
+    anytls_link="anytls://${uuid}@${server_ip}:${port_any}?security=tls&sni=${any_sni}&fp=firefox&insecure=1&allowInsecure=1&type=tcp#${sxname}anytls-$hostname"
     yellow "🔐【 AnyTLS 】(直连协议)"; 
     green "$anytls_link"
     append_jh "$anytls_link"
