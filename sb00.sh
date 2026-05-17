@@ -1,4 +1,3 @@
-
 #!/usr/bin/env bash
 export LANG=en_US.UTF-8
 
@@ -11,7 +10,7 @@ OLD_SINGBOX_FOLDER="/root/agsb"  # 旧路径，用于兼容和清理
 
  # ================== 常量和环境变量 结束 ==================
 
-VERSION="1.0.7(2026-03-25)"
+VERSION="1.0.8(2026-05-17)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -20,6 +19,12 @@ export hy_sni=${hy_sni:-"www.microsoft.com"}    # Default SNI for hy2 protocol
 export vl_sni=${vl_sni:-"www.microsoft.com"}   # Default SNI for vless protocol   www.ua.edu www.yahoo.com
 export tu_sni=${tu_sni:-"www.microsoft.com"}    # Default SNI for hy2 protocol
 export any_sni=${any_sni:-"www.microsoft.com"}  # Default SNI for anytls protocol
+
+# ✅ Hysteria2 Realm (UDP hole punching) 环境变量
+# 适用于没有公网入口的机器（如家庭宽带、NAT后的服务器）
+# 默认不启用，通过环境变量 hy2_realm=true 开启
+export hy2_realm=${hy2_realm:-'false'}          # 是否启用 Hysteria2 Realm 打洞功能
+export hy2_realm_id=${hy2_realm_id:-''}         # Realm ID（留空则使用 UUID）
 
 
 # Environment variables for ports and other settings
@@ -722,6 +727,7 @@ showmode(){
     gradient "       singbox 一键脚本（vmess/trojan Argo选1,vless+hy2+tuic+anytls 4个直连）"
     green    "       作者：$AUTHOR"
     yellow   "       版本：$VERSION"
+    yellow   "       新增：Hysteria2 Realm (UDP打洞) 支持"
     blue "===================================================="
 }
 
@@ -1462,8 +1468,36 @@ EOF
         port_hy2=$(cat "$SINGBOX_FOLDER_PATH/port_hy2"); 
         yellow "Hysteria2端口：$port_hy2"
 
+        # ✅ 判断是否启用 Realm（UDP 打洞）
+        local realm_config=""
+        if [ "${hy2_realm,,}" = "true" ]; then
+            # 有公网 IP 时打警告，但不强制关闭，由用户自己决定
+            if [ "$v4_ok" = true ] || [ "$v6_ok" = true ]; then
+                yellow "⚠️  检测到本机有公网 IP，Realm 通常不需要；有公网入口时不建议使用"
+                yellow "   如你是回国线路等特殊场景，忽略此提示即可"
+            fi
+
+            # 设置 Realm ID（默认使用 UUID）
+            # 格式要求：1-64字符，首字符字母或数字，其余只允许字母/数字/-/_
+            local realm_id="${hy2_realm_id:-$uuid}"
+            # UUID 含冒号以外的字符都合法，但做一次清洗：把不合法字符替换为 -
+            realm_id="$(echo "$realm_id" | tr -cd 'A-Za-z0-9_-' | cut -c1-64)"
+            # 首字符必须是字母或数字
+            if ! echo "$realm_id" | grep -qE '^[A-Za-z0-9]'; then
+                realm_id="r${realm_id}"
+            fi
+            echo "$realm_id" > "$SINGBOX_FOLDER_PATH/hy2_realm_id"
+
+            green "✅ Hysteria2 Realm (UDP打洞) 已启用"
+            yellow "   Realm ID: $realm_id"
+            yellow "   适用场景: 无公网IP、NAT后的服务器、家庭宽带、回国线路"
+
+            # 构建 Realm 配置（使用固定的 STUN 服务器列表）
+            realm_config=',"realm": {"server_url": "https://realm.hy2.io","token": "public","realm_id": "'$realm_id'","stun_servers": ["turn.cloudflare.com:3478","stun.nextcloud.com:3478","stun.sip.us:3478","global.stun.twilio.com:3478"]}'
+        fi
+
         cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
-{"type": "hysteria2", "tag": "hy2-sb", "listen": "::", "listen_port": ${port_hy2},"users": [ { "password": "${uuid}" } ],"tls": { "enabled": true, "alpn": ["h3"], "certificate_path": "$SINGBOX_FOLDER_PATH/cert.pem", "key_path": "$SINGBOX_FOLDER_PATH/private.key" }},
+{"type": "hysteria2", "tag": "hy2-sb", "listen": "::", "listen_port": ${port_hy2},"users": [ { "password": "${uuid}" } ],"tls": { "enabled": true, "alpn": ["h3"], "certificate_path": "$SINGBOX_FOLDER_PATH/cert.pem", "key_path": "$SINGBOX_FOLDER_PATH/private.key" }${realm_config}},
 EOF
     fi
     
@@ -2405,6 +2439,8 @@ ins(){
     # =====================================================
     # 1. 安装并启动 sing-box
     # =====================================================
+    # 提前检测公网连通性，供 installsb 内 Realm 判断使用
+    v4v6
     installsb
     set_sbyx
     sbbout
@@ -2916,10 +2952,53 @@ cip(){
     if grep -q "hy2-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then 
         port_hy2=$(cat "$SINGBOX_FOLDER_PATH/port_hy2"); 
         hy_sni=$(cat "$SINGBOX_FOLDER_PATH/hy_sni"); 
-        hy2_link="hysteria2://$uuid@$server_ip:$port_hy2?security=tls&alpn=h3&insecure=1&allowInsecure=1&sni=${hy_sni}#${sxname}hy2-$hostname"; 
-        yellow "💣【 Hysteria2 】(直连协议)"; 
+        
+        # ✅ 检查是否启用了 Realm
+        local realm_id=""
+        local is_realm=false
+        if grep -q '"realm"[[:space:]]*:' "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null; then
+            is_realm=true
+            realm_id=$(cat "$SINGBOX_FOLDER_PATH/hy2_realm_id" 2>/dev/null)
+            realm_id="${realm_id:-$uuid}"
+            yellow "💣【 Hysteria2 + Realm 】(UDP打洞协议 - 适用于NAT环境)"; 
+        else
+            yellow "💣【 Hysteria2 】(直连协议)"; 
+        fi
+        
+        # Realm 模式节点名加 -realm 后缀，方便客户端列表区分
+        local hy2_tag="${sxname}hy2-${hostname}"
+        $is_realm && hy2_tag="${sxname}hy2-${hostname}-realm"
+
+        hy2_link="hysteria2://$uuid@$server_ip:$port_hy2?security=tls&alpn=h3&insecure=1&allowInsecure=1&sni=${hy_sni}#${hy2_tag}"; 
         green "$hy2_link"
         append_jh "$hy2_link"
+        
+        # ✅ 如果启用了 Realm，输出客户端配置块
+        if $is_realm; then
+            echo
+            blue "📌 Realm 模式 - 客户端需额外添加以下配置："
+            blue "   Realm ID: $realm_id"
+            echo
+            blue "   sing-box 客户端在 hysteria2 出站里加："
+            green '   "realm": {'
+            green '     "server_url": "https://realm.hy2.io",'
+            green '     "token": "public",'
+            green "     \"realm_id\": \"$realm_id\","
+            green '     "stun_servers": ["turn.cloudflare.com:3478","stun.nextcloud.com:3478","stun.sip.us:3478","global.stun.twilio.com:3478"]'
+            green '   }'
+            echo
+            blue "   Clash.Meta 客户端在 hysteria2 proxy 里加："
+            green "   realm-opts:"
+            green "     enable: true"
+            green "     server-url: \"https://realm.hy2.io\""
+            green "     token: public"
+            green "     realm-id: \"$realm_id\""
+            green "     stun-servers:"
+            green "       - turn.cloudflare.com:3478"
+            green "       - stun.nextcloud.com:3478"
+            green "       - stun.sip.us:3478"
+            green "       - global.stun.twilio.com:3478"
+        fi
         echo; 
     fi
     
@@ -3443,7 +3522,7 @@ if [ "$1" = "rep" ]; then
     green "开始覆盖式安装流程..."; 
     green "1、即将开始清理操作..."; 
     cleandel; 
-    rm -rf "$SINGBOX_FOLDER_PATH"/{sb.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,name,short_id,cdn_host,hy_sni,vl_sni,tu_sni,any_sni,vl_sni_pt,cdn_pt}; 
+    rm -rf "$SINGBOX_FOLDER_PATH"/{sb.json,sbargoym.log,sbargotoken.log,argo.log,argoport.log,name,short_id,cdn_host,hy_sni,vl_sni,tu_sni,any_sni,vl_sni_pt,cdn_pt,hy2_realm_id}; 
     green "1.1、清理操作完成..."; 
     sleep 2; 
 
