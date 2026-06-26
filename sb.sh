@@ -3107,7 +3107,7 @@ cip(){
 
         socks5_user_enc=$(url_encode_component "$socks5_username")
         socks5_pass_enc=$(url_encode_component "$socks5_password")
-        socks5_link="socks5://${socks5_user_enc}:${socks5_pass_enc}@${server_ip}:${port_socks5}${sxname}socks5-$hostname"
+        socks5_link="socks5://${socks5_user_enc}:${socks5_pass_enc}@${server_ip}:${port_socks5}#${sxname}socks5-$hostname"
         yellow "🧦【 Socks5 】(此协议请不要直接在客户端里直连使用)";
         green "$socks5_link"
         append_jh " "
