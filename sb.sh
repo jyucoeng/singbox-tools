@@ -1606,7 +1606,7 @@ EOF
 
 
         cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
-{"type": "socks", "tag": "socks5-sb", "listen": "::", "listen_port": ${port_socks5}, "users": [{"username": ${socks5_username}, "password": ${socks5_password}}]},
+{"type": "socks", "tag": "socks5-sb", "listen": "::", "listen_port": ${port_socks5}, "users": [{"username": "${socks5_username}", "password": "${socks5_password}"}]},
 EOF
     fi
 }
