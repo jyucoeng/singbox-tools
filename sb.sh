@@ -3054,20 +3054,7 @@ cip(){
         append_jh "$anytls_link"
         echo;
     fi
-    # Socks5 protocol output
-    if grep -q "socks5-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
-        port_socks5=$(cat "$SINGBOX_FOLDER_PATH/port_socks5")
-        socks5_username=$(cat "$SINGBOX_FOLDER_PATH/socks5_user")
-        socks5_password=$(cat "$SINGBOX_FOLDER_PATH/socks5_pass")
 
-        socks5_user_enc=$(url_encode_component "$socks5_username")
-        socks5_pass_enc=$(url_encode_component "$socks5_password")
-        socks5_link="socks5://${socks5_user_enc}:${socks5_pass_enc}@${server_ip}:${port_socks5}"
-        yellow "🧦【 Socks5 】(直连协议)";
-        green "$socks5_link"
-        append_jh "$socks5_link"
-        echo;
-    fi
     #argodomain=$(cat "$SINGBOX_FOLDER_PATH/sbargoym.log" 2>/dev/null); [ -z "$argodomain" ] && argodomain=$(grep -a trycloudflare.com "$SINGBOX_FOLDER_PATH/argo.log" 2>/dev/null | awk 'NR==2{print}' | awk -F// '{print $2}' | awk '{print $1}')
    
     argodomain=$(cat "$SINGBOX_FOLDER_PATH/sbargoym.log" 2>/dev/null)
@@ -3111,6 +3098,23 @@ cip(){
 
 
     fi
+    
+     # Socks5 protocol output
+    if grep -q "socks5-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
+        port_socks5=$(cat "$SINGBOX_FOLDER_PATH/port_socks5")
+        socks5_username=$(cat "$SINGBOX_FOLDER_PATH/socks5_user")
+        socks5_password=$(cat "$SINGBOX_FOLDER_PATH/socks5_pass")
+
+        socks5_user_enc=$(url_encode_component "$socks5_username")
+        socks5_pass_enc=$(url_encode_component "$socks5_password")
+        socks5_link="socks5://${socks5_user_enc}:${socks5_pass_enc}@${server_ip}:${port_socks5}${sxname}socks5-$hostname"
+        yellow "🧦【 Socks5 】(此协议请不要直接在客户端里直连使用)";
+        green "$socks5_link"
+        append_jh " "
+        append_jh "$socks5_link"
+        echo;
+    fi
+
 
     update_subscription_file
     echo
