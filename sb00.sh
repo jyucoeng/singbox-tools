@@ -898,7 +898,7 @@ init_socks5_credentials() {
     if [ -n "${socks5_username:-}" ]; then
         printf '%s\n' "$socks5_username" > "$SINGBOX_FOLDER_PATH/socks5_user"
     elif [ -s "$SINGBOX_FOLDER_PATH/socks5_user" ]; then
-        socks5_username=$(cat "$SINGBOX_FOLDER_PATH/socks5_user" | tr -d '\n\r')
+        socks5_username=$(cat "$SINGBOX_FOLDER_PATH/socks5_user")
     else
         socks5_username=$(gen_socks5_username)
         printf '%s\n' "$socks5_username" > "$SINGBOX_FOLDER_PATH/socks5_user"
@@ -907,7 +907,7 @@ init_socks5_credentials() {
     if [ -n "${socks5_password:-}" ]; then
         printf '%s\n' "$socks5_password" > "$SINGBOX_FOLDER_PATH/socks5_pass"
     elif [ -s "$SINGBOX_FOLDER_PATH/socks5_pass" ]; then
-        socks5_password=$(cat "$SINGBOX_FOLDER_PATH/socks5_pass" | tr -d '\n\r')
+        socks5_password=$(cat "$SINGBOX_FOLDER_PATH/socks5_pass")
     else
         socks5_password=$(gen_socks5_password)
         printf '%s\n' "$socks5_password" > "$SINGBOX_FOLDER_PATH/socks5_pass"
@@ -1601,19 +1601,14 @@ EOF
         init_socks5_credentials
         port_socks5=$(cat "$SINGBOX_FOLDER_PATH/port_socks5")
         yellow "Socks5端口：$port_socks5"
-        # yellow "Socks5用户名：$socks5_username"
-        # yellow "Socks5密码：$socks5_password"
+        yellow "Socks5用户名：$socks5_username"
+        yellow "Socks5密码：$socks5_password"
+        socks5_username_json=$(json_escape_string "$socks5_username")
+        socks5_password_json=$(json_escape_string "$socks5_password")
 
-
-        # 使用 jq 来安全地处理含有特殊字符的用户名和密码
-        jq -n \
-          --arg type "socks" \
-          --arg tag "socks5-sb" \
-          --arg listen "::" \
-          --argjson port "$port_socks5" \
-          --arg username "$socks5_username" \
-          --arg password "$socks5_password" \
-          '{type: $type, tag: $tag, listen: $listen, listen_port: $port, users: [{username: $username, password: $password}]},' >> "$SINGBOX_FOLDER_PATH/sb.json"
+        cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
+{"type": "socks", "tag": "socks5-sb", "listen": "::", "listen_port": ${port_socks5}, "users": [{"username": "${socks5_username}", "password": "${socks5_password}"}]},
+EOF
     fi
 }
 #  Generate Sing-box configuration file
@@ -3103,12 +3098,13 @@ cip(){
 
 
     fi
-    
-     # Socks5 protocol output
+
+
+    # Socks5 protocol output
     if grep -q "socks5-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
-        port_socks5=$(cat "$SINGBOX_FOLDER_PATH/port_socks5" | tr -d '\n\r')
-        socks5_username=$(cat "$SINGBOX_FOLDER_PATH/socks5_user" | tr -d '\n\r')
-        socks5_password=$(cat "$SINGBOX_FOLDER_PATH/socks5_pass" | tr -d '\n\r')
+        port_socks5=$(cat "$SINGBOX_FOLDER_PATH/port_socks5")
+        socks5_username=$(cat "$SINGBOX_FOLDER_PATH/socks5_user")
+        socks5_password=$(cat "$SINGBOX_FOLDER_PATH/socks5_pass")
 
         socks5_user_enc=$(url_encode_component "$socks5_username")
         socks5_pass_enc=$(url_encode_component "$socks5_password")
@@ -3119,7 +3115,6 @@ cip(){
         append_jh "$socks5_link"
         echo;
     fi
-
 
     update_subscription_file
     echo
