@@ -72,7 +72,7 @@ vl_sni_pt="${vl_sni_pt:-443}"
 
 
 v46url="https://icanhazip.com"
-SCRIPT_URL="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh"
+SCRIPT_URL="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb00.sh"
 
 CN_BING="www.bing.com"
 
