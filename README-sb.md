@@ -1,35 +1,39 @@
 #  singbox 一键安装脚本
 # 1、 singbox 安装以及卸载
-## singbox 一键安装脚本（5协议，vmess argo/trojan argo +hy2+vless-Reality+tuic+anytls，这些协议可自由组合）
+## singbox 一键安装脚本（vmess argo/trojan argo 选1 + hy2+vless-Reality+tuic+anytls+socks5，这些协议可自由组合）
 cloudflared和nginx 用不到的时候就不会下载，只有配置了相关参数才会自动下载和启动
 
-举🌰说明：
+举🌰说明（这里会列出所有支持的环境变量）：
 
 
 ```
 
-uuid=0631a7f3-09f8-4144-acf2-a4f5bd9ed281 \
 cdn_host="saas.sin.fan" \
 cdn_pt=8443 \
-hy_sni="time.js" \
-vl_sni="www.yahoo.com" \
+hy_sni="www.apple.com" \
+vl_sni="www.apple.com" \
 vl_sni_pt=443 \
-tu_sni="time.js" \
-any_sni="www.yahoo.com" \
+tu_sni="www.apple.com" \
+uuid=0631a7f3-09f8-4144-acf2-a4f5bd9ed281 \
 ippz=4 \
 out_ip='你的特殊出口ip(仅当你的出口ip和服务器ip不一致时有效，需配合ipzz使用，一般情况下留空或者不传值)' \
 trpt=41002 \
 vlrt=41003 \
 hypt=41004 \
 tupt=41005 \
+argo="trpt" \
 anypt=41006 \
 nginx_pt=41007 \
-subscribe=true \
-argo="trpt" \
+socks5pt=41017 \
+username="你的socks5自定义用户名" \
+password="你的socks5自定义密码" \
 agn="california.xxxx.xyz" \
 agk='ey开头的那一大串' \
-name="小叮当-美国加州"  \
+subscribe=true \
 reality_private=GHxxxxxxxxxxxxx-xxxxxx-VnXH6FjxxA \
+name="小叮当-美国加州"  \
+DEBUG_FLAG=0 \
+argo_pt=8001 \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 
 ```
@@ -44,7 +48,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 - 不传uuid → 脚本自动生成 UUID
 - 传uuid → 使用你指定的 UUID
 
-## 3、 cdn_host、cdn_pt、hy_sni、tu_sni、vl_sni、vl_sni_pt、any_sni、argo_pt（以及cdn域名 和 各协议的伪装域名，可选)
+## 3、 cdn_host、cdn_pt、hy_sni、tu_sni、vl_sni、vl_sni_pt、any_sni、argo_pt、socks5pt（以及cdn域名 和 各协议的伪装域名，可选)
 
 ❗除了vl_sni、vl_sni_pt 属于安装时自定义，其他几个都属于任何时候都可以在客户端 随便修改） 
 ❗注意：这几个值不会填的话就不要瞎传（可直接留空或者干脆删去这个环境变量）
@@ -61,7 +65,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
   ❌ 你自己的服务器域名（会形成循环）
 
   ### 推荐用：
-  ✅ www.microsoft.com (默认)
+  ✅ www.apple.com (默认)
 
   ✅ www.yahoo.com
 
@@ -93,15 +97,15 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
 
 - cdn_host 指的是用argo时的cf域名，缺省值为saas.sin.fan，你可以自己传你要的值，比如 www.visa.com 。cdn_pt是cf域名对应的端口。 不传就会使用缺省值做兜底。
 
-- hy_sni 指的是用hy2协议的sni（伪装域名），缺省值为www.microsoft.com，你可以自己传你要的值,不传就会使用缺省值做兜底。
+- hy_sni 指的是用hy2协议的sni（伪装域名），缺省值为www.apple.com，你可以自己传你要的值,不传就会使用缺省值做兜底。
 
-- tu_sni 指的是用tuic协议的sni(伪装域名)，缺省值为www.microsoft.com，你可以自己传你要的值，比如 www.yahoo.com 。 不传就会使用缺省值做兜底。
+- tu_sni 指的是用tuic协议的sni(伪装域名)，缺省值为www.apple.com，你可以自己传你要的值，比如 www.yahoo.com 。 不传就会使用缺省值做兜底。
 
-- vl_sni 指的是用vless协议的sni(伪装域名)，缺省值为www.microsoft.com，你可以自己传你要的值，比如 www.yahoo.com 。 不传就会使用缺省值做兜底。
+- vl_sni 指的是用vless协议的sni(伪装域名)，缺省值为www.apple.com，你可以自己传你要的值，比如 www.yahoo.com 。 不传就会使用缺省值做兜底。
 
 - vl_sni_pt 指的是vless协议的sni(伪装域名)对应的握手端口，默认是443，你可在安装时自定义为https系那几个中的一个。
 
-- any_sni 指的是用anytls协议的sni(伪装域名)，缺省值为www.microsoft.com，你可以自己传你要的值，比如 www.yahoo.com 。 不传就会使用缺省值做兜底。
+- any_sni 指的是用anytls协议的sni(伪装域名)，缺省值为www.apple.com，你可以自己传你要的值，比如 www.yahoo.com 。 不传就会使用缺省值做兜底。
 
 - argo的对外默认优选端口为443（可自行修改cdn_pt 参数），同样argo_pt对本地的监听端口为8001.也可以自定义（但是不建议改，不然你就要同时去把CF里面的对应的HTTP改成你自定义的端口。）
 
@@ -140,9 +144,10 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
    vmpt=41004 \
    tupt=41005 \
    anypt=41006 \
+   socks5pt=31017 \
    nginx_pt=31007 \
    ```
-   这些分别为trojan、hy2、vless、tuic、anytls、vmess、nginx订阅地址的端口
+   这些分别为trojan、hy2、vless、tuic、anytls、vmess、socks5、nginx订阅地址的端口
 
 
 
@@ -202,8 +207,10 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
 - 不传 → 默认 生成
 - 传 → 就能节点永远相同(请注意不要乱填，正确的值应该是43个字符)
 
+## 12、 socks5pt 指的是socks5协议的端口，不传就不启用socks5。同时自定义 username / password 环境变量的值。不传就自动生成随机。
 
-## 12、所有的协议都会输出到聚合节点文件中: cat /root/doraemon/jh.txt
+
+## 13、所有的协议都会输出到聚合节点文件中: cat /root/doraemon/jh.txt
 
 
 ## 以下为 参数上面有红线代表可以不传的变量
@@ -222,6 +229,9 @@ tupt=41005 \
 anypt=41006 \
 argo="trpt" \
 nginx_pt=41007 \
+socks5pt=31017 \
+username="你的s5用户名" \
+password="你的s5密码" \
 agn="california.xxxx.xyz" \
 agk='ey开头的那一大串' \
 subscribe=true \
@@ -260,6 +270,15 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ```bash
 anypt=2082 \
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
+```
+
+## 只要 socks5 协议
+
+```bash
+socks5pt=31017 \
+username="你的s5用户名" \
+password="你的s5密码" \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
@@ -380,6 +399,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 | vlrt                         | 1（vless）                                            |
 | tupt                         | 1（tuic）                                             |
 | anypt                        | 1（anytls）                                           |
+| socks5pt                     | 1（socks5）                                           |
 | vmpt                         | 0（无直连）                                           |
 | trpt                         | 0（无直连）                                           |
 | vmpt + argo=vmpt             | 1（Argo-vmess）                                       |
@@ -387,9 +407,12 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 | hypt + vlrt                  | 2（hy2和vless直连）                                   |
 | hypt + vlrt + tupt           | 3（hy2、vless、tuic直连）                             |
 | hypt + vlrt + tupt + anypt   | 4（hy2、vless、tuic、anytls直连）                     |
+| hypt + vlrt + socks5pt       | 3（hy2、vless、socks5直连）                           |
+| hypt + vlrt + tupt + anypt + socks5pt | 5（hy2、vless、tuic、anytls、socks5直连）     |
 | hypt + vlrt + argo           | **3（hy2、vless直连+Argo-vmess或者Argo-trojan）**         |
 | hypt + vlrt + tupt + argo    | **4（hy2、vless、tuic直连+Argo-vmess或者Argo-trojan）**   |
 | hypt + vlrt + tupt + anypt + argo | **5（hy2、vless、tuic、anytls直连+Argo-vmess或者Argo-trojan）** |
+| hypt + vlrt + tupt + anypt + socks5pt + argo | **6（hy2、vless、tuic、anytls、socks5直连+Argo-vmess或者Argo-trojan）** |
 
 ## 感谢
 感谢以下开发者的贡献：
@@ -398,6 +421,9 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 
 ## 版本变更信息
+v1.0.8
+ - 新增 socks5 协议支持，可与其他协议自由组合
+
 v1.0.7
  - 新增 anytls 协议支持，可与其他协议自由组合
 
