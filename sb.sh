@@ -1608,12 +1608,11 @@ EOF
         # 使用 jq 来安全地处理含有特殊字符的用户名和密码
         jq -n \
           --arg type "socks" \
-          --arg tag "socks5-sb" \
           --arg listen "::" \
           --argjson port "$port_socks5" \
           --arg username "$socks5_username" \
           --arg password "$socks5_password" \
-          '{type: $type, tag: $tag, listen: $listen, listen_port: $port, users: [{username: $username, password: $password}]},' >> "$SINGBOX_FOLDER_PATH/sb.json"
+          '{type: $type, listen: $listen, listen_port: $port, users: [{username: $username, password: $password}]},' >> "$SINGBOX_FOLDER_PATH/sb.json"
     fi
 }
 #  Generate Sing-box configuration file
@@ -3106,9 +3105,9 @@ cip(){
     
      # Socks5 protocol output
     if grep -q "socks5-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
-        port_socks5=$(cat "$SINGBOX_FOLDER_PATH/port_socks5")
-        socks5_username=$(cat "$SINGBOX_FOLDER_PATH/socks5_user")
-        socks5_password=$(cat "$SINGBOX_FOLDER_PATH/socks5_pass")
+        port_socks5=$(cat "$SINGBOX_FOLDER_PATH/port_socks5" | tr -d '\n\r')
+        socks5_username=$(cat "$SINGBOX_FOLDER_PATH/socks5_user" | tr -d '\n\r')
+        socks5_password=$(cat "$SINGBOX_FOLDER_PATH/socks5_pass" | tr -d '\n\r')
 
         # socks5_user_enc=$(url_encode_component "$socks5_username")
         # socks5_pass_enc=$(url_encode_component "$socks5_password")
