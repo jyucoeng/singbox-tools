@@ -31,11 +31,8 @@ export port_vlr=${vlrt:-''};
 export port_tu=${tupt:-''}; 
 export port_any=${anypt:-''}; 
 export port_socks5=${socks5pt:-''};
-if [ -n "${socks5pt+x}" ] && [ -z "$port_socks5" ] && [ -n "${PORT:-}" ]; then
-    export port_socks5="$PORT"
-fi
-export socks5_username=${socks5_user:-${USERNAME:-''}};
-export socks5_password=${socks5_pass:-${PASSWORD:-''}};
+export socks5_username=${socks5_user:-${username:-''}};
+export socks5_password=${socks5_pass:-${password:-''}};
 
 # 获取到的IP和出口ip不一样的时候，优先使用出口ip也就是out_ip
 export out_ip=${out_ip:-''};
@@ -1607,7 +1604,7 @@ EOF
         socks5_password_json=$(json_escape_string "$socks5_password")
 
         cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
-{"type": "socks", "tag": "socks5-sb", "listen": "::", "listen_port": ${port_socks5}, "users": [{"username": "${socks5_username}", "password": "${socks5_password}"}]},
+{"type": "socks", "tag": "socks5-sb", "sniff": true, "listen": "::", "listen_port": ${port_socks5}, "users": [{"username": ${socks5_username_json}, "password": ${socks5_password_json}}]},
 EOF
     fi
 }
@@ -3102,9 +3099,9 @@ cip(){
 
     # Socks5 protocol output
     if grep -q "socks5-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
-        port_socks5=$(cat "$SINGBOX_FOLDER_PATH/port_socks5")
-        socks5_username=$(cat "$SINGBOX_FOLDER_PATH/socks5_user")
-        socks5_password=$(cat "$SINGBOX_FOLDER_PATH/socks5_pass")
+        port_socks5=$(jq -r '.inbounds[] | select(.tag == "socks5-sb") | .listen_port' "$SINGBOX_FOLDER_PATH/sb.json")
+        socks5_username=$(jq -r '.inbounds[] | select(.tag == "socks5-sb") | .users[0].username' "$SINGBOX_FOLDER_PATH/sb.json")
+        socks5_password=$(jq -r '.inbounds[] | select(.tag == "socks5-sb") | .users[0].password' "$SINGBOX_FOLDER_PATH/sb.json")
 
         socks5_user_enc=$(url_encode_component "$socks5_username")
         socks5_pass_enc=$(url_encode_component "$socks5_password")
