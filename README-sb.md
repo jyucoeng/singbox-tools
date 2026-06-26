@@ -214,7 +214,8 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
 
 
 ## 以下为 参数上面有红线代表可以不传的变量
-<img width="1020" height="428" alt="CleanShot 2026-01-23 at 10 30 19" src="https://github.com/user-attachments/assets/bb336e89-df63-493d-8ee3-6c821870b36c" />
+
+<img width="1752" height="920" alt="CleanShot 2026-06-26 at 21 04 04" src="https://github.com/user-attachments/assets/c93f0e7b-d00e-4dd3-b1f2-da6929303c51" />
 
 
 
