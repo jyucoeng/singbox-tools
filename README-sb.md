@@ -423,7 +423,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ## 版本变更信息
 v1.0.8
- - 新增 socks5 协议支持，可与其他协议自由组合
+ - 新增 socks5 协议支持，可与其他协议自由组合,把一些 sni的默认值由  www.microsoft.com 改为 www.apple.com 
 
 v1.0.7
  - 新增 anytls 协议支持，可与其他协议自由组合
