@@ -31,8 +31,8 @@ export port_vlr=${vlrt:-''};
 export port_tu=${tupt:-''}; 
 export port_any=${anypt:-''}; 
 export port_socks5=${socks5pt:-''};
-export socks5_username=${socks5_user:-${username:-''}};
-export socks5_password=${socks5_pass:-${password:-''}};
+export socks5_username=${socks5_username:-''};
+export socks5_password=${socks5_password:-''};
 
 # 获取到的IP和出口ip不一样的时候，优先使用出口ip也就是out_ip
 export out_ip=${out_ip:-''};
@@ -1448,27 +1448,26 @@ gen_self_signed_cert() {
 
 # Install and configure Sing-box
 installsb(){
-    echo; 
+    echo
     echo "=========开始下载/安装Sing-box内核========="
 
-    if [ ! -e "$SINGBOX_FOLDER_PATH/sing-box" ]; then 
-        debug_log "【调试】installsb：Sing-box 不存在，开始下载/安装"
-        upsingbox; 
+    if [ ! -e "$SINGBOX_FOLDER_PATH/sing-box" ]; then
+        upsingbox
     fi
 
-
-    cat > "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
-{"log": { "disabled": false, "level": "info", "timestamp": true },
-"inbounds": [
-EOF
     insuuid
     write2SingboxFolders
 
-   # Generate a self-signed cert for protocols that need TLS (hy2, tuic, anytls)
+    # Generate a self-signed cert for protocols that need TLS (hy2, tuic, anytls)
     if [ -n "$hyp" ] || [ -n "$tup" ] || [ -n "$anyp" ]; then
         gen_self_signed_cert "$SINGBOX_FOLDER_PATH/private.key" "$SINGBOX_FOLDER_PATH/cert.pem" "${CN_BING}" 36500
     fi
 
+    local sbj="$SINGBOX_FOLDER_PATH/sb.json"
+    local tmpj="$SINGBOX_FOLDER_PATH/.sb.tmp"
+
+    # Initialize JSON with log config (matching index.js generateSingBoxConfig style)
+    jq -n '{log: {disabled: false, level: "info", timestamp: true}, inbounds: []}' > "$sbj"
 
     # 添加tuic协议
     if [ -n "$tup" ]; then
@@ -1480,80 +1479,122 @@ EOF
             port_tu=$(rand_port)
             echo "$port_tu" > "$SINGBOX_FOLDER_PATH/port_tu"
         fi
-
-        
-        port_tu=$(cat "$SINGBOX_FOLDER_PATH/port_tu"); 
-        password=$uuid
-
+        port_tu=$(cat "$SINGBOX_FOLDER_PATH/port_tu")
         yellow "Tuic端口：$port_tu"
 
-         cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
-{"type": "tuic", "tag": "tuic-sb", "listen": "::", "listen_port": ${port_tu}, "users": [ {  "uuid": "$uuid", "password": "$password" } ],"congestion_control": "bbr", "tls": { "enabled": true,"alpn": ["h3"], "certificate_path": "$SINGBOX_FOLDER_PATH/cert.pem", "key_path": "$SINGBOX_FOLDER_PATH/private.key" }},
-EOF
+        jq --arg port "$port_tu" --arg uuid "$uuid" \
+            --arg cert "$SINGBOX_FOLDER_PATH/cert.pem" --arg key "$SINGBOX_FOLDER_PATH/private.key" '
+            .inbounds += [{
+                type: "tuic", tag: "tuic-sb", listen: "::",
+                listen_port: ($port | tonumber),
+                users: [{uuid: $uuid, password: $uuid}],
+                congestion_control: "bbr",
+                tls: {enabled: true, alpn: ["h3"], certificate_path: $cert, key_path: $key}
+            }]' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
     fi
 
     # 添加hy2协议
     if [ -n "$hyp" ]; then
-        if [ -z "$port_hy2" ] && [ ! -e "$SINGBOX_FOLDER_PATH/port_hy2" ]; then port_hy2=$(rand_port); echo "$port_hy2" > "$SINGBOX_FOLDER_PATH/port_hy2"; elif [ -n "$port_hy2" ]; then echo "$port_hy2" > "$SINGBOX_FOLDER_PATH/port_hy2"; fi
-        
-        port_hy2=$(cat "$SINGBOX_FOLDER_PATH/port_hy2"); 
+        if [ -z "$port_hy2" ] && [ ! -e "$SINGBOX_FOLDER_PATH/port_hy2" ]; then
+            port_hy2=$(rand_port)
+            echo "$port_hy2" > "$SINGBOX_FOLDER_PATH/port_hy2"
+        elif [ -n "$port_hy2" ]; then
+            echo "$port_hy2" > "$SINGBOX_FOLDER_PATH/port_hy2"
+        fi
+        port_hy2=$(cat "$SINGBOX_FOLDER_PATH/port_hy2")
         yellow "Hysteria2端口：$port_hy2"
 
-        cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
-{"type": "hysteria2", "tag": "hy2-sb", "listen": "::", "listen_port": ${port_hy2},"users": [ { "password": "${uuid}" } ],"tls": { "enabled": true, "alpn": ["h3"], "certificate_path": "$SINGBOX_FOLDER_PATH/cert.pem", "key_path": "$SINGBOX_FOLDER_PATH/private.key" }},
-EOF
+        jq --arg port "$port_hy2" --arg uuid "$uuid" \
+            --arg cert "$SINGBOX_FOLDER_PATH/cert.pem" --arg key "$SINGBOX_FOLDER_PATH/private.key" '
+            .inbounds += [{
+                type: "hysteria2", tag: "hy2-sb", listen: "::",
+                listen_port: ($port | tonumber),
+                users: [{password: $uuid}],
+                tls: {enabled: true, alpn: ["h3"], certificate_path: $cert, key_path: $key}
+            }]' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
     fi
-    
+
     # 添加trojan协议
     if [ -n "$trp" ]; then
-        if [ -z "$port_tr" ] && [ ! -e "$SINGBOX_FOLDER_PATH/port_tr" ]; then port_tr=$(rand_port); echo "$port_tr" > "$SINGBOX_FOLDER_PATH/port_tr"; elif [ -n "$port_tr" ]; then echo "$port_tr" > "$SINGBOX_FOLDER_PATH/port_tr"; fi
-        
-        port_tr=$(cat "$SINGBOX_FOLDER_PATH/port_tr"); 
+        if [ -z "$port_tr" ] && [ ! -e "$SINGBOX_FOLDER_PATH/port_tr" ]; then
+            port_tr=$(rand_port)
+            echo "$port_tr" > "$SINGBOX_FOLDER_PATH/port_tr"
+        elif [ -n "$port_tr" ]; then
+            echo "$port_tr" > "$SINGBOX_FOLDER_PATH/port_tr"
+        fi
+        port_tr=$(cat "$SINGBOX_FOLDER_PATH/port_tr")
         yellow "Trojan端口(Argo本地使用)：$port_tr"
 
-        cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
-{"type": "trojan", "tag": "trojan-ws-sb", "listen": "::", "listen_port": ${port_tr},"users": [ { "password": "${uuid}" } ],"transport": { "type": "ws", "path": "/${uuid}-tr" }},
-EOF
+        jq --arg port "$port_tr" --arg uuid "$uuid" '
+            .inbounds += [{
+                type: "trojan", tag: "trojan-ws-sb", listen: "::",
+                listen_port: ($port | tonumber),
+                users: [{password: $uuid}],
+                transport: {type: "ws", path: "/\($uuid)-tr"}
+            }]' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
     fi
 
-   # 添加vmess协议
+    # 添加vmess协议
     if [ -n "$vmp" ]; then
-        if [ -z "$port_vm_ws" ] && [ ! -e "$SINGBOX_FOLDER_PATH/port_vm_ws" ]; then port_vm_ws=$(rand_port); echo "$port_vm_ws" > "$SINGBOX_FOLDER_PATH/port_vm_ws"; elif [ -n "$port_vm_ws" ]; then echo "$port_vm_ws" > "$SINGBOX_FOLDER_PATH/port_vm_ws"; fi
-        
-        port_vm_ws=$(cat "$SINGBOX_FOLDER_PATH/port_vm_ws"); 
+        if [ -z "$port_vm_ws" ] && [ ! -e "$SINGBOX_FOLDER_PATH/port_vm_ws" ]; then
+            port_vm_ws=$(rand_port)
+            echo "$port_vm_ws" > "$SINGBOX_FOLDER_PATH/port_vm_ws"
+        elif [ -n "$port_vm_ws" ]; then
+            echo "$port_vm_ws" > "$SINGBOX_FOLDER_PATH/port_vm_ws"
+        fi
+        port_vm_ws=$(cat "$SINGBOX_FOLDER_PATH/port_vm_ws")
         yellow "Vmess-ws端口 (Argo本地使用)：$port_vm_ws"
 
-        cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
-{"type": "vmess", "tag": "vmess-sb", "listen": "::", "listen_port": ${port_vm_ws},"users": [ { "uuid": "${uuid}", "alterId": 0 } ],"transport": { "type": "ws", "path": "/${uuid}-vm" }},
-EOF
+        jq --arg port "$port_vm_ws" --arg uuid "$uuid" '
+            .inbounds += [{
+                type: "vmess", tag: "vmess-sb", listen: "::",
+                listen_port: ($port | tonumber),
+                users: [{uuid: $uuid, alterId: 0}],
+                transport: {type: "ws", path: "/\($uuid)-vm"}
+            }]' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
     fi
+
     # 添加vless-reality-vision协议
     if [ -n "$vlr" ]; then
-        if [ -z "$port_vlr" ] && [ ! -e "$SINGBOX_FOLDER_PATH/port_vlr" ];  then 
-            port_vlr=$(rand_port); 
-            echo "$port_vlr" > "$SINGBOX_FOLDER_PATH/port_vlr"; 
-        elif [ -n "$port_vlr" ]; then 
-            echo "$port_vlr" > "$SINGBOX_FOLDER_PATH/port_vlr"; 
+        if [ -z "$port_vlr" ] && [ ! -e "$SINGBOX_FOLDER_PATH/port_vlr" ]; then
+            port_vlr=$(rand_port)
+            echo "$port_vlr" > "$SINGBOX_FOLDER_PATH/port_vlr"
+        elif [ -n "$port_vlr" ]; then
+            echo "$port_vlr" > "$SINGBOX_FOLDER_PATH/port_vlr"
         fi
-        
-        port_vlr=$(cat "$SINGBOX_FOLDER_PATH/port_vlr"); 
+        port_vlr=$(cat "$SINGBOX_FOLDER_PATH/port_vlr")
         yellow "VLESS-Reality-Vision端口：$port_vlr"
 
-        if [ ! -f "$SINGBOX_FOLDER_PATH/reality.key" ]; then 
-            "$SINGBOX_FOLDER_PATH/sing-box" generate reality-keypair > "$SINGBOX_FOLDER_PATH/reality.key"; 
+        if [ ! -f "$SINGBOX_FOLDER_PATH/reality.key" ]; then
+            "$SINGBOX_FOLDER_PATH/sing-box" generate reality-keypair > "$SINGBOX_FOLDER_PATH/reality.key"
         fi
 
-          # ✅ Reality Keypair：只传私钥即可（自动算公钥/或复用文件），节点输出保持一致
+        # ✅ Reality Keypair：只传私钥即可（自动算公钥/或复用文件），节点输出保持一致
         init_reality_keypair
         private_key="${reality_private}"
         short_id="$(get_short_id "$SINGBOX_FOLDER_PATH/short_id")"
 
-
-        # www.ua.edu
-        cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
-{"type": "vless", "tag": "vless-reality-vision-sb", "listen": "::", "listen_port": ${port_vlr},"sniff": true,"users": [{"uuid": "${uuid}","flow": "xtls-rprx-vision"}],"tls": {"enabled": true,"server_name": "${vl_sni}","reality": {"enabled": true,"handshake": {"server": "${vl_sni}","server_port": ${vl_sni_pt}},"private_key": "${private_key}","short_id": ["${short_id}"]}}},
-EOF
+        jq --arg port "$port_vlr" --arg uuid "$uuid" \
+            --arg sni "$vl_sni" --arg sni_pt "$vl_sni_pt" \
+            --arg priv_key "$private_key" --arg sid "$short_id" '
+            .inbounds += [{
+                type: "vless", tag: "vless-reality-vision-sb", listen: "::",
+                listen_port: ($port | tonumber),
+                sniff: true,
+                users: [{uuid: $uuid, flow: "xtls-rprx-vision"}],
+                tls: {
+                    enabled: true,
+                    server_name: $sni,
+                    reality: {
+                        enabled: true,
+                        handshake: {server: $sni, server_port: ($sni_pt | tonumber)},
+                        private_key: $priv_key,
+                        short_id: [$sid]
+                    }
+                }
+            }]' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
     fi
+
     # 添加anytls协议
     if [ -n "$anyp" ]; then
         if [ -n "$port_any" ]; then
@@ -1564,26 +1605,34 @@ EOF
             port_any=$(rand_port)
             echo "$port_any" > "$SINGBOX_FOLDER_PATH/port_any"
         fi
-        
+
         # any_sni 也应该保持稳定：优先读取文件，不存在才使用新值
         if [ -s "$SINGBOX_FOLDER_PATH/any_sni" ]; then
             any_sni=$(cat "$SINGBOX_FOLDER_PATH/any_sni")
         else
             echo "$any_sni" > "$SINGBOX_FOLDER_PATH/any_sni"
         fi
-        
-        port_any=$(cat "$SINGBOX_FOLDER_PATH/port_any"); 
+
+        port_any=$(cat "$SINGBOX_FOLDER_PATH/port_any")
         yellow "AnyTLS端口：$port_any"
-        
+
         # 确保证书存在（如果 hy2/tuic 未启用，anytls 需要自己生成）
         if [ ! -s "$SINGBOX_FOLDER_PATH/cert.pem" ] || [ ! -s "$SINGBOX_FOLDER_PATH/private.key" ]; then
             gen_self_signed_cert "$SINGBOX_FOLDER_PATH/private.key" "$SINGBOX_FOLDER_PATH/cert.pem" "${CN_BING}" 36500
         fi
 
-        cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
-{"type": "anytls", "tag": "anytls-sb", "listen": "::", "listen_port": ${port_any},"sniff": true,"users": [{"password": "${uuid}"}],"tls": {"enabled": true,"server_name": "${any_sni}","certificate_path": "$SINGBOX_FOLDER_PATH/cert.pem", "key_path": "$SINGBOX_FOLDER_PATH/private.key"}},
-EOF
+        jq --arg port "$port_any" --arg uuid "$uuid" \
+            --arg sni "$any_sni" \
+            --arg cert "$SINGBOX_FOLDER_PATH/cert.pem" --arg key "$SINGBOX_FOLDER_PATH/private.key" '
+            .inbounds += [{
+                type: "anytls", tag: "anytls-sb", listen: "::",
+                listen_port: ($port | tonumber),
+                sniff: true,
+                users: [{password: $uuid}],
+                tls: {enabled: true, server_name: $sni, certificate_path: $cert, key_path: $key}
+            }]' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
     fi
+
     # 添加 socks5 协议
     if [ -n "$socksp" ]; then
         if [ -n "$port_socks5" ]; then
@@ -1600,25 +1649,87 @@ EOF
         yellow "Socks5端口：$port_socks5"
         yellow "Socks5用户名：$socks5_username"
         yellow "Socks5密码：$socks5_password"
-        socks5_username_json=$(json_escape_string "$socks5_username")
-        socks5_password_json=$(json_escape_string "$socks5_password")
 
-        cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
-{"type": "socks", "tag": "socks5-sb", "sniff": true, "listen": "::", "listen_port": ${port_socks5}, "users": [{"username": ${socks5_username_json}, "password": ${socks5_password_json}}]},
-EOF
+        jq --arg port "$port_socks5" \
+            --arg user "$socks5_username" --arg pass "$socks5_password" '
+            .inbounds += [{
+                type: "socks", tag: "socks5-sb",  listen: "::",
+                listen_port: ($port | tonumber),
+                users: [{username: $user, password: $pass}]
+            }]' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
     fi
+
+    rm -f "$tmpj" 2>/dev/null || true
+
+    setup_warp_config
+}
+# Netflix/OpenAI/YouTube 走 WARP 解锁，其余直连 (matching index.js:498-560)
+# 这堆配置只做一件事：Netflix/OpenAI/YouTube 的流量走 WARP 隧道出去（用于解锁区域限制）。去掉后：
+#   - 所有代理协议（tuic/hy2/vless/etc.）照常工作
+#   - 只是 Netflix/OpenAI/YouTube 走直连，不再走 WARP
+#   - 如果你的 VPS 不在受限网络（如国内 VPS 或 Serv00），直连就能访问这些服务，完全不需要这部分。
+setup_warp_config() {
+    local sbj="$SINGBOX_FOLDER_PATH/sb.json"
+    local tmpj="$SINGBOX_FOLDER_PATH/.sb.tmp"
+
+    local need_youtube_warp=false
+    if command -v curl >/dev/null 2>&1; then
+        local yt_test
+        yt_test=$(curl -o /dev/null -m 2 -s -w "%{http_code}" https://www.youtube.com 2>/dev/null)
+        [ "$yt_test" != "200" ] && need_youtube_warp=true
+    fi
+    # 保存检测结果给 sbbout 使用
+    printf '%s\n' "$need_youtube_warp" > "$SINGBOX_FOLDER_PATH/.youtube_warp"
+
+    jq --argjson need_youtube "$need_youtube_warp" '
+        .http_clients = [{tag: "http-client-direct"}]
+        | .endpoints = [{
+            type: "wireguard",
+            tag: "wireguard-out",
+            mtu: 1280,
+            address: ["172.16.0.2/32", "2606:4700:110:8dfe:d141:69bb:6b80:925/128"],
+            private_key: "YFYOAdbw1bKTHlNNi+aEjBM3BO7unuFC5rOkMRAz9XY=",
+            peers: [{
+                address: "engage.cloudflareclient.com",
+                port: 2408,
+                public_key: "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
+                allowed_ips: ["0.0.0.0/0", "::/0"],
+                reserved: [78, 135, 76]
+            }]
+        }]
+        | .route.default_http_client = "http-client-direct"
+        | .route.rule_set = [
+            {tag: "netflix", type: "remote", format: "binary", url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/netflix.srs"},
+            {tag: "openai", type: "remote", format: "binary", url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/openai.srs"}
+        ]
+        | .route.final = "direct"
+        | if $need_youtube then
+            .route.rule_set += [{tag: "youtube", type: "remote", format: "binary", url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/youtube.srs"}]
+          else . end
+    ' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
+    rm -f "$tmpj" 2>/dev/null || true
 }
 #  Generate Sing-box configuration file
 sbbout(){
     if [ -e "$SINGBOX_FOLDER_PATH/sb.json" ]; then
-        sed -i '$ s/,[[:space:]]*$//' "$SINGBOX_FOLDER_PATH/sb.json"
+        local sbj="$SINGBOX_FOLDER_PATH/sb.json"
+        local tmpj="$SINGBOX_FOLDER_PATH/.sb.tmp"
 
-        cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
-],
-"outbounds": [ { "type": "direct", "tag": "direct" }, { "type": "block", "tag": "block" } ],
-"route": { "rules": [ { "action": "sniff" }, { "action": "resolve", "strategy": "${sbyx}" } ], "final": "direct" }
-}
-EOF
+        # 读取 installsb 中保存的 YouTube WARP 检测结果
+        local need_youtube_warp=false
+        [ -s "$SINGBOX_FOLDER_PATH/.youtube_warp" ] && need_youtube_warp=$(cat "$SINGBOX_FOLDER_PATH/.youtube_warp")
+
+        jq --arg sbyx "$sbyx" --argjson need_youtube "$need_youtube_warp" '
+            .outbounds = [{type: "direct", tag: "direct"}, {type: "block", tag: "block"}]
+            | .route.final = "direct"
+            | if $need_youtube then
+                .route.rules = [{rule_set: ["netflix", "youtube"], outbound: "wireguard-out"}] + [{action: "sniff"}, {action: "resolve", strategy: $sbyx}]
+              else
+                .route.rules = [{rule_set: ["netflix"], outbound: "wireguard-out"}] + [{action: "sniff"}, {action: "resolve", strategy: $sbyx}]
+              end
+        ' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
+        rm -f "$tmpj" 2>/dev/null || true
+
         if has_systemd && [ "$EUID" -eq 0 ]; then
             debug_log "【调试】sbbout：使用 systemd 管理/启动 sb 服务"
             cat > /etc/systemd/system/sb.service <<EOF
