@@ -1604,11 +1604,10 @@ EOF
         socks5_password_json=$(json_escape_string "$socks5_password")
 
         cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
-{"type": "socks", "tag": "socks5-sb", "listen": "::", "listen_port": ${port_socks5}, "users": [{"username": ${socks5_username_json}, "password": ${socks5_password_json}}]},
+{"type": "socks", "tag": "socks5-sb", "sniff": true, "listen": "::", "listen_port": ${port_socks5}, "users": [{"username": ${socks5_username_json}, "password": ${socks5_password_json}}]},
 EOF
     fi
 }
-
 #  Generate Sing-box configuration file
 sbbout(){
     if [ -e "$SINGBOX_FOLDER_PATH/sb.json" ]; then
@@ -1617,7 +1616,7 @@ sbbout(){
         cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
 ],
 "outbounds": [ { "type": "direct", "tag": "direct" }, { "type": "block", "tag": "block" } ],
-"route": { "rules": [ { "inbound": ["socks5-sb"], "outbound": "direct" }, { "action": "sniff" }, { "action": "resolve", "strategy": "${sbyx}" } ], "final": "direct" }
+"route": { "rules": [ { "inbound": ["socks5-sb"], "outbound": "direct" }, { "action": "resolve", "strategy": "${sbyx}" } ], "final": "direct" }
 }
 EOF
         if has_systemd && [ "$EUID" -eq 0 ]; then
@@ -3106,7 +3105,7 @@ cip(){
 
         socks5_user_enc=$(url_encode_component "$socks5_username")
         socks5_pass_enc=$(url_encode_component "$socks5_password")
-        socks5_link="socks5://${socks5_username}:${socks5_password}@${server_ip}:${port_socks5}#${sxname}socks5-$hostname"; 
+        socks5_link="socks5://${socks5_user_enc}:${socks5_pass_enc}@${server_ip}:${port_socks5}#${sxname}socks5-$hostname"; 
         yellow "🧦【 Socks5 】(此协议请不要直接在客户端里直连使用)";
         green "$socks5_link"
         append_jh " "
