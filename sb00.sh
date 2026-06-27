@@ -248,7 +248,7 @@ install_deps() {
 
   # 失败包记录文件
   local fail_log="$SINGBOX_FOLDER_PATH/deps_failed.log"
-  mkdir -p "$SINGBOX_FOLDER_PATH" 2>/dev/null || true
+  mkdir -p "$SINGBOX_FOLDER_PATH" "$SB_LOG_PATH" 2>/dev/null || true
 
   # 找出缺的命令
   local -a missing=()
@@ -1001,7 +1001,7 @@ echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 hostname=$(uname -a | awk '{print $2}'); 
 op=$(cat /etc/redhat-release 2>/dev/null || cat /etc/os-release 2>/dev/null | grep -i pretty_name | cut -d \" -f2); 
 case $(uname -m) in aarch64) cpu=arm64;; x86_64) cpu=amd64;; *) echo "目前脚本不支持$(uname -m)架构" && exit; esac;
- mkdir -p "$SINGBOX_FOLDER_PATH" "$SB_LOG_PATH"
+ mkdir -p "$SINGBOX_FOLDER_PATH"
 # Check and set IP version
 v4v6(){
     # Check IPv4 connectivity
