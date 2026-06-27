@@ -1065,7 +1065,6 @@ set_sbyx(){
 
 # download Sing-box
 upsingbox(){
-    # 原来版本 v1.12.13 为了使用warp 所以用新版本
     local sb_ver="1.13.14"
 
     # # 自定义库（旧源），如需切回取消注释下面这行，注释掉官方下载部分
@@ -2717,9 +2716,9 @@ singbox_status() {
   # 1) sing-box
   if pgrep -f "$SINGBOX_FOLDER_PATH/sing-box" >/dev/null 2>&1; then
  
-    # 兼容：sing-box version r1.12.13
+    # sing-box version 1.13.14  → 匹配 1.13.14
     local singbox_version
-    singbox_version=$("$SINGBOX_FOLDER_PATH/sing-box" version 2>/dev/null | sed -n 's/.*r\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')
+    singbox_version=$("$SINGBOX_FOLDER_PATH/sing-box" version 2>/dev/null | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')
     echo "Sing-box (版本V${singbox_version:-unknown})：✅ $(green "运行中")"
   else
     echo "Sing-box：❌ $(red "未运行")"
