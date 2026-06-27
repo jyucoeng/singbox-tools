@@ -1600,11 +1600,8 @@ EOF
         yellow "Socks5端口：$port_socks5"
         yellow "Socks5用户名：$socks5_username"
         yellow "Socks5密码：$socks5_password"
-        socks5_username_json=$(json_escape_string "$socks5_username")
-        socks5_password_json=$(json_escape_string "$socks5_password")
-
         cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
-{"type": "socks", "tag": "socks5-sb", "sniff": true, "listen": "::", "listen_port": ${port_socks5}, "users": [{"username": ${socks5_username_json}, "password": ${socks5_password_json}}]},
+{"type": "socks", "tag": "socks5-sb", "sniff": true, "listen": "::", "listen_port": ${port_socks5}, "users": [{"username": "${socks5_username}", "password": "${socks5_password}"}]},
 EOF
     fi
 }
