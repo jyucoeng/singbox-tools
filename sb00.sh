@@ -1616,7 +1616,7 @@ sbbout(){
         cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
 ],
 "outbounds": [ { "type": "direct", "tag": "direct" }, { "type": "block", "tag": "block" } ],
-"route": { "rules": [ { "action": "sniff" }, { "action": "resolve", "strategy": "${sbyx}" } ], "final": "direct" }
+"route": { "rules": [ { "inbound": ["socks5-sb"], "outbound": "direct" }, { "action": "resolve", "strategy": "${sbyx}" } ], "final": "direct" }
 }
 EOF
         if has_systemd && [ "$EUID" -eq 0 ]; then
