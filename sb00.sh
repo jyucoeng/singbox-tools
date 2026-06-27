@@ -2270,13 +2270,13 @@ append_argo_cron_legacy() {
             echo '@reboot sleep 10 && nohup $SINGBOX_FOLDER_PATH/cloudflared tunnel --edge-ip-version auto --config $SINGBOX_FOLDER_PATH/tunnel.yml run >/dev/null 2>&1 &' \
                 >> /tmp/crontab.tmp
         else
-            echo '@reboot sleep 10 && nohup $SINGBOX_FOLDER_PATH/cloudflared tunnel --no-autoupdate --edge-ip-version auto run --token $(cat $SINGBOX_FOLDER_PATH/sbargotoken.log) >/dev/null 2>&1 &' \
+            echo '@reboot sleep 10 && nohup $SINGBOX_FOLDER_PATH/cloudflared tunnel --no-autoupdate --edge-ip-version auto run --token $(cat $SINGBOX_FOLDER_PATH/sbargotoken) >/dev/null 2>&1 &' \
                 >> /tmp/crontab.tmp
         fi
 
     # 临时 Argo
     else
-        echo '@reboot sleep 10 && nohup $SINGBOX_FOLDER_PATH/cloudflared tunnel --url http://localhost:$(cat $SINGBOX_FOLDER_PATH/argoport.log) --edge-ip-version auto --no-autoupdate > $SINGBOX_FOLDER_PATH/argo.log 2>&1 &' \
+        echo '@reboot sleep 10 && nohup $SINGBOX_FOLDER_PATH/cloudflared tunnel --url http://localhost:$(cat $SINGBOX_FOLDER_PATH/argoport) --edge-ip-version auto --no-autoupdate > $SINGBOX_FOLDER_PATH/argo.log 2>&1 &' \
             >> /tmp/crontab.tmp
     fi
 }
@@ -2618,7 +2618,7 @@ ins(){
          # 2.2 计算 Argo 本地端口
         argoport="${argo_pt:-$ARGO_DEFAULT_PORT}"
         debug_log "【调试】Argo 本地回源端口 argoport=${argoport}（来自 argo_pt 或默认 ARGO_DEFAULT_PORT）"
-        echo "$argoport" > "$SINGBOX_FOLDER_PATH/argoport.log"    
+        echo "$argoport" > "$SINGBOX_FOLDER_PATH/argoport"    
 
 
         # 仍然记录 Argo 输出节点类型（给 cip 用）
@@ -2670,8 +2670,8 @@ ins(){
 
             # 与原版一致：固定 Argo 域名直接落盘
             echo "$ARGO_DOMAIN" > "$SINGBOX_FOLDER_PATH/argo_domain"
-            # token 模式下才会有 sbargotoken.log
-            [ "$ARGO_MODE" = "token" ] && echo "$ARGO_AUTH" > "$SINGBOX_FOLDER_PATH/sbargotoken.log"
+            # token 模式下才会有 sbargotoken
+            [ "$ARGO_MODE" = "token" ] && echo "$ARGO_AUTH" > "$SINGBOX_FOLDER_PATH/sbargotoken"
         else
             # 临时 Argo（trycloudflare）
             argo_tunnel_type="临时"
@@ -3196,9 +3196,9 @@ cip(){
             vmatls_link1=""
         fi
 
-        sbtk=$(cat "$SINGBOX_FOLDER_PATH/sbargotoken.log" 2>/dev/null); 
+        sbtk=$(cat "$SINGBOX_FOLDER_PATH/sbargotoken" 2>/dev/null); 
         yellow "---------------------------------------------------------"
-        yellow "Argo隧道信息 (使用 ${vlvm}-ws 端口: $(cat $SINGBOX_FOLDER_PATH/argoport.log 2>/dev/null))"
+        yellow "Argo隧道信息 (使用 ${vlvm}-ws 端口: $(cat $SINGBOX_FOLDER_PATH/argoport 2>/dev/null))"
         yellow "---------------------------------------------------------"
 
         green "Argo域名: ${argodomain}"
@@ -3427,19 +3427,19 @@ argorestart(){
     fi
 
     # 2️⃣ token 固定隧道
-    if [ -f "$SINGBOX_FOLDER_PATH/sbargotoken.log" ]; then
+    if [ -f "$SINGBOX_FOLDER_PATH/sbargotoken" ]; then
         nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel \
           --no-autoupdate \
           --edge-ip-version auto run \
-          --token "$(cat "$SINGBOX_FOLDER_PATH/sbargotoken.log")" \
+          --token "$(cat "$SINGBOX_FOLDER_PATH/sbargotoken")" \
           >/dev/null 2>&1 &
         return
     fi
 
     # 3️⃣ 临时 Argo（trycloudflare）
-    if [ -f "$SINGBOX_FOLDER_PATH/argoport.log" ]; then
+    if [ -f "$SINGBOX_FOLDER_PATH/argoport" ]; then
         nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel \
-          --url "http://localhost:$(cat "$SINGBOX_FOLDER_PATH/argoport.log")" \
+          --url "http://localhost:$(cat "$SINGBOX_FOLDER_PATH/argoport")" \
           --edge-ip-version auto \
           --no-autoupdate \
           > "$SINGBOX_FOLDER_PATH/argo.log" 2>&1 &
@@ -3674,7 +3674,7 @@ if [ "$1" = "rep" ]; then
     green "开始覆盖式安装流程..."; 
     green "1、即将开始清理操作..."; 
     cleandel; 
-    rm -rf "$SINGBOX_FOLDER_PATH"/{sb.json,argo_domain,sbargotoken.log,argo.log,argoport.log,name,short_id,cdn_host,hy_sni,vl_sni,tu_sni,any_sni,vl_sni_pt,cdn_pt}; 
+    rm -rf "$SINGBOX_FOLDER_PATH"/{sb.json,argo_domain,sbargotoken,argo.log,argoport,name,short_id,cdn_host,hy_sni,vl_sni,tu_sni,any_sni,vl_sni_pt,cdn_pt}; 
     green "1.1、清理操作完成..."; 
     sleep 2; 
 
