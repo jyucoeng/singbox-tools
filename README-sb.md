@@ -8,12 +8,12 @@ cloudflared和nginx 用不到的时候就不会下载，只有配置了相关参
 
 ```
 
-cdn_host="saas.sin.fan" \
+cdn_host='saas.sin.fan' \
 cdn_pt=8443 \
-hy_sni="www.apple.com" \
-vl_sni="www.apple.com" \
+hy_sni='www.apple.com' \
+vl_sni='www.apple.com' \
 vl_sni_pt=443 \
-tu_sni="www.apple.com" \
+tu_sni='www.apple.com' \
 uuid=0631a7f3-09f8-4144-acf2-a4f5bd9ed281 \
 ippz=4 \
 out_ip='你的特殊出口ip(仅当你的出口ip和服务器ip不一致时有效，需配合ipzz使用，一般情况下留空或者不传值)' \
