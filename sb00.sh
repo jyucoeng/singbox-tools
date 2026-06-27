@@ -997,7 +997,7 @@ echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 hostname=$(uname -a | awk '{print $2}'); 
 op=$(cat /etc/redhat-release 2>/dev/null || cat /etc/os-release 2>/dev/null | grep -i pretty_name | cut -d \" -f2); 
-case $(uname -m) in aarch64) cpu=arm64;; x86_64) cpu=amd64;; *) echo "目前脚本不支持$(uname -m)架构" && exit; esac;
+case $(uname -m) in aarch64) cpu=arm64;; x86_64) cpu=amd64;; *) echo "目前脚本不支持$(uname -m)架构" && exit 1; esac;
  mkdir -p "$SINGBOX_FOLDER_PATH"
 # Check and set IP version
 v4v6(){
@@ -2197,7 +2197,7 @@ wait_and_check_argo() {
   local ym_log="$SINGBOX_FOLDER_PATH/argo_domain"
   local argodomain=""
   local i=0
-  local max_wait=5
+  local max_wait=30
 
   # ✅ 没启用 argo：直接跳过
   if ! need_argo; then
@@ -2256,40 +2256,6 @@ wait_and_check_argo() {
 }
 
 
-
-# 开机自启argo
-append_argo_cron_legacy() {
-    # 只在启用了 argo + vmag 的情况下处理
-    if ! need_argo || [ -z "$vmag" ]; then
-        return
-    fi
-
-
-    # systemd 永远不写 cron ✅
-    # openrc 只有 root 能装服务时才不写 cron ✅
-    # 非 root 的 openrc 环境会写 cron ✅
-
-   if has_systemd && [ "$EUID" -eq 0 ]; then
-        return
-   fi
-
-
-    # 固定 Argo（token / JSON）
-    if [ -n "${ARGO_DOMAIN}" ] && [ -n "${ARGO_AUTH}" ]; then
-        if [ "$ARGO_MODE" = "json" ]; then
-            echo "@reboot sleep 10 && nohup $SINGBOX_FOLDER_PATH/cloudflared tunnel --edge-ip-version auto --config $SINGBOX_FOLDER_PATH/tunnel.yml run >/dev/null 2>&1 &" \
-                >> /tmp/crontab.tmp
-        else
-            echo "@reboot sleep 10 && nohup $SINGBOX_FOLDER_PATH/cloudflared tunnel --no-autoupdate --edge-ip-version auto run --token \$(cat $SINGBOX_FOLDER_PATH/sbargotoken) >/dev/null 2>&1 &" \
-                >> /tmp/crontab.tmp
-        fi
-
-    # 临时 Argo
-    else
-        echo "@reboot sleep 10 && nohup $SINGBOX_FOLDER_PATH/cloudflared tunnel --url http://localhost:\$(cat $SINGBOX_FOLDER_PATH/argoport) --edge-ip-version auto --no-autoupdate > $SINGBOX_FOLDER_PATH/argo.log 2>&1 &" \
-            >> /tmp/crontab.tmp
-    fi
-}
 
 # _legacy 后安装收尾
 post_install_finalize_legacy() {
@@ -3494,17 +3460,17 @@ check_port_conflicts_or_exit() {
     [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
   }
 
-  # subscribe 只兼容 TRUE/True/true（统一转小写），不改原变量
-  local subscribe_norm="${subscribe,,}"
-  [[ -z "$subscribe_norm" ]] && subscribe_norm="false"
+  # subscribe 优先读落盘值，保持一致
+  local subscribe_val
+  subscribe_val=$(get_subscribe_flag)
 
-  # ✅ 在函数内部计算“有效端口”（不修改全局变量）
+  # ✅ 在函数内部计算"有效端口"（不修改全局变量）
   #  ❗ argo_pt 默认 8001；nginx_pt 默认 8080
-  #  ❗ :- 不会发生“把 argo_pt 默认值写进去”的副作用；只有 := 才会。
+  #  ❗ :- 不会发生"把 argo_pt 默认值写进去"的副作用；只有 := 才会。
   local argo_eff="${argo_pt:-8001}"
   local nginx_eff="${nginx_pt:-8080}"
   local need_nginx=false
-  if [[ "$subscribe_norm" == "true" ]] || need_argo; then
+  if is_true "$subscribe_val" || need_argo; then
     need_nginx=true
   fi
 
@@ -3531,8 +3497,6 @@ check_port_conflicts_or_exit() {
   for k in $vars; do
     if [[ "$k" == "nginx_pt" ]]; then
       v="$nginx_eff"   # 用有效默认值参与检查，但不改 nginx_pt 本身
-    elif [[ "$k" == "argo_pt" ]]; then
-      v="$argo_eff"    # 用有效默认值参与检查，但不改 argo_pt 本身
     elif [[ "$k" == "socks5pt" ]]; then
       v="$port_socks5" # socks5pt= 且 PORT=xxx 时，用实际端口参与检查
     else
