@@ -11,8 +11,6 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb"  # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
- # ================== 常量和环境变量 结束 ==================
-
 VERSION="1.0.10(2026-06-27)"
 AUTHOR="littleDoraemon"
 
@@ -548,7 +546,7 @@ EOF
 
   # openrc (Alpine)
   if command -v rc-service >/dev/null 2>&1 && command -v rc-update >/dev/null 2>&1; then
-    cat >/etc/init.d/${svc} <<'EOF'
+    cat >/etc/init.d/${svc} <<EOF
 #!/sbin/openrc-run
 name="singbox service"
 description="singbox service"
@@ -2279,16 +2277,16 @@ append_argo_cron_legacy() {
     # 固定 Argo（token / JSON）
     if [ -n "${ARGO_DOMAIN}" ] && [ -n "${ARGO_AUTH}" ]; then
         if [ "$ARGO_MODE" = "json" ]; then
-            echo '@reboot sleep 10 && nohup $SINGBOX_FOLDER_PATH/cloudflared tunnel --edge-ip-version auto --config $SINGBOX_FOLDER_PATH/tunnel.yml run >/dev/null 2>&1 &' \
+            echo "@reboot sleep 10 && nohup $SINGBOX_FOLDER_PATH/cloudflared tunnel --edge-ip-version auto --config $SINGBOX_FOLDER_PATH/tunnel.yml run >/dev/null 2>&1 &" \
                 >> /tmp/crontab.tmp
         else
-            echo '@reboot sleep 10 && nohup $SINGBOX_FOLDER_PATH/cloudflared tunnel --no-autoupdate --edge-ip-version auto run --token $(cat $SINGBOX_FOLDER_PATH/sbargotoken) >/dev/null 2>&1 &' \
+            echo "@reboot sleep 10 && nohup $SINGBOX_FOLDER_PATH/cloudflared tunnel --no-autoupdate --edge-ip-version auto run --token \$(cat $SINGBOX_FOLDER_PATH/sbargotoken) >/dev/null 2>&1 &" \
                 >> /tmp/crontab.tmp
         fi
 
     # 临时 Argo
     else
-        echo '@reboot sleep 10 && nohup $SINGBOX_FOLDER_PATH/cloudflared tunnel --url http://localhost:$(cat $SINGBOX_FOLDER_PATH/argoport) --edge-ip-version auto --no-autoupdate > $SINGBOX_FOLDER_PATH/argo.log 2>&1 &' \
+        echo "@reboot sleep 10 && nohup $SINGBOX_FOLDER_PATH/cloudflared tunnel --url http://localhost:\$(cat $SINGBOX_FOLDER_PATH/argoport) --edge-ip-version auto --no-autoupdate > $SINGBOX_FOLDER_PATH/argo.log 2>&1 &" \
             >> /tmp/crontab.tmp
     fi
 }
@@ -2659,7 +2657,6 @@ ins(){
               [ -n "$_systemctl_path" ] || _systemctl_path="无"
               _systemd_dir_status="$([ -d /run/systemd/system ] && echo 存在 || echo 不存在)"
               _pid1="$(ps -p 1 -o comm= 2>/dev/null | tr -d '[:space:]')"
-              _pid1="$(ps -p 1 -o comm= 2>/dev/null | tr -d '[:space:]')"
               debug_log "【调试】systemd 判定：_has_systemd=$(has_systemd)systemctl=${_systemctl_path}，/run/systemd/system=${_systemd_dir_status}，PID1=${_pid1}"
           fi
 
@@ -2916,7 +2913,7 @@ show_sub_url() {
   local argodomain=$(cat "$SINGBOX_FOLDER_PATH/argo_domain" 2>/dev/null)
 
   local need_argo_flag=false
-  vlvm=$(cat $SINGBOX_FOLDER_PATH/vlvm 2>/dev/null);
+  vlvm=$(cat "$SINGBOX_FOLDER_PATH/vlvm" 2>/dev/null);
   # vlvm不为空，则代表一定有argo  
   if [ -n "$vlvm" ]; then
     need_argo_flag=true
@@ -2924,9 +2921,9 @@ show_sub_url() {
  
     # 当 need_argo_flag 为 true 且 argodomain 为空且 argo.log 存在时
     if $need_argo_flag && [ -z "$argodomain" ] && [ -s "$SINGBOX_FOLDER_PATH/argo.log" ]; then
-        argodomain=$(grep -aoE '[a-zA-Z0-9.-]+trycloudflare\.com' "$SINGBOX_FOLDER_PATH/argo.log" 2>/dev/null | tail -n1)
+        argodomain=$(grep -aoE '[a-zA-Z0-9.-]+\.trycloudflare\.com' "$SINGBOX_FOLDER_PATH/argo.log" 2>/dev/null | tail -n1)
     fi
-  
+
   # 当argodomain 不为空时
   if [ -n "$argodomain" ]; then
     echo "https://${argodomain}/sub/${sub_uuid}"
@@ -3025,11 +3022,6 @@ is_valid_ip() {
 
 # 根据 out_ip_local 更新 current_server_ip 的函数，确保返回的 IPv6 不包含中括号
 update_server_ip() {
-    # 定义调试日志函数
-    debug_log() {
-        [ "${DEBUG_FLAG:-0}" = "1" ] && echo -e "$*" >&2  # 如果 DEBUG_FLAG 为 1，则打印日志
-    }
-
     local current_server_ip="$1"
     local out_ip_local="$2"  # 修改变量名，避免与其他地方的 out_ip 混淆
 
@@ -3107,12 +3099,6 @@ strip_ip_brackets() {
 
 # show nodes
 cip(){
-
-    # 日志：只输出到 stderr，不污染 stdout
-    debug_log() {
-      [ "${DEBUG_FLAG:-0}" = "1" ] && echo -e "$*" >&2
-    }
-    
     echo
     # 显示 Singbox 状态
     singbox_status
@@ -3190,7 +3176,7 @@ cip(){
     argodomain=$(cat "$SINGBOX_FOLDER_PATH/argo_domain" 2>/dev/null)
 
     if need_argo && [ -z "$argodomain" ] && [ -s "$SINGBOX_FOLDER_PATH/argo.log" ]; then
-        argodomain=$(grep -aoE '[a-zA-Z0-9.-]+trycloudflare\.com' "$SINGBOX_FOLDER_PATH/argo.log" 2>/dev/null | tail -n1)
+        argodomain=$(grep -aoE '[a-zA-Z0-9.-]+\.trycloudflare\.com' "$SINGBOX_FOLDER_PATH/argo.log" 2>/dev/null | tail -n1)
     fi
 
     cdn_host=$(cat "$SINGBOX_FOLDER_PATH/cdn_host")
@@ -3198,7 +3184,7 @@ cip(){
     cdn_pt="$(normalize_cdn_pt "$cdn_pt" 443)"
 
     if [ -n "$argodomain" ]; then
-        vlvm=$(cat $SINGBOX_FOLDER_PATH/vlvm 2>/dev/null); uuid=$(cat "$SINGBOX_FOLDER_PATH/uuid")
+        vlvm=$(cat "$SINGBOX_FOLDER_PATH/vlvm" 2>/dev/null); uuid=$(cat "$SINGBOX_FOLDER_PATH/uuid")
         if [ "$vlvm" = "Vmess" ]; then
             vmatls_link1="vmess://$(echo "{\"v\":\"2\",\"ps\":\"${sxname}vmess-ws-tls-argo-$hostname-${cdn_pt}\",\"add\":\"${cdn_host}\",\"port\":\"${cdn_pt}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":\"$argodomain\",\"path\":\"/${uuid}-vm\",\"tls\":\"tls\",\"sni\":\"$argodomain\"}" | base64 | tr -d '\n\r')"
            
@@ -3502,7 +3488,7 @@ install_step(){
 }
 
 
-# ================== 端口冲突检测（subscribe=true 才检查 nginx_pt） ==================
+# ================== 端口冲突检测（subscribe=true 或 need_argo 才检查 nginx_pt/argo_pt） ==================
 check_port_conflicts_or_exit() {
   _is_port_int() {
     [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]
@@ -3545,10 +3531,12 @@ check_port_conflicts_or_exit() {
   for k in $vars; do
     if [[ "$k" == "nginx_pt" ]]; then
       v="$nginx_eff"   # 用有效默认值参与检查，但不改 nginx_pt 本身
+    elif [[ "$k" == "argo_pt" ]]; then
+      v="$argo_eff"    # 用有效默认值参与检查，但不改 argo_pt 本身
     elif [[ "$k" == "socks5pt" ]]; then
       v="$port_socks5" # socks5pt= 且 PORT=xxx 时，用实际端口参与检查
     else
-      v="${!k}"        # 动态取值：协议端口/argo_pt
+      v="${!k}"        # 动态取值：协议端口
     fi
 
     # 不为空才检查

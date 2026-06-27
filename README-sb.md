@@ -25,8 +25,8 @@ argo="trpt" \
 anypt=41006 \
 nginx_pt=41007 \
 socks5pt=41017 \
-socks5_username="你的socks5自定义用户名" \
-socks5_password="你的socks5自定义密码" \
+socks5_username='你的socks5自定义用户名' \
+socks5_password='你的socks5自定义密码' \
 agn="california.xxxx.xyz" \
 agk='ey开头的那一大串' \
 subscribe=true \
@@ -209,15 +209,11 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
 
 ## 12、 socks5pt 指的是socks5协议的端口，不传就不启用socks5。同时自定义 username / password 环境变量的值。不传就自动生成随机。
 
+> **⚠️ 重要：`socks5_password` 必须使用单引号 `'...'`，千万不能用双引号！**  
+> 因为密码可能包含 `!` 等特殊字符，bash 双引号下会触发历史展开导致密码被破坏。  
+> 示例：`socks5_password='你的密码'` ✅ 正确，`socks5_password="你的密码"` ❌ 错误
 
 ## 13、所有的协议都会输出到聚合节点文件中: cat /root/doraemon/jh.txt
-
-
-## 以下为 参数上面有红线代表可以不传的变量
-
-<img width="1752" height="920" alt="CleanShot 2026-06-26 at 21 04 04" src="https://github.com/user-attachments/assets/c93f0e7b-d00e-4dd3-b1f2-da6929303c51" />
-
-
 
 ### 这里给列出一些基础变量
 ```bash
@@ -232,7 +228,7 @@ argo="trpt" \
 nginx_pt=41007 \
 socks5pt=31017 \
 socks5_username='你的s5用户名' \
-socks5_password='你的s5密码' \
+socks5_password='你的s5密码(必须用单引号包裹起来)' \
 agn="california.xxxx.xyz" \
 agk='ey开头的那一大串' \
 subscribe=true \
@@ -278,8 +274,8 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ```bash
 socks5pt=31017 \
-socks5_username="你的s5用户名" \
-socks5_password="你的s5密码" \
+socks5_username='你的s5用户名' \
+socks5_password='你的s5密码(必须用单引号包裹起来)' \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
