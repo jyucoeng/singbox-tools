@@ -1674,7 +1674,7 @@ installsb(){
 
     rm -f "$tmpj" 2>/dev/null || true
 
-    # setup_warp_config  如需 WireGuard 解锁 Netflix/OpenAI/YouTube，取消注释本行
+    setup_warp_config   # WireGuard 解锁 Netflix/OpenAI/YouTube
 }
 # Netflix/OpenAI/YouTube 走 WARP 解锁，其余直连 (matching index.js:498-560)
 # 这堆配置只做一件事：Netflix/OpenAI/YouTube 的流量走 WARP 隧道出去（用于解锁区域限制）。去掉后：
