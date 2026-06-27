@@ -209,6 +209,9 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
 
 ## 12、 socks5pt 指的是socks5协议的端口，不传就不启用socks5。同时自定义 socks5_username / socks5_password 环境变量的值。用户名/密码不传就自动随机生成。
 
+> **⚠️ 注意：如果 `socks5_password` 含 `!`、`#`、`$` 等特殊字符，必须用单引号 `'...'` 包裹整个密码串。**  
+> 双引号或不加引号会导致 bash 把特殊字符解释掉，最终配置文件里的密码会被截断或出错。
+
 ## 13、所有的协议都会输出到聚合节点文件中: cat /root/doraemon/jh.txt
 
 ### 这里给列出一些基础变量
@@ -224,7 +227,7 @@ argo="trpt" \
 nginx_pt=41007 \
 socks5pt=31017 \
 socks5_username='你的s5用户名' \
-socks5_password='你的s5密码' \
+socks5_password='你的s5密码' \                       # 含特殊字符(!#$等)必须用单引号包裹
 agn="california.xxxx.xyz" \
 agk='ey开头的那一大串' \
 subscribe=true \
@@ -271,7 +274,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 ```bash
 socks5pt=31017 \
 socks5_username='你的s5用户名' \
-socks5_password='你的s5密码' \
+socks5_password='你的s5密码' \                       # 含特殊字符(!#$等)必须用单引号包裹
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
