@@ -2,6 +2,8 @@
 #!/usr/bin/env bash
 export LANG=en_US.UTF-8
 
+cd /root || exit 1
+
 # ================== 文件夹路径配置 ==================
 # 统一定义文件夹名称和路径，方便后续修改
 SB_FOLDER="doraemon"
