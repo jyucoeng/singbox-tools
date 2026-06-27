@@ -1608,6 +1608,7 @@ EOF
 EOF
     fi
 }
+
 #  Generate Sing-box configuration file
 sbbout(){
     if [ -e "$SINGBOX_FOLDER_PATH/sb.json" ]; then
