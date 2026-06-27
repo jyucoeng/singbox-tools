@@ -14,7 +14,7 @@ SB_LOG_PATH="$SINGBOX_FOLDER_PATH/logs"
 
  # ================== 常量和环境变量 结束 ==================
 
-VERSION="1.0.9(2026-06-27)"
+VERSION="1.0.10(2026-06-27)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -3284,8 +3284,8 @@ cleanup_nginx() {
 
 # Remove singbox folder
 cleandel(){
-    # Change to $HOME to avoid issues when deleting directories
-   cd "$HOME" || exit 1
+    # Change to /root to avoid issues when deleting directories
+    cd /root 2>/dev/null || cd "$HOME" 2>/dev/null || exit 1
 
     yellow "开始卸载sing-box/cloudflared流程..."; 
     
