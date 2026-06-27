@@ -1606,7 +1606,6 @@ installsb(){
             .inbounds += [{
                 type: "vless", tag: "vless-reality-vision-sb", listen: "::",
                 listen_port: ($port | tonumber),
-                sniff: true,
                 users: [{uuid: $uuid, flow: "xtls-rprx-vision"}],
                 tls: {
                     enabled: true,
@@ -1651,9 +1650,8 @@ installsb(){
             --arg sni "$any_sni" \
             --arg cert "$SINGBOX_FOLDER_PATH/cert.pem" --arg key "$SINGBOX_FOLDER_PATH/private.key" '
             .inbounds += [{
-                type: "anytls", tag: "anytls-sb", listen: "::",
+                 type: "anytls", tag: "anytls-sb", listen: "::",
                 listen_port: ($port | tonumber),
-                sniff: true,
                 users: [{password: $uuid}],
                 tls: {enabled: true, server_name: $sni, certificate_path: $cert, key_path: $key}
             }]' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
