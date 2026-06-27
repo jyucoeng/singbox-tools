@@ -888,7 +888,7 @@ gen_socks5_username() {
 }
 
 gen_socks5_password() {
-    tr -dc 'A-Za-z0-9!@#%^_+' </dev/urandom | head -c 12
+    tr -dc 'A-Za-z0-9' </dev/urandom | head -c 12
 }
 
 init_socks5_credentials() {
