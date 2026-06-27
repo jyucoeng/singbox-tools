@@ -1548,6 +1548,7 @@ installsb(){
             }]' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
     fi
 
+
     # 添加vmess协议
     if [ -n "$vmp" ]; then
         if [ -z "$port_vm_ws" ] && [ ! -e "$SINGBOX_FOLDER_PATH/port_vm_ws" ]; then
