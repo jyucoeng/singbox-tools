@@ -1065,25 +1065,38 @@ set_sbyx(){
 
 # download Sing-box
 upsingbox(){
-    url="https://github.com/jyucoeng/singbox-tools/releases/download/singbox/sing-box-$cpu"
-    out="$SINGBOX_FOLDER_PATH/sing-box"
-    (curl -Lo "$out" -# --connect-timeout 5 --max-time 120  --retry 2 --retry-delay 2 --retry-all-errors "$url") || (wget -O "$out" --tries=2 --timeout=120 --dns-timeout=5 --read-timeout=60 "$url")
+    # 原来版本 v1.12.13 为了使用warp 所以用新版本
+    local sb_ver="1.13.14"
 
+    # # 自定义库（旧源），如需切回取消注释下面这行，注释掉官方下载部分
+    # local url="https://github.com/jyucoeng/singbox-tools/releases/download/singbox/sing-box-$cpu"
 
-    debug_log "【调试】upsingbox：下载 Sing-box 二进制文件，保存路径 $out，url: $url"
+    local archive="sing-box-${sb_ver}-linux-${cpu}.tar.gz"
+    local url="https://github.com/SagerNet/sing-box/releases/download/v${sb_ver}/${archive}"
+    local tmp_archive="/tmp/${archive}"
 
-    # 下载结果校验：防止拿到空文件/错误页导致后续假安装
-    if [ ! -s "$out" ]; then
+    (curl -Lo "$tmp_archive" -# --connect-timeout 5 --max-time 120 --retry 2 --retry-delay 2 --retry-all-errors "$url") \
+        || (wget -O "$tmp_archive" --tries=2 --timeout=120 --dns-timeout=5 --read-timeout=60 "$url")
+
+    if [ ! -s "$tmp_archive" ]; then
         debug_log "【调试】upsingbox：下载失败：文件为空"
-        red "❌ 下载失败：文件为空 $out"
+        red "❌ 下载失败：${url}"
         exit 1
     fi
-    debug_log "【调试】upsingbox：检查 Sing-box 二进制文件是否下载成功"
+    debug_log "【调试】upsingbox：下载完成，解压中…"
+
+    tar -xzf "$tmp_archive" -C /tmp/ 2>/dev/null || {
+        red "❌ 解压失败"
+        exit 1
+    }
+    mv "/tmp/sing-box-${sb_ver}-linux-${cpu}/sing-box" "$SINGBOX_FOLDER_PATH/sing-box"
+    rm -f "$tmp_archive"
+    rm -rf "/tmp/sing-box-${sb_ver}-linux-${cpu}" 2>/dev/null || true
 
     chmod +x "$SINGBOX_FOLDER_PATH/sing-box"
     sbcore=$("$SINGBOX_FOLDER_PATH/sing-box" version 2>/dev/null | awk '/version/{print $NF}')
     debug_log "【调试】upsingbox：Sing-box 版本为 $sbcore"
-    green "✅  已安装Sing-box正式版内核：$sbcore"
+    green "✅  已安装 Sing-box 正式版内核：${sbcore}"
 }
 # Generate UUID and save to file
 insuuid(){
