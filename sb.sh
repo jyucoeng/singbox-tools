@@ -1483,12 +1483,12 @@ EOF
 
         
         port_tu=$(cat "$SINGBOX_FOLDER_PATH/port_tu"); 
-        tuic_password=$uuid
+        password=$uuid
 
         yellow "Tuic端口：$port_tu"
 
          cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
-{"type": "tuic", "tag": "tuic-sb", "listen": "::", "listen_port": ${port_tu}, "users": [ {  "uuid": "$uuid", "password": "$tuic_password" } ],"congestion_control": "bbr", "tls": { "enabled": true,"alpn": ["h3"], "certificate_path": "$SINGBOX_FOLDER_PATH/cert.pem", "key_path": "$SINGBOX_FOLDER_PATH/private.key" }},
+{"type": "tuic", "tag": "tuic-sb", "listen": "::", "listen_port": ${port_tu}, "users": [ {  "uuid": "$uuid", "password": "$password" } ],"congestion_control": "bbr", "tls": { "enabled": true,"alpn": ["h3"], "certificate_path": "$SINGBOX_FOLDER_PATH/cert.pem", "key_path": "$SINGBOX_FOLDER_PATH/private.key" }},
 EOF
     fi
 
@@ -1600,8 +1600,11 @@ EOF
         yellow "Socks5端口：$port_socks5"
         yellow "Socks5用户名：$socks5_username"
         yellow "Socks5密码：$socks5_password"
+        socks5_username_json=$(json_escape_string "$socks5_username")
+        socks5_password_json=$(json_escape_string "$socks5_password")
+
         cat >> "$SINGBOX_FOLDER_PATH/sb.json" <<EOF
-{"type": "socks", "tag": "socks5-sb", "sniff": true, "listen": "::", "listen_port": ${port_socks5}, "users": [{"username": "${socks5_username}", "password": "${socks5_password}"}]},
+{"type": "socks", "tag": "socks5-sb", "sniff": true, "listen": "::", "listen_port": ${port_socks5}, "users": [{"username": ${socks5_username_json}, "password": ${socks5_password_json}}]},
 EOF
     fi
 }
@@ -3009,9 +3012,9 @@ cip(){
     if grep -q "tuic-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
         port_tu=$(cat "$SINGBOX_FOLDER_PATH/port_tu")
         tu_sni=$(cat "$SINGBOX_FOLDER_PATH/tu_sni"); 
-        tuic_password=$uuid
+        password=$uuid
 
-        tuic_link="tuic://${uuid}:${tuic_password}@${server_ip}:${port_tu}?sni=${tu_sni}&congestion_control=bbr&security=tls&udp_relay_mode=native&alpn=h3&allow_insecure=1#${sxname}tuic-$hostname"
+        tuic_link="tuic://${uuid}:${password}@${server_ip}:${port_tu}?sni=${tu_sni}&congestion_control=bbr&security=tls&udp_relay_mode=native&alpn=h3&allow_insecure=1#${sxname}tuic-$hostname"
         yellow "💣【 TUIC 】(直连协议)"
         green "$tuic_link" 
         append_jh "$tuic_link"
