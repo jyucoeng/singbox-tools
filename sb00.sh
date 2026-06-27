@@ -9,7 +9,6 @@ cd /root || exit 1
 SB_FOLDER="doraemon"
 SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb"  # 旧路径，用于兼容和清理
-SB_LOG_PATH="$SINGBOX_FOLDER_PATH/logs"
 # ================== 文件夹路径配置 结束 ==================
 
  # ================== 常量和环境变量 结束 ==================
@@ -248,7 +247,7 @@ install_deps() {
 
   # 失败包记录文件
   local fail_log="$SINGBOX_FOLDER_PATH/deps_failed.log"
-  mkdir -p "$SINGBOX_FOLDER_PATH" "$SB_LOG_PATH" 2>/dev/null || true
+  mkdir -p "$SINGBOX_FOLDER_PATH" 2>/dev/null || true
 
   # 找出缺的命令
   local -a missing=()
@@ -945,7 +944,7 @@ prepare_argo_credentials() {
             return 1
         fi
 
- mkdir -p "$SINGBOX_FOLDER_PATH" "$SB_LOG_PATH"
+ mkdir -p "$SINGBOX_FOLDER_PATH"
 
         # 写入 tunnel.json
         #❗ 如果 ARGO_AUTH 里的 JSON 含有 \n、\r、\uXXXX 之类，echo 在某些 shell/实现里可能会解释转义，导致 tunnel.json 内容被破坏。 改法：用 printf 更可靠
@@ -1482,7 +1481,7 @@ installsb(){
     local tmpj="$SINGBOX_FOLDER_PATH/.sb.tmp"
 
     # Initialize JSON with log config (matching index.js generateSingBoxConfig style)
-    jq -n --arg logfile "$SB_LOG_PATH/singbox.log" '{log: {disabled: false, level: "info", timestamp: true, output: $logfile}, inbounds: []}' > "$sbj"
+    jq -n --arg logfile "$SINGBOX_FOLDER_PATH/singbox.log" '{log: {disabled: false, level: "info", timestamp: true, output: $logfile}, inbounds: []}' > "$sbj"
 
     # 添加tuic协议
     if [ -n "$tup" ]; then
@@ -1760,8 +1759,8 @@ After=network.target
 Type=simple
 NoNewPrivileges=yes
 ExecStart=$SINGBOX_FOLDER_PATH/sing-box run -c $SINGBOX_FOLDER_PATH/sb.json
-StandardOutput=append:$SB_LOG_PATH/singbox.log
-StandardError=append:$SB_LOG_PATH/singbox.log
+StandardOutput=append:$SINGBOX_FOLDER_PATH/singbox.log
+StandardError=append:$SINGBOX_FOLDER_PATH/singbox.log
 Restart=on-failure
 RestartSec=5s
 [Install]

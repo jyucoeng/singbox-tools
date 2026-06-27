@@ -25,8 +25,8 @@ argo="trpt" \
 anypt=41006 \
 nginx_pt=41007 \
 socks5pt=41017 \
-username="你的socks5自定义用户名" \
-password="你的socks5自定义密码" \
+socks5_username="你的socks5自定义用户名" \
+socks5_password="你的socks5自定义密码" \
 agn="california.xxxx.xyz" \
 agk='ey开头的那一大串' \
 subscribe=true \
@@ -231,8 +231,8 @@ anypt=41006 \
 argo="trpt" \
 nginx_pt=41007 \
 socks5pt=31017 \
-username="你的s5用户名" \
-password="你的s5密码" \
+socks5_username='你的s5用户名' \
+socks5_password='你的s5密码' \
 agn="california.xxxx.xyz" \
 agk='ey开头的那一大串' \
 subscribe=true \
@@ -278,8 +278,8 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ```bash
 socks5pt=31017 \
-username="你的s5用户名" \
-password="你的s5密码" \
+socks5_username="你的s5用户名" \
+socks5_password="你的s5密码" \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
