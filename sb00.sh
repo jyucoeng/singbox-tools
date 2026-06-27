@@ -1467,7 +1467,7 @@ installsb(){
     local tmpj="$SINGBOX_FOLDER_PATH/.sb.tmp"
 
     # Initialize JSON with log config (matching index.js generateSingBoxConfig style)
-    jq -n '{log: {disabled: false, level: "info", timestamp: true}, inbounds: []}' > "$sbj"
+    jq -n --arg logfile "$SINGBOX_FOLDER_PATH/singbox.log" '{log: {disabled: false, level: "info", timestamp: true, output: $logfile}, inbounds: []}' > "$sbj"
 
     # 添加tuic协议
     if [ -n "$tup" ]; then
@@ -1679,7 +1679,7 @@ setup_warp_config() {
         [ "$yt_test" != "200" ] && need_youtube_warp=true
     fi
     # 保存检测结果给 sbbout 使用
-    printf '%s\n' "$need_youtube_warp" > "$SINGBOX_FOLDER_PATH/.youtube_warp"
+    printf '%s\n' "$need_youtube_warp" > "$SINGBOX_FOLDER_PATH/.warp_config"
 
     jq --argjson need_youtube "$need_youtube_warp" '
         .endpoints = [{
@@ -1713,17 +1713,24 @@ sbbout(){
         local sbj="$SINGBOX_FOLDER_PATH/sb.json"
         local tmpj="$SINGBOX_FOLDER_PATH/.sb.tmp"
 
-        # 读取 installsb 中保存的 YouTube WARP 检测结果
-        local need_youtube_warp=false
-        [ -s "$SINGBOX_FOLDER_PATH/.youtube_warp" ] && need_youtube_warp=$(cat "$SINGBOX_FOLDER_PATH/.youtube_warp")
+        # 读取 .warp_config：文件存在表示 WARP 已启用，内容为 true/false 表示 YouTube 是否走 WARP
+        local warp_enabled=false need_youtube=false
+        if [ -s "$SINGBOX_FOLDER_PATH/.warp_config" ]; then
+            warp_enabled=true
+            need_youtube=$(cat "$SINGBOX_FOLDER_PATH/.warp_config")
+        fi
 
-        jq --arg sbyx "$sbyx" --argjson need_youtube "$need_youtube_warp" '
+        jq --arg sbyx "$sbyx" --argjson warp "$warp_enabled" --argjson need_youtube "$need_youtube" '
             .outbounds = [{type: "direct", tag: "direct"}, {type: "block", tag: "block"}]
             | .route.final = "direct"
-            | if $need_youtube then
-                .route.rules = [{rule_set: ["netflix", "youtube"], outbound: "wireguard-out"}] + [{action: "sniff"}, {action: "resolve", strategy: $sbyx}]
+            | if $warp then
+                if $need_youtube then
+                    .route.rules = [{rule_set: ["netflix", "youtube"], outbound: "wireguard-out"}] + [{action: "sniff"}, {action: "resolve", strategy: $sbyx}]
+                else
+                    .route.rules = [{rule_set: ["netflix"], outbound: "wireguard-out"}] + [{action: "sniff"}, {action: "resolve", strategy: $sbyx}]
+                end
               else
-                .route.rules = [{rule_set: ["netflix"], outbound: "wireguard-out"}] + [{action: "sniff"}, {action: "resolve", strategy: $sbyx}]
+                .route.rules = [{action: "sniff"}, {action: "resolve", strategy: $sbyx}]
               end
         ' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
         rm -f "$tmpj" 2>/dev/null || true
@@ -1738,6 +1745,8 @@ After=network.target
 Type=simple
 NoNewPrivileges=yes
 ExecStart=$SINGBOX_FOLDER_PATH/sing-box run -c $SINGBOX_FOLDER_PATH/sb.json
+StandardOutput=append:$SINGBOX_FOLDER_PATH/singbox.log
+StandardError=append:$SINGBOX_FOLDER_PATH/singbox.log
 Restart=on-failure
 RestartSec=5s
 [Install]
