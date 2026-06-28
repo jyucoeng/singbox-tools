@@ -3030,14 +3030,6 @@ cip() {
     server_ip=$(cat "$SINGBOX_FOLDER_PATH/server_ip" 2> /dev/null)
     sxname=$(cat "$SINGBOX_FOLDER_PATH/name" 2> /dev/null)
 
-    # 计算自签证书 SHA256 指纹，替换 insecure=1
-    local cert_sha256=""
-    [ -s "$SINGBOX_FOLDER_PATH/cert.pem" ] && cert_sha256=$(
-        openssl x509 -in "$SINGBOX_FOLDER_PATH/cert.pem" -outform der 2>/dev/null |
-            openssl dgst -sha256 -binary 2>/dev/null |
-            openssl enc -base64 -A 2>/dev/null
-    )
-
     echo "*********************************************************"
     purple "Singbox脚本输出节点配置如下："
     echo
@@ -3045,7 +3037,7 @@ cip() {
     if grep -q "hy2-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
         port_hy2=$(cat "$SINGBOX_FOLDER_PATH/port_hy2")
         hy_sni=$(cat "$SINGBOX_FOLDER_PATH/hy_sni")
-        hy2_link="hysteria2://$uuid@$server_ip:$port_hy2?security=tls&alpn=h3&sni=${hy_sni}&pinnedPeerCertSha256=${cert_sha256}#${sxname}hy2-$hostname"
+        hy2_link="hysteria2://$uuid@$server_ip:$port_hy2?security=tls&alpn=h3&insecure=1&allowInsecure=1&sni=${hy_sni}#${sxname}hy2-$hostname"
         yellow "💣【 Hysteria2 】(直连协议)"
         green "$hy2_link"
         append_jh "$hy2_link"
@@ -3058,7 +3050,7 @@ cip() {
         tu_sni=$(cat "$SINGBOX_FOLDER_PATH/tu_sni")
         password=$uuid
 
-        tuic_link="tuic://${uuid}:${password}@${server_ip}:${port_tu}?sni=${tu_sni}&congestion_control=bbr&security=tls&udp_relay_mode=native&alpn=h3&pinnedPeerCertSha256=${cert_sha256}#${sxname}tuic-$hostname"
+        tuic_link="tuic://${uuid}:${password}@${server_ip}:${port_tu}?sni=${tu_sni}&congestion_control=bbr&security=tls&udp_relay_mode=native&alpn=h3&allow_insecure=1#${sxname}tuic-$hostname"
         yellow "💣【 TUIC 】(直连协议)"
         green "$tuic_link"
         append_jh "$tuic_link"
@@ -3089,7 +3081,7 @@ cip() {
         port_any=$(cat "$SINGBOX_FOLDER_PATH/port_any")
         any_sni=$(cat "$SINGBOX_FOLDER_PATH/any_sni")
 
-        anytls_link="anytls://${uuid}@${server_ip}:${port_any}?security=tls&sni=${any_sni}&fp=firefox&type=tcp&pinnedPeerCertSha256=${cert_sha256}#${sxname}anytls-$hostname"
+        anytls_link="anytls://${uuid}@${server_ip}:${port_any}?security=tls&sni=${any_sni}&fp=firefox&insecure=1&allowInsecure=1&type=tcp#${sxname}anytls-$hostname"
         yellow "🔐【 AnyTLS 】(直连协议)"
         green "$anytls_link"
         append_jh "$anytls_link"
