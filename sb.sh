@@ -429,6 +429,7 @@ install_deps() {
             psmisc
             coreutils
             ca-certificates
+            gcompat
         )
 
         local -a APK_CMD=(apk add --no-cache)
@@ -1097,6 +1098,14 @@ upsingbox() {
     rm -rf "/tmp/sing-box-${sb_ver}-linux-${cpu}" 2> /dev/null || true
 
     chmod +x "$SINGBOX_FOLDER_PATH/sing-box"
+
+    if ! "$SINGBOX_FOLDER_PATH/sing-box" version > /dev/null 2>&1; then
+        red "❌ sing-box 无法执行，请检查系统架构或依赖"
+        grep -qi alpine /etc/os-release 2>/dev/null && \
+            red "   Alpine 系统请确认已安装 gcompat：apk add --no-cache gcompat"
+        exit 1
+    fi
+
     sbcore=$("$SINGBOX_FOLDER_PATH/sing-box" version 2> /dev/null | head -1 | awk '/version/{print $NF}')
     debug_log "【调试】upsingbox：Sing-box 版本为 $sbcore"
     green "✅  已安装 Sing-box 正式版内核：${sbcore}"
