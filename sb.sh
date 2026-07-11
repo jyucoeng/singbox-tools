@@ -8,7 +8,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.0.10(2026-07-02)"
+VERSION="1.0.10(2026-07-11)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -64,7 +64,7 @@ cdn_pt="${cdn_pt:-443}"
 vl_sni_pt="${vl_sni_pt:-443}"
 
 v46url="https://icanhazip.com"
-SCRIPT_URL="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh"
+SCRIPT_URL="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb00.sh"
 
 CN_BING="www.bing.com"
 
@@ -429,7 +429,6 @@ install_deps() {
             psmisc
             coreutils
             ca-certificates
-            gcompat
         )
 
         local -a APK_CMD=(apk add --no-cache)
@@ -1098,14 +1097,6 @@ upsingbox() {
     rm -rf "/tmp/sing-box-${sb_ver}-linux-${cpu}" 2> /dev/null || true
 
     chmod +x "$SINGBOX_FOLDER_PATH/sing-box"
-
-    if ! "$SINGBOX_FOLDER_PATH/sing-box" version > /dev/null 2>&1; then
-        red "❌ sing-box 无法执行，请检查系统架构或依赖"
-        grep -qi alpine /etc/os-release 2>/dev/null && \
-            red "   Alpine 系统请确认已安装 gcompat：apk add --no-cache gcompat"
-        exit 1
-    fi
-
     sbcore=$("$SINGBOX_FOLDER_PATH/sing-box" version 2> /dev/null | head -1 | awk '/version/{print $NF}')
     debug_log "【调试】upsingbox：Sing-box 版本为 $sbcore"
     green "✅  已安装 Sing-box 正式版内核：${sbcore}"
@@ -2334,36 +2325,24 @@ strip_ip_brackets_all() {
     printf '%s' "$s"
 }
 
-#工具函数：判断 IP 合法（宽松 IPv6：含冒号并符合基本十六进制/冒号结构）
+#工具函数：判断 IP 合法（宽松 IPv6：含冒号）
 is_valid_ip_simple() {
     local ip
-    ip="$(strip_ip_brackets_all "${1:-}")" # 去除 IP 地址中的中括号（如果有）
+    ip="$(strip_ip_brackets_all "${1:-}")"
 
-    # 检查 IP 是否为空
-    [ -n "$ip" ] || return 1 # 如果为空，返回无效（1）
+    [ -n "$ip" ] || return 1
 
-    # 检查是否为 IPv4 地址
+    # IPv4
     if echo "$ip" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
-        # 如果是 IPv4 地址格式（如 192.168.0.1）
-        return 0 # 返回有效（0）
+        return 0
     fi
 
-    # 检查是否为 IPv6 地址（支持压缩格式 ::）
-    # 以下的正则表达式支持：
-    # - 完整 IPv6 地址（如：2001:0db8:0000:0042:0000:8a2e:0370:7334）
-    # - 压缩格式 IPv6 地址（如：2001:db8::ff00:42:8329 或 ::）
-    if echo "$ip" | grep -qE '^([a-fA-F0-9]{1,4}:){7}[a-fA-F0-9]{1,4}$' \
-        || echo "$ip" | grep -qE '^([a-fA-F0-9]{1,4}:){1,7}:$' \
-        || echo "$ip" | grep -qE '^([a-fA-F0-9]{1,4}:){0,6}:([a-fA-F0-9]{1,4}:){1,6}$' \
-        || echo "$ip" | grep -qE '^::([a-fA-F0-9]{1,4}:){1,7}[a-fA-F0-9]{1,4}$' \
-        || [ "$ip" == "::" ]; then
-        # 检查是否为有效的 IPv6 地址
-        # - 匹配常规 IPv6 格式：xxxx:xxxx:xxxx:xxxx:xxxx:xxxx:xxxx:xxxx
-        # - 匹配压缩格式 IPv6 地址：xxxx::xxxx:xxxx 或 ::
-        return 0 # 返回有效（0）
+    # IPv6：包含冒号就是 IPv6（宽松判断，脚本内部用足够安全）
+    if echo "$ip" | grep -q ':'; then
+        return 0
     fi
 
-    return 1 # 如果都不匹配，返回无效（1）
+    return 1
 }
 
 # 4) 工具函数：输出写入 server_ip 的最终形式（IPv6 自动加 []）
