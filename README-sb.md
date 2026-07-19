@@ -287,15 +287,15 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ## 组合3️⃣、 VMess  Argo/ Trojan  Argo（最常用，2个协议选一个）
 
-### 当使用trojan Argo时
+### 当使用Vmess Argo时
 
 ```bash
 ippz=4 \
 trpt=41003 \
-argo=trpt \
+argo=vmpt \
 agn="test-trojan.xxxx.xyz" \
 agk="ey开头的那一串" \
-name="小叮当-韩国春川"  \
+name="小叮当-韩国春川vmess"  \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)  rep
 ```
 
@@ -303,11 +303,11 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ```bash
 ippz=4 \
-trpt=41003 \
+trpt=41002 \
 argo=trpt \
 agn="test-vmess.xxxx.xyz" \
 agk="ey开头的那一串" \
-name="小叮当-韩国春川"  \
+name="小叮当-韩国春川trojanc"  \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)  rep
 ```
 
