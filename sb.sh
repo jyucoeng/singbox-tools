@@ -1077,16 +1077,18 @@ upsingbox() {
     local archive_base="sing-box-${sb_ver}-linux-${cpu}"
     if [ -f /etc/alpine-release ]; then
         archive_base="${archive_base}-musl"
+        debug_log "【调试】upsingbox：检测到 Alpine 系统，使用 musl 版本"
     fi
     local archive="${archive_base}.tar.gz"
     local url="https://github.com/SagerNet/sing-box/releases/download/v${sb_ver}/${archive}"
     local tmp_archive="/tmp/${archive}"
+    debug_log "【调试】upsingbox：CPU架构=$cpu，下载文件名=$archive"
 
     (curl -Lo "$tmp_archive" -# --connect-timeout 5 --max-time 120 --retry 2 --retry-delay 2 --retry-all-errors "$url") \
         || (wget -O "$tmp_archive" --tries=2 --timeout=120 --dns-timeout=5 --read-timeout=60 "$url")
 
     if [ ! -s "$tmp_archive" ]; then
-        debug_log "【调试】upsingbox：下载失败：文件为空"
+        debug_log "【调试】upsingbox：下载失败：文件为空，URL=$url"
         red "❌ 下载失败：${url}"
         exit 1
     fi
