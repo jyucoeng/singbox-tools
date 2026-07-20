@@ -1074,7 +1074,11 @@ upsingbox() {
     # # 自定义库（旧源），如需切回取消注释下面这行，注释掉官方下载部分
     # local url="https://github.com/jyucoeng/singbox-tools/releases/download/singbox/sing-box-$cpu"
 
-    local archive="sing-box-${sb_ver}-linux-${cpu}.tar.gz"
+    local archive_base="sing-box-${sb_ver}-linux-${cpu}"
+    if [ -f /etc/alpine-release ]; then
+        archive_base="${archive_base}-musl"
+    fi
+    local archive="${archive_base}.tar.gz"
     local url="https://github.com/SagerNet/sing-box/releases/download/v${sb_ver}/${archive}"
     local tmp_archive="/tmp/${archive}"
 
@@ -1092,9 +1096,9 @@ upsingbox() {
         red "❌ 解压失败"
         exit 1
     }
-    mv "/tmp/sing-box-${sb_ver}-linux-${cpu}/sing-box" "$SINGBOX_FOLDER_PATH/sing-box"
+    mv "/tmp/${archive_base}/sing-box" "$SINGBOX_FOLDER_PATH/sing-box"
     rm -f "$tmp_archive"
-    rm -rf "/tmp/sing-box-${sb_ver}-linux-${cpu}" 2> /dev/null || true
+    rm -rf "/tmp/${archive_base}" 2> /dev/null || true
 
     chmod +x "$SINGBOX_FOLDER_PATH/sing-box"
     sbcore=$("$SINGBOX_FOLDER_PATH/sing-box" version 2> /dev/null | head -1 | awk '/version/{print $NF}')
