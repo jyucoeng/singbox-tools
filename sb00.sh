@@ -104,6 +104,10 @@ debug_log() {
     [ "${DEBUG_FLAG:-0}" = "1" ] && echo -e "$*" >&2
 }
 
+debug_print() {
+    [ "${DEBUG_FLAG:-0}" = "1" ] && "$@"
+}
+
 get_subscribe_flag() {
     # 优先读落盘值（避免用户不带环境变量执行脚本时失效）
     if [ -s "$SINGBOX_FOLDER_PATH/subscribe" ]; then
@@ -251,7 +255,7 @@ install_deps() {
 
     # 都齐了就直接返回
     if [ "${#missing[@]}" -eq 0 ]; then
-        green "✅ 依赖已齐全，跳过安装"
+        debug_print green "✅ 依赖已齐全，跳过安装"
         return 0
     fi
 
@@ -1040,7 +1044,7 @@ set_sbyx() {
         echo
         yellow "所有节点名称前缀：$name"
     fi
-    echo "IP版本获取中……请稍候"
+    debug_print echo "IP版本获取中……请稍候"
     v4v6 # This now sets both v4_ok and v6_ok
 
     # Determine which connection to prefer based on the availability of IPv4 and IPv6
@@ -1778,7 +1782,7 @@ EOF
             systemctl enable sb
             systemctl start sb
             echo ""
-            green "✅ sb 服务已启动,并开启开机自启服务（systemd）"
+            debug_print green "✅ sb 服务已启动,并开启开机自启服务（systemd）"
         elif command -v rc-service > /dev/null 2>&1 && [ "$EUID" -eq 0 ]; then
             debug_log "【调试】sbbout：使用 openrc 管理/启动 sb 服务"
             cat > /etc/init.d/sing-box << EOF
@@ -1791,15 +1795,20 @@ pidfile="/run/sing-box.pid"
 depend() { need net; }
 EOF
             chmod +x /etc/init.d/sing-box
-            rc-update add sing-box default
-            rc-service sing-box start
+            if [ "${DEBUG_FLAG:-0}" = "1" ]; then
+                rc-update add sing-box default
+                rc-service sing-box start
+            else
+                rc-update add sing-box default > /dev/null 2>&1
+                rc-service sing-box start > /dev/null 2>&1
+            fi
             echo ""
-            green "✅ sb 服务已启动,并开启开机自启服务（openrc）"
+            debug_print green "✅ sb 服务已启动,并开启开机自启服务（openrc）"
         else
             debug_log "【调试】sbbout：使用 nohup 模式运行 sb 服务"
             nohup "$SINGBOX_FOLDER_PATH/sing-box" run -c "$SINGBOX_FOLDER_PATH/sb.json" > /dev/null 2>&1 &
             echo ""
-            green "✅  sb 服务已启动, 使用 nohup 模式运行"
+            debug_print green "✅  sb 服务已启动, 使用 nohup 模式运行"
         fi
     fi
 }
@@ -1917,7 +1926,7 @@ start_nginx_service() {
         systemctl enable nginx > /dev/null 2>&1
         systemctl restart nginx > /dev/null 2>&1 || systemctl start nginx > /dev/null 2>&1
         echo ""
-        green "✅ Nginx 服务已启动,并开启开机自启服务（systemd）"
+        debug_print green "✅ Nginx 服务已启动,并开启开机自启服务（systemd）"
         return 0
     fi
 
@@ -1927,7 +1936,7 @@ start_nginx_service() {
         rc-update add nginx default > /dev/null 2>&1
         rc-service nginx restart > /dev/null 2>&1 || rc-service nginx start > /dev/null 2>&1
         echo ""
-        green "✅ Nginx 服务已启动,并开启开机自启服务（openrc）"
+        debug_print green "✅ Nginx 服务已启动,并开启开机自启服务（openrc）"
         return 0
     fi
 
@@ -1936,7 +1945,7 @@ start_nginx_service() {
     pkill -15 nginx > /dev/null 2>&1
     nohup nginx > /dev/null 2>&1 &
     echo ""
-    green "✅ Nginx 服务已启动, 使用 nohup 模式运行"
+    debug_print green "✅ Nginx 服务已启动, 使用 nohup 模式运行"
     return 0
 }
 
@@ -2115,7 +2124,7 @@ EOF
     systemctl enable argo
     systemctl start argo
     echo ""
-    green "✅ Argo 服务已启动并成功设置开机自启动（systemd）"
+    debug_print green "✅ Argo 服务已启动并成功设置开机自启动（systemd）"
 }
 
 # 安装 Argo 服务（openrc）
@@ -2151,9 +2160,14 @@ depend() { need net; }
 EOF
 
     chmod +x /etc/init.d/argo
-    rc-update add argo default
-    rc-service argo start
-    green "✅ Argo 服务已成功安装并启动（openrc）"
+    if [ "${DEBUG_FLAG:-0}" = "1" ]; then
+        rc-update add argo default
+        rc-service argo start
+    else
+        rc-update add argo default > /dev/null 2>&1
+        rc-service argo start > /dev/null 2>&1
+    fi
+    debug_print green "✅ Argo 服务已成功安装并启动（openrc）"
 }
 
 # 无守护进程启动 Argo
@@ -3175,7 +3189,7 @@ cleandel() {
     # Change to /root to avoid issues when deleting directories
     cd /root 2> /dev/null || cd "$HOME" 2> /dev/null || exit 1
 
-    yellow "开始卸载sing-box/cloudflared流程..."
+    debug_print yellow "开始卸载sing-box/cloudflared流程..."
 
     # 定义要清理的文件夹列表（兼容旧路径和新路径）
     local folders_to_clean=(
@@ -3253,14 +3267,14 @@ cleandel() {
     #  pkill -15 nginx >/dev/null 2>&1
     #  rm -f "$(nginx_conf_path)" 2>/dev/null
 
-    yellow "开始卸载或者清理nginx流程..."
+    debug_print yellow "开始卸载或者清理nginx流程..."
     cleanup_nginx
 
     # 清理文件夹（兼容两个路径）
-    yellow "开始删除文件夹..."
+    debug_print yellow "开始删除文件夹..."
     for folder in "${folders_to_clean[@]}"; do
         if [ -d "$folder" ]; then
-            yellow "正在删除：$folder"
+            debug_print yellow "正在删除：$folder"
             rm -rf "$folder" 2> /dev/null && green "✅ 已删除：$folder" || red "❌ 删除失败：$folder"
         fi
     done
@@ -3366,12 +3380,12 @@ install_step() {
         command -v netfilter-persistent > /dev/null 2>&1 && netfilter-persistent save > /dev/null 2>&1
         mkdir -p /etc/iptables 2> /dev/null
         command -v iptables-save > /dev/null 2>&1 && iptables-save > /etc/iptables/rules.v4 2> /dev/null
-        echo "iptables执行开放所有端口 (Debian/Ubuntu)"
+        debug_print echo "iptables执行开放所有端口 (Debian/Ubuntu)"
     elif [[ "$os_name" == *"Alpine"* ]]; then
         # Alpine没有netfilter-persistent，可以直接保存iptables规则
         mkdir -p /etc/iptables 2> /dev/null
         command -v iptables-save > /dev/null 2>&1 && iptables-save > /etc/iptables/rules.v4 2> /dev/null
-        echo "iptables执行开放所有端口 (Alpine)"
+        debug_print echo "iptables执行开放所有端口 (Alpine)"
     else
         echo "不支持此操作系统"
     fi
