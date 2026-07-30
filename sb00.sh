@@ -3025,7 +3025,8 @@ cip() {
     if grep -q "hy2-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
         port_hy2=$(cat "$SINGBOX_FOLDER_PATH/port_hy2")
         hy_sni=$(cat "$SINGBOX_FOLDER_PATH/hy_sni")
-        hy2_link="hysteria2://$uuid@$server_ip:$port_hy2?security=tls&alpn=h3&insecure=1&allowInsecure=1&sni=${hy_sni}#${sxname}hy2-$hostname"
+        SHA256_hy2=$(openssl x509 -in "$SINGBOX_FOLDER_PATH/cert.pem" -outform DER 2>/dev/null | sha256sum | awk '{print $1}')
+        hy2_link="hysteria2://$uuid@$server_ip:$port_hy2?security=tls&alpn=h3&insecure=0&allowInsecure=0&pinSHA256=${SHA256_hy2}&sni=${hy_sni}#${sxname}hy2-$hostname"
         yellow "💣【 Hysteria2 】(直连协议)"
         green "$hy2_link"
         append_jh "$hy2_link"
