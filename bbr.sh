@@ -11,6 +11,9 @@ SYSCTL_FILE="${SYSCTL_FILE:-/etc/sysctl.d/99-singleflow-tcp-optimization.conf}"
 SERVICE_FILE="${SERVICE_FILE:-}"
 SERVICE_NAME="singleflow-fq-quantum"
 NETPLAN_FILE="${NETPLAN_FILE:-}"
+
+VERSION="1.1.0(2026-07-31)"
+AUTHOR="jyucoeng"
 INTERFACES_FILE="${INTERFACES_FILE:-}"
 IFACE="${IFACE:-}"
 
@@ -46,6 +49,8 @@ get_service_file() {
     echo "${SERVICE_FILE:-/etc/systemd/system/${SERVICE_NAME}.service}"
   fi
 }
+
+green() { echo -e "\e[1;32m$1\033[0m"; }
 
 need_root() {
   if [[ "${EUID}" -ne 0 ]]; then
@@ -470,22 +475,16 @@ PY
 }
 
 write_sysctl() {
-  cat > "${SYSCTL_FILE}" <<EOF
-net.ipv4.tcp_congestion_control = bbr
-net.core.default_qdisc = fq
-net.ipv4.tcp_wmem = 4096 16384 ${TCP_WMEM_MAX}
-net.ipv4.tcp_rmem = 4096 131072 ${TCP_RMEM_MAX}
-net.ipv4.tcp_limit_output_bytes = ${TCP_LIMIT_OUTPUT_BYTES}
-EOF
-  if [[ "$(detect_init)" == "openrc" ]]; then
-    rc-service sysctl restart 2>/dev/null || {
-      for f in /etc/sysctl.d/*.conf; do
-        [ -f "$f" ] && sysctl -p "$f"
-      done
-    }
-  else
-    sysctl --system >/tmp/singleflow-sysctl.log
-  fi
+  {
+    echo "net.ipv4.tcp_congestion_control = bbr"
+    if [[ -f /proc/sys/net/core/default_qdisc ]]; then
+      echo "net.core.default_qdisc = fq"
+    fi
+    echo "net.ipv4.tcp_wmem = 4096 16384 ${TCP_WMEM_MAX}"
+    echo "net.ipv4.tcp_rmem = 4096 131072 ${TCP_RMEM_MAX}"
+    echo "net.ipv4.tcp_limit_output_bytes = ${TCP_LIMIT_OUTPUT_BYTES}"
+  } > "${SYSCTL_FILE}"
+  sysctl -p "${SYSCTL_FILE}" 2>/dev/null || true
 }
 
 write_qdisc_service() {
@@ -537,7 +536,7 @@ EOF
 
   daemon_reload
   service_enable "$(basename "${svc_file}")"
-  service_restart "$(basename "${svc_file}")"
+  service_restart "$(basename "${svc_file}")" || true
 }
 
 restart_network() {
@@ -682,9 +681,11 @@ install_optimization() {
   
   ensure_bbr_module
   write_sysctl
+  modprobe sch_fq 2>/dev/null || true
   write_qdisc_service "${iface}"
   restart_network
   show_status "${iface}" "${config_type}" "${config_file}"
+  green "感谢使用，再见👋"
 }
 
 uninstall_optimization() {
@@ -761,12 +762,16 @@ uninstall_optimization() {
   echo "========== 卸载完成 =========="
   echo "网络和 TCP 设置已还原为默认值。"
   echo
+  green "感谢使用，再见👋"
 }
 
 show_menu() {
   echo
   echo "╔═══════════════════════════════════╗"
   echo "            BBR性能优化工具           "
+  echo "╠═══════════════════════════════════╣"
+  printf "   作者: %-25s\\n" "${AUTHOR}"
+  printf "   版本: %-25s\\n" "${VERSION}"
   echo "╚═══════════════════════════════════╝"
   echo
   echo "请选择操作:"
@@ -791,9 +796,9 @@ main() {
       3)
         check_current_status
         ;;
-      4)
-        echo "退出程序。"
-        exit 0
+       4)
+         echo "退出程序。"
+         exit 0
         ;;
       *)
         echo "错误：无效的选择，请输入 1-4 之间的数字。"
