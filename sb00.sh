@@ -1092,7 +1092,13 @@ upsingbox() {
     # # 自定义库（旧源），如需切回取消注释下面这行，注释掉官方下载部分
     # local url="https://github.com/jyucoeng/singbox-tools/releases/download/singbox/sing-box-$cpu"
 
-    local archive="sing-box-${sb_ver}-linux-${cpu}.tar.gz"
+    # Alpine (musl) 需使用 musl 编译的二进制
+    local sb_lib_suffix=""
+    if [ -f /etc/alpine-release ]; then
+        sb_lib_suffix="-musl"
+    fi
+
+    local archive="sing-box-${sb_ver}-linux-${cpu}${sb_lib_suffix}.tar.gz"
     local url="https://github.com/SagerNet/sing-box/releases/download/v${sb_ver}/${archive}"
     local tmp_archive="/tmp/${archive}"
 
@@ -1110,7 +1116,7 @@ upsingbox() {
         red "❌ 解压失败"
         exit 1
     }
-    mv "/tmp/sing-box-${sb_ver}-linux-${cpu}/sing-box" "$SINGBOX_FOLDER_PATH/sing-box"
+    mv "/tmp/sing-box-${sb_ver}-linux-${cpu}${sb_lib_suffix}/sing-box" "$SINGBOX_FOLDER_PATH/sing-box"
     rm -f "$tmp_archive"
     rm -rf "/tmp/sing-box-${sb_ver}-linux-${cpu}" 2> /dev/null || true
 
