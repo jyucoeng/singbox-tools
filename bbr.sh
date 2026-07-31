@@ -493,6 +493,8 @@ write_qdisc_service() {
   init="$(detect_init)"
   local svc_file
   svc_file="$(get_service_file "$init")"
+  local tc_path
+  tc_path="$(command -v tc)"
 
   if [[ "$init" == "openrc" ]]; then
     cat > "${svc_file}" <<EOF
@@ -505,13 +507,13 @@ depend() {
 
 start() {
   ebegin "Setting fq qdisc on ${iface}"
-  /usr/sbin/tc qdisc add dev ${iface} root fq quantum ${FQ_QUANTUM} initial_quantum ${FQ_INITIAL_QUANTUM}
+  ${tc_path} qdisc add dev ${iface} root fq quantum ${FQ_QUANTUM} initial_quantum ${FQ_INITIAL_QUANTUM}
   eend \$?
 }
 
 stop() {
   ebegin "Removing fq qdisc from ${iface}"
-  /usr/sbin/tc qdisc del dev ${iface} root
+  ${tc_path} qdisc del dev ${iface} root
   eend \$?
 }
 EOF
@@ -525,8 +527,8 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStartPre=-/usr/sbin/tc qdisc del dev ${iface} root
-ExecStart=/usr/sbin/tc qdisc add dev ${iface} root fq quantum ${FQ_QUANTUM} initial_quantum ${FQ_INITIAL_QUANTUM}
+ExecStartPre=-${tc_path} qdisc del dev ${iface} root
+ExecStart=${tc_path} qdisc add dev ${iface} root fq quantum ${FQ_QUANTUM} initial_quantum ${FQ_INITIAL_QUANTUM}
 RemainAfterExit=yes
 
 [Install]
