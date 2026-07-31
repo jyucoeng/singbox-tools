@@ -1086,7 +1086,8 @@ set_sbyx() {
 }
 
 # download Sing-box
-upsingbox() {
+# 检测已安装版本，需要更新时下载并安装 sing-box 二进制
+update_singbox() {
     local sb_ver="1.13.14"
 
     # 版本检测：已安装且版本匹配则跳过下载
@@ -1117,11 +1118,11 @@ upsingbox() {
         || (wget -O "$tmp_archive" --tries=2 --timeout=120 --dns-timeout=5 --read-timeout=60 "$url")
 
     if [ ! -s "$tmp_archive" ]; then
-        debug_log "【调试】upsingbox：下载失败：文件为空"
+        debug_log "【调试】update_singbox：下载失败：文件为空"
         red "❌ 下载失败：${url}"
         exit 1
     fi
-    debug_log "【调试】upsingbox：下载完成，解压中…"
+    debug_log "【调试】update_singbox：下载完成，解压中…"
 
     tar -xzf "$tmp_archive" -C /tmp/ 2> /dev/null || {
         red "❌ 解压失败"
@@ -1133,13 +1134,13 @@ upsingbox() {
 
     chmod +x "$SINGBOX_FOLDER_PATH/sing-box"
     sbcore=$("$SINGBOX_FOLDER_PATH/sing-box" version 2> /dev/null | head -1 | awk '/version/{print $NF}')
-    debug_log "【调试】upsingbox：Sing-box 版本为 $sbcore"
+    debug_log "【调试】update_singbox：Sing-box 版本为 $sbcore"
     green "✅  已安装 Sing-box 正式版内核：${sbcore}"
 }
 # Generate UUID and save to file
 insuuid() {
     if [ ! -e "$SINGBOX_FOLDER_PATH/sing-box" ]; then
-        upsingbox
+        update_singbox
     fi
 
     if [ -z "$uuid" ] && [ ! -e "$SINGBOX_FOLDER_PATH/uuid" ]; then
@@ -1510,8 +1511,18 @@ installsb() {
     echo
     echo "=========开始下载/安装Sing-box内核========="
 
-    if [ ! -e "$SINGBOX_FOLDER_PATH/sing-box" ]; then
-        upsingbox
+    # 版本检测：已安装且版本匹配则提示跳过
+    if [ -x "$SINGBOX_FOLDER_PATH/sing-box" ]; then
+        local current_ver sb_ver
+        sb_ver="1.13.14"
+        current_ver=$("$SINGBOX_FOLDER_PATH/sing-box" version 2> /dev/null | head -1 | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')
+        if [ "$current_ver" = "$sb_ver" ]; then
+            green "✅ Sing-box 已安装 (v${current_ver})，跳过下载"
+        else
+            update_singbox
+        fi
+    else
+        update_singbox
     fi
 
     insuuid
@@ -2067,10 +2078,22 @@ ensure_cloudflared_if_needed() {
 # 确保 cloudflared
 ensure_cloudflared() {
     debug_log "【调试】ensure_cloudflared：开始下载/安装 cloudflared"
-    # 已存在就不重复下载
+
+    # 已存在 → 版本比对
     if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ]; then
-        green "✅ Cloudflared 已安装，跳过下载"
-        return 0
+        local local_ver latest_ver
+        local_ver=$("$SINGBOX_FOLDER_PATH/cloudflared" --version 2>/dev/null | grep -oE '[0-9]{4}\.[0-9]+\.[0-9]+' | head -1)
+        latest_ver=$(curl -sI --max-time 10 "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$cpu" 2>/dev/null | grep -i 'location:' | grep -oE '[0-9]{4}\.[0-9]+\.[0-9]+')
+        if [ -n "$local_ver" ] && [ -n "$latest_ver" ] && [ "$local_ver" = "$latest_ver" ]; then
+            green "✅ Cloudflared 已安装最新版 (v${local_ver})，跳过下载"
+            return 0
+        fi
+        if [ -n "$latest_ver" ]; then
+            yellow "Cloudflared 版本不匹配 (当前: ${local_ver:-unknown}，最新: ${latest_ver})，开始下载新版…"
+        else
+            yellow "Cloudflared 版本检查失败（网络问题），保留现有版本"
+            return 0
+        fi
     fi
 
     debug_log "【调试】ensure_cloudflared：检查 cloudflared 是否已存在"
@@ -2472,7 +2495,21 @@ EOF
     fi
 
     debug_log "【调试】pick_server_ip_for_install：最终选择的服务器IP，server_ip=$server_ip"
-    # 9) 最终写入：IPv6 加 []，写入 $SINGBOX_FOLDER_PATH/server_ip
+
+    # 9) 网络 / out_ip 都拿不到合法 IP 时，复用已有 server_ip 文件（无网络兜底）
+    if [ -z "$server_ip" ] || ! is_valid_ip_simple "$server_ip"; then
+        if [ -s "$SINGBOX_FOLDER_PATH/server_ip" ]; then
+            local file_ip
+            file_ip="$(cat "$SINGBOX_FOLDER_PATH/server_ip" 2>/dev/null || true)"
+            file_ip="$(strip_ip_brackets_all "$file_ip")"
+            if is_valid_ip_simple "$file_ip" && [ -n "$file_ip" ]; then
+                yellow "⚠️ 网络获取 IP 失败，复用已有 server_ip 文件：${file_ip}"
+                server_ip="$file_ip"
+            fi
+        fi
+    fi
+
+    # 10) 最终写入：IPv6 加 []，写入 $SINGBOX_FOLDER_PATH/server_ip
     mkdir -p "$SINGBOX_FOLDER_PATH" 2> /dev/null || true
 
     local ip_final
@@ -3590,7 +3627,7 @@ main() {
     if [ "$_cmd" = "ups" ]; then
         pkill -15 -f "$SINGBOX_FOLDER_PATH/sing-box" 2> /dev/null
 
-        upsingbox && sbrestart && echo "Sing-box内核更新完成" && sleep 2 && cip
+        update_singbox && sbrestart && echo "Sing-box内核更新完成" && sleep 2 && cip
         exit
     fi
     # 重启sing-box和cloudflared

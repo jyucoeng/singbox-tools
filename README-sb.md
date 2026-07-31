@@ -388,6 +388,10 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ## 版本变更信息
 
+v1.0.13
+ - 命令参数大小写不敏感（`Del`/`DELALL`/`INS` 等均支持）
+ - `ensure_cloudflared` 增加版本对比：HEAD 请求获取最新版号，同版本时跳过下载
+
 v1.0.12
  - `del` 改为保留 sing-box/cloudflared 二进制（只删配置），新增 `delall` 命令完全删除
  - `rep` 复用已有二进制，不再每次重新下载；`upsingbox` 增加版本检测，版本一致则跳过下载
