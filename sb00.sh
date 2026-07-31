@@ -1089,6 +1089,17 @@ set_sbyx() {
 upsingbox() {
     local sb_ver="1.13.14"
 
+    # 版本检测：已安装且版本匹配则跳过下载
+    if [ -x "$SINGBOX_FOLDER_PATH/sing-box" ]; then
+        local current_ver
+        current_ver=$("$SINGBOX_FOLDER_PATH/sing-box" version 2> /dev/null | head -1 | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')
+        if [ "$current_ver" = "$sb_ver" ]; then
+            green "✅ Sing-box 已安装最新版 (v${sb_ver})，跳过下载"
+            return 0
+        fi
+        yellow "Sing-box 版本不匹配 (当前: ${current_ver:-unknown}，期望: ${sb_ver})，开始下载新版..."
+    fi
+
     # # 自定义库（旧源），如需切回取消注释下面这行，注释掉官方下载部分
     # local url="https://github.com/jyucoeng/singbox-tools/releases/download/singbox/sing-box-$cpu"
 
@@ -2058,6 +2069,7 @@ ensure_cloudflared() {
     debug_log "【调试】ensure_cloudflared：开始下载/安装 cloudflared"
     # 已存在就不重复下载
     if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ]; then
+        green "✅ Cloudflared 已安装，跳过下载"
         return 0
     fi
 
@@ -3213,7 +3225,7 @@ cleanup_nginx() {
 
 # Remove singbox folder
 cleandel() {
-    # Change to /root to avoid issues when deleting directories
+    local mode="${1:-del}"  # del（保留二进制）/ delall（全部删除）
     cd /root 2> /dev/null || cd "$HOME" 2> /dev/null || exit 1
 
     debug_print yellow "开始卸载sing-box/cloudflared流程..."
@@ -3244,15 +3256,7 @@ cleandel() {
     pkill -15 -f "$OLD_SINGBOX_FOLDER/sing-box" 2> /dev/null
     pkill -15 -f "$OLD_SINGBOX_FOLDER/cloudflared" 2> /dev/null
 
-    # 从配置文件中删除包含 'singbox' 的行
-    # sed -i '/.*singbox.*/d' ~/.bashrc
-    # sed -i '/.*export PATH="\$HOME\/bin:\$PATH".*/d' ~/.bashrc
-
-    # 立即应用 .bashrc 的修改
-    #. ~/.bashrc 2>/dev/null
-
     # 处理 crontab，兼容 Debian 和 Alpine
-    # Debian/Ubuntu 和 Alpine 都支持 crontab，但需要检查 crontab 是否存在
     crontab -l > /tmp/crontab.tmp 2> /dev/null || touch /tmp/crontab.tmp
     sed -i '/.*singbox.*/d' /tmp/crontab.tmp
     sed -i '/.*agsb.*/d' /tmp/crontab.tmp
@@ -3291,18 +3295,26 @@ cleandel() {
     fi
 
     # 清理 nginx
-    #  pkill -15 nginx >/dev/null 2>&1
-    #  rm -f "$(nginx_conf_path)" 2>/dev/null
-
     debug_print yellow "开始卸载或者清理nginx流程..."
     cleanup_nginx
 
-    # 清理文件夹（兼容两个路径）
-    debug_print yellow "开始删除文件夹..."
+    # 清理文件夹
     for folder in "${folders_to_clean[@]}"; do
         if [ -d "$folder" ]; then
-            debug_print yellow "正在删除：$folder"
-            rm -rf "$folder" 2> /dev/null && green "✅ 已删除：$folder" || red "❌ 删除失败：$folder"
+            if [ "$mode" = "delall" ]; then
+                debug_print yellow "正在删除（全部）：$folder"
+                rm -rf "$folder" 2> /dev/null && green "✅ 已删除：$folder" || red "❌ 删除失败：$folder"
+            else
+                debug_print yellow "正在清理配置（保留 sing-box/cloudflared 二进制）：$folder"
+                for item in "$folder"/*; do
+                    [ -e "$item" ] || continue
+                    case "$(basename "$item")" in
+                        sing-box|cloudflared) continue ;;
+                        *) rm -rf "$item" 2>/dev/null ;;
+                    esac
+                done
+                green "✅ 已清理配置：$folder（二进制已保留）"
+            fi
         fi
     done
 
@@ -3550,10 +3562,16 @@ main() {
     fi
 
     # 卸载服务
+    if [ "$1" = "delall" ]; then
+        cleandel "delall"
+        echo "卸载完成（全部删除）"
+        showmode
+        exit
+    fi
+
     if [ "$1" = "del" ]; then
         cleandel
-        rm -rf "$SINGBOX_FOLDER_PATH"
-        echo "卸载完成"
+        echo "卸载完成（二进制已保留）"
         showmode
         exit
     fi
@@ -3599,9 +3617,8 @@ main() {
     # 覆盖式安装
     if [ "$1" = "rep" ]; then
         green "开始覆盖式安装流程..."
-        green "1、即将开始清理操作..."
+        green "1、即将开始清理操作（保留二进制）..."
         cleandel
-        rm -rf "$SINGBOX_FOLDER_PATH"/{sb.json,argo_domain,sbargotoken,argo.log,argoport,name,short_id,cdn_host,hy_sni,vl_sni,tu_sni,any_sni,vl_sni_pt,cdn_pt}
         green "1.1、清理操作完成..."
         sleep 2
 
