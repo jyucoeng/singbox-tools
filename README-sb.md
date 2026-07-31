@@ -380,6 +380,32 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 | hypt + vlrt + tupt + anypt + argo | **5（hy2、vless、tuic、anytls直连+Argo-vmess或者Argo-trojan）** |
 | hypt + vlrt + tupt + anypt + socks5pt + argo | **6（hy2、vless、tuic、anytls、socks5直连+Argo-vmess或者Argo-trojan）** |
 
+## 日志查看
+
+sing-box 和 cloudflared 启动失败时，可以通过下面命令定位问题。
+
+> 以下 `doraemon` 为默认安装目录，若安装时改了 `sb_dir`，请替换成实际目录。
+
+### sing-box 日志
+
+```bash
+# 实时查看 sing-box 运行日志（推荐，通用所有模式）
+tail -f /root/doraemon/singbox.log
+
+# 查看最新 200 行
+tail -200 /root/doraemon/singbox.log
+```
+
+### cloudflared 日志
+
+```bash
+# 实时查看 cloudflared 运行日志（nohup / 临时隧道模式）
+tail -f /root/doraemon/argo.log
+
+# 查看最新 200 行
+tail -200 /root/doraemon/argo.log
+```
+
 ## 感谢
 感谢以下开发者的贡献：
 
