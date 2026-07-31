@@ -2485,20 +2485,27 @@ EOF
     v4_local="$(strip_ip_brackets_all "$v4_local")"
     v6_local="$(strip_ip_brackets_all "$v6_local")"
 
-    # B) 获取地区（按 v4/v6 分开探测）
+    # B) 获取地区（v4/v6 并发探测，缩短超时）
     local v4dq="" v6dq=""
-    v4dq="$(
-        (curl -s4 -m5 --connect-timeout 5 -k https://ip.fm 2> /dev/null \
-            | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1) \
-            || (wget -4 -qO- --tries=2 --timeout=5 https://ip.fm 2> /dev/null \
-                | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1)
-    )"
-    v6dq="$(
-        (curl -s6 -m5 --connect-timeout 5 -k https://ip.fm 2> /dev/null \
-            | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1) \
-            || (wget -6 -qO- --tries=2 --timeout=5 https://ip.fm 2> /dev/null \
-                | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1)
-    )"
+    local v4_tmp v6_tmp
+    v4_tmp="$(mktemp /tmp/_geo_v4.XXXXXX 2>/dev/null || echo "/tmp/_geo_v4")"
+    v6_tmp="$(mktemp /tmp/_geo_v6.XXXXXX 2>/dev/null || echo "/tmp/_geo_v6")"
+    {
+      curl -s4 -m3 --connect-timeout 3 -k https://ip.fm 2>/dev/null \
+        | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1 > "$v4_tmp"
+      [ ! -s "$v4_tmp" ] && wget -4 -qO- --tries=1 --timeout=3 https://ip.fm 2>/dev/null \
+        | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1 > "$v4_tmp"
+    } &
+    {
+      curl -s6 -m3 --connect-timeout 3 -k https://ip.fm 2>/dev/null \
+        | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1 > "$v6_tmp"
+      [ ! -s "$v6_tmp" ] && wget -6 -qO- --tries=1 --timeout=3 https://ip.fm 2>/dev/null \
+        | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1 > "$v6_tmp"
+    } &
+    wait
+    v4dq="$(cat "$v4_tmp" 2>/dev/null || true)"
+    v6dq="$(cat "$v6_tmp" 2>/dev/null || true)"
+    rm -f "$v4_tmp" "$v6_tmp"
 
     [ -z "$v4dq" ] && v4dq="未知"
     [ -z "$v6dq" ] && v6dq="未知"
