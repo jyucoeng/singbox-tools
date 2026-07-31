@@ -1123,20 +1123,17 @@ update_singbox() {
     if [ ! -s "$tmp_archive" ]; then
         debug_log "【调试】update_singbox：下载失败：文件为空"
         red "❌ 下载失败：${url}"
-        return 1
+        exit 1
     fi
     debug_log "【调试】update_singbox：下载完成，解压中…"
 
     tar -xzf "$tmp_archive" -C /tmp/ 2> /dev/null || {
         red "❌ 解压失败"
-        return 1
+        exit 1
     }
-    mv "/tmp/sing-box-${sb_ver}-linux-${cpu}${sb_lib_suffix}/sing-box" "$SINGBOX_FOLDER_PATH/sing-box" || {
-        red "❌ 移动 sing-box 二进制失败"
-        return 1
-    }
+    mv "/tmp/sing-box-${sb_ver}-linux-${cpu}${sb_lib_suffix}/sing-box" "$SINGBOX_FOLDER_PATH/sing-box"
     rm -f "$tmp_archive"
-    rm -rf "/tmp/sing-box-${sb_ver}-linux-${cpu}${sb_lib_suffix}" 2> /dev/null || true
+    rm -rf "/tmp/sing-box-${sb_ver}-linux-${cpu}" 2> /dev/null || true
 
     chmod +x "$SINGBOX_FOLDER_PATH/sing-box"
     sbcore=$("$SINGBOX_FOLDER_PATH/sing-box" version 2> /dev/null | head -1 | awk '/version/{print $NF}')
@@ -2089,8 +2086,7 @@ ensure_cloudflared() {
     if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ]; then
         local local_ver latest_ver
         local_ver=$("$SINGBOX_FOLDER_PATH/cloudflared" --version 2>/dev/null | grep -oE '[0-9]{4}\.[0-9]+\.[0-9]+' | head -1)
-        # HEAD 请求跟随重定向，从最终 URL 中提取最新版本号（只取响应头，不下载文件体）
-        latest_ver=$(curl -sIL --max-time 10 -o /dev/null -w '%{url_effective}' "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$cpu" 2>/dev/null | grep -oE '[0-9]{4}\.[0-9]+\.[0-9]+' | head -1)
+        latest_ver=$(curl -sI --max-time 10 "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$cpu" 2>/dev/null | grep -i 'location:' | grep -oE '[0-9]{4}\.[0-9]+\.[0-9]+')
         if [ -n "$local_ver" ] && [ -n "$latest_ver" ] && [ "$local_ver" = "$latest_ver" ]; then
             green "✅ Cloudflared 已安装最新版 (v${local_ver})，跳过下载"
             return 0
@@ -2516,13 +2512,7 @@ EOF
         fi
     fi
 
-    # 10) 全部来源都拿不到合法 IP 时，直接报错退出，避免写入空文件生成坏节点
-    if [ -z "$server_ip" ] || ! is_valid_ip_simple "$server_ip"; then
-        red "❌ 无法获取有效的服务器 IP（网络 / out_ip / server_ip 文件均无效）"
-        return 1
-    fi
-
-    # 11) 最终写入：IPv6 加 []，写入 $SINGBOX_FOLDER_PATH/server_ip
+    # 10) 最终写入：IPv6 加 []，写入 $SINGBOX_FOLDER_PATH/server_ip
     mkdir -p "$SINGBOX_FOLDER_PATH" 2> /dev/null || true
 
     local ip_final
@@ -2638,7 +2628,7 @@ ins() {
     sbbout
 
     # 把ip写入server_ip
-    write_server_ip || exit 1
+    write_server_ip
 
     # 2. Nginx（按需：subscribe=true 或启用 argo 才需要）
     ensure_nginx_if_needed || exit 1
@@ -3195,7 +3185,6 @@ cip() {
     if [ -n "$argodomain" ]; then
         vlvm=$(cat "$SINGBOX_FOLDER_PATH/vlvm" 2> /dev/null)
         uuid=$(cat "$SINGBOX_FOLDER_PATH/uuid")
-        local vmatls_link1="" tratls_link1=""
         if [ "$vlvm" = "Vmess" ]; then
             vmatls_link1="vmess://$(echo "{\"v\":\"2\",\"ps\":\"${sxname}vmess-ws-tls-argo-$hostname-${cdn_pt}\",\"add\":\"${cdn_host}\",\"port\":\"${cdn_pt}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":\"$argodomain\",\"path\":\"/${uuid}-vm\",\"tls\":\"tls\",\"sni\":\"$argodomain\"}" | base64 | tr -d '\n\r')"
 
@@ -3314,11 +3303,11 @@ cleandel() {
     crontab /tmp/crontab.tmp > /dev/null 2>&1
     rm /tmp/crontab.tmp
 
-    # 删除快捷命令（兼容两个名称，可能是软链接也可能是目录）
-    if [ -e "$HOME/bin/singbox" ]; then
+    # 删除快捷命令（兼容两个名称）
+    if [ -d "$HOME/bin/singbox" ]; then
         rm -rf "$HOME/bin/singbox"
     fi
-    if [ -e "$HOME/bin/agsb" ]; then
+    if [ -d "$HOME/bin/agsb" ]; then
         rm -rf "$HOME/bin/agsb"
     fi
 
@@ -3379,17 +3368,10 @@ cleandel() {
 # Restart sing-box
 sbrestart() {
     pkill -15 -f "$SINGBOX_FOLDER_PATH/sing-box" 2> /dev/null
-    # 等待旧进程退出，避免新实例绑定端口失败
-    local i
-    for i in 1 2 3 4 5; do
-        pgrep -f "$SINGBOX_FOLDER_PATH/sing-box" > /dev/null 2>&1 || break
-        sleep 1
-    done
 
-    # 有对应服务单元才用 systemd/openrc 重启，否则走 nohup
-    if has_systemd && [ -f /etc/systemd/system/sb.service ]; then
+    if has_systemd; then
         systemctl restart sb
-    elif command -v rc-service > /dev/null 2>&1 && [ -f /etc/init.d/sing-box ]; then
+    elif command -v rc-service > /dev/null 2>&1; then
         rc-service sing-box restart
     else
         nohup "$SINGBOX_FOLDER_PATH/sing-box" run -c "$SINGBOX_FOLDER_PATH/sb.json" > /dev/null 2>&1 &
@@ -3400,17 +3382,11 @@ sbrestart() {
 argorestart() {
     # 先尽力停止现有 cloudflared 进程（原版行为）
     pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null
-    # 等待旧进程退出，避免新实例绑定端口失败
-    local i
-    for i in 1 2 3 4 5; do
-        pgrep -f "$SINGBOX_FOLDER_PATH/cloudflared" > /dev/null 2>&1 || break
-        sleep 1
-    done
 
     # ===============================
     # systemd 管理
     # ===============================
-    if has_systemd && [ -f /etc/systemd/system/argo.service ]; then
+    if has_systemd; then
         systemctl restart argo
         return
     fi
@@ -3418,7 +3394,7 @@ argorestart() {
     # ===============================
     # openrc 管理
     # ===============================
-    if command -v rc-service > /dev/null 2>&1 && [ -f /etc/init.d/argo ]; then
+    if command -v rc-service > /dev/null 2>&1; then
         rc-service argo restart
         return
     fi
@@ -3466,10 +3442,7 @@ install_step() {
     os_name=$(awk -F= '/^NAME/{print $2}' /etc/os-release)
 
     debug_log "【调试】开始安装各种乱七八糟的依赖"
-    install_deps || {
-        red "❌ 关键依赖安装失败，终止安装"
-        return 1
-    }
+    install_deps
 
     debug_log "【调试】安装各种乱七八糟的依赖完成"
 
@@ -3493,8 +3466,7 @@ install_step() {
         command -v iptables-save > /dev/null 2>&1 && iptables-save > /etc/iptables/rules.v4 2> /dev/null
         debug_print echo "iptables执行开放所有端口 (Alpine)"
     else
-        red "❌ 不支持此操作系统，终止安装"
-        return 1
+        echo "不支持此操作系统"
     fi
     ins
     green "Singbox脚本安装完成！即将打印节点信息……"
@@ -3659,11 +3631,9 @@ main() {
     fi
     # 更新sing-box内核
     if [ "$_cmd" = "ups" ]; then
-        if ! update_singbox; then
-            red "❌ Sing-box 内核更新失败，已保留原版本运行"
-            exit 1
-        fi
-        sbrestart && echo "Sing-box内核更新完成" && sleep 2 && cip
+        pkill -15 -f "$SINGBOX_FOLDER_PATH/sing-box" 2> /dev/null
+
+        update_singbox && sbrestart && echo "Sing-box内核更新完成" && sleep 2 && cip
         exit
     fi
     # 重启sing-box和cloudflared
@@ -3713,14 +3683,17 @@ main() {
     fi
 
     # 无参数：只展示帮助/菜单
-    if [ -z "$_cmd" ]; then
+    if [ -z "$1" ]; then
         showmode
         exit
     fi
 
-    # 未知命令：提示并展示帮助/菜单
-    yellow "❓ 未知命令：${1}（支持 ins/rep/del/delall/list/ups/res/sub/autostart 等）"
+    # 无效命令提示
+    echo
+    red "❌ 无效命令：$1"
+    yellow "可用命令：ins / rep / del / delall / list / sub / res / ups / autostart / autostart_off / nginx_start / nginx_stop / nginx_restart / nginx_status"
     showmode
+    exit 1
 
 }
 
