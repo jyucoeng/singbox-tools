@@ -3519,20 +3519,24 @@ main() {
 
     check_port_conflicts_or_exit
 
+    # 命令转小写，支持大小写不敏感
+    local _cmd
+    _cmd="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+
     # 启动自定义端口
-    if [ "$1" = "autostart" ]; then
+    if [ "$_cmd" = "autostart" ]; then
         enable_autostart
         exit
     fi
 
     # 启动自定义端口
-    if [ "$1" = "autostart_off" ]; then
+    if [ "$_cmd" = "autostart_off" ]; then
         disable_autostart
         exit
     fi
 
     # 启动 nginx
-    if [ "$1" = "nginx_start" ]; then
+    if [ "$_cmd" = "nginx_start" ]; then
         nginx_start
         green "Nginx 已完成启动操作！"
         nginx_status
@@ -3540,7 +3544,7 @@ main() {
     fi
 
     # 停止 nginx
-    if [ "$1" = "nginx_stop" ]; then
+    if [ "$_cmd" = "nginx_stop" ]; then
         nginx_stop
         green "Nginx 已完成停止操作！"
         nginx_status
@@ -3548,7 +3552,7 @@ main() {
     fi
 
     # 重启 nginx
-    if [ "$1" = "nginx_restart" ]; then
+    if [ "$_cmd" = "nginx_restart" ]; then
         nginx_restart
         green "Nginx 已完成重启操作！"
         nginx_status
@@ -3556,20 +3560,20 @@ main() {
     fi
 
     # 查看 nginx 状态
-    if [ "$1" = "nginx_status" ]; then
+    if [ "$_cmd" = "nginx_status" ]; then
         nginx_status
         exit
     fi
 
     # 卸载服务
-    if [ "$1" = "delall" ]; then
+    if [ "$_cmd" = "delall" ]; then
         cleandel "delall"
         echo "卸载完成（全部删除）"
         showmode
         exit
     fi
 
-    if [ "$1" = "del" ]; then
+    if [ "$_cmd" = "del" ]; then
         cleandel
         echo "卸载完成（二进制已保留）"
         showmode
@@ -3577,20 +3581,20 @@ main() {
     fi
 
     # 查看可用的节点
-    if [ "$1" = "list" ]; then
+    if [ "$_cmd" = "list" ]; then
 
         cip "$2"
         exit
     fi
     # 更新sing-box内核
-    if [ "$1" = "ups" ]; then
+    if [ "$_cmd" = "ups" ]; then
         pkill -15 -f "$SINGBOX_FOLDER_PATH/sing-box" 2> /dev/null
 
         upsingbox && sbrestart && echo "Sing-box内核更新完成" && sleep 2 && cip
         exit
     fi
     # 重启sing-box和cloudflared
-    if [ "$1" = "res" ]; then
+    if [ "$_cmd" = "res" ]; then
         sbrestart
         argorestart
         sleep 5 && echo "重启完成" && sleep 3 && cip
@@ -3598,7 +3602,7 @@ main() {
     fi
 
     # 生成/更新/查看订阅文件
-    if [ "$1" = "sub" ]; then
+    if [ "$_cmd" = "sub" ]; then
         # 生成/更新订阅文件 sub.txt（函数内部会打印 subscribe 状态 + 生成结果）
         update_subscription_file
 
@@ -3615,7 +3619,7 @@ main() {
     fi
 
     # 覆盖式安装
-    if [ "$1" = "rep" ]; then
+    if [ "$_cmd" = "rep" ]; then
         green "开始覆盖式安装流程..."
         green "1、即将开始清理操作（保留二进制）..."
         cleandel
@@ -3629,7 +3633,7 @@ main() {
     fi
 
     # 只在明确 ins 时才安装；无参数只显示菜单
-    if [ "$1" = "ins" ]; then
+    if [ "$_cmd" = "ins" ]; then
         yellow "开始安装流程..."
         install_step
         exit

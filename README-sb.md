@@ -348,6 +348,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)  del
 
+> `delall`：与 `del` 效果类似，但会**完全删除** sing-box 文件夹（不保留二进制文件 / 配置），相当于彻底卸载。
 ```
 
 
