@@ -422,7 +422,6 @@ v1.0.12
  - `del` 改为保留 sing-box/cloudflared 二进制（只删配置），新增 `delall` 命令完全删除
  - `rep` 复用已有二进制，不再每次重新下载；`upsingbox` 增加版本检测，版本一致则跳过下载
  - 新增 Alpine 自动适配：自动安装 bash、下载 musl 版 sing-box、使用 OpenRC 管理服务
- - `sb.sh` 头部增加 bash 自检，无需手动装 bash
  - 优化 geo IP 查询：v4/v6 并发探测，超时从 5s→3s，不再卡住后续流程
 
 v1.0.11
