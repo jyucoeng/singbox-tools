@@ -1,4 +1,18 @@
-#!/usr/bin/env bash
+#!/bin/sh
+# 若没有 bash 则自动安装
+if [ -z "${BASH_VERSION}" ]; then
+  if command -v apk >/dev/null 2>&1; then
+    echo "正在安装 bash..."
+    apk add --no-cache bash >/dev/null 2>&1
+  fi
+  if command -v bash >/dev/null 2>&1; then
+    exec bash "$0" "$@"
+  else
+    echo "错误：需要 bash 运行此脚本，请先安装 bash。" >&2
+    exit 1
+  fi
+fi
+
 export LANG=en_US.UTF-8
 
 # ================== 文件夹路径配置 ==================
@@ -8,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.0.11(2026-07-30)"
+VERSION="1.0.12(2026-07-31)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
