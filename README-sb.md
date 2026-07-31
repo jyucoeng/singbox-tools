@@ -39,7 +39,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 ```
 # 环境变量说明
 
-##  1、 如果bash后面跟了一个参数 rep，代表覆盖式安装（会卸载后再安装），你可以用这个改成其他功能，比如del 代表 卸载, list 代表 查看节点，具体有哪些值你可以跑一次安装脚本你就知道怎么用了。
+##  1、 如果bash后面跟了一个参数 rep，代表覆盖式安装（会卸载后再安装），你可以用这个改成其他功能，比如del 代表 卸载(保留二进制文件，比如singbox/cloudflared等的安装二进制文件),dellall 代表全部卸载+删除二进制文件, list 代表 查看节点，具体有哪些值你可以跑一次安装脚本你就知道怎么用了。
 ### bash  sb.sh list key 这里有2个参数 list key，代表显示节点的同时会显示vless Reality的密钥。如果不加key 参数，就只显示节点
 
 ## 2、 uuid=XXXX-xxx-XXXX（可传，也可不传）
