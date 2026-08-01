@@ -1,5 +1,8 @@
 #!/bin/bash
 
+SCRIPT_VERSION="2.1.0(2026-08-01)"
+SCRIPT_AUTHOR="LittleDoraemon"
+
 # 全局配置
 WORKDIR="/opt/mtproxy"
 CONFIG_DIR="$WORKDIR/config"
@@ -311,16 +314,39 @@ install_mtg() {
     fi
     chmod +x "$BIN_DIR/mtg-go"
 
-    read -p "请输入伪装域名 (默认 www.apple.com): " DOMAIN
-    [ -z "$DOMAIN" ] && DOMAIN="www.apple.com"
+    # 无交互安装：优先使用环境变量，缺省自动填充；交互安装：逐项询问
+    if [ -n "$NON_INTERACTIVE" ]; then
+        DOMAIN="${DOMAIN:-www.apple.com}"
+        IP_MODE="${IP_MODE:-v4}"
+        PORT="${PORT:-443}"
+        SECRET="${SECRET:-$(generate_secret)}"
+    else
+        read -p "请输入伪装域名 (默认 www.apple.com): " DOMAIN
+        [ -z "$DOMAIN" ] && DOMAIN="www.apple.com"
+        
+        IP_MODE=$(select_ip_mode)
+        
+        # mtg 双栈模式使用同一端口 (dual-stack 监听)，无需单独输入 IPv6 端口
+        PORT=$(read_valid_port "请输入端口 (默认 443): " "443")
+        
+        # 若已预先设置 SECRET 环境变量则沿用，否则自动生成（保证多次安装密钥一致）
+        [ -z "$SECRET" ] && SECRET=$(generate_secret)
+    fi
     
-    IP_MODE=$(select_ip_mode)
+    case "$IP_MODE" in
+        v4|v6|dual) ;;
+        *) echo -e "${RED}无效的 IP_MODE: $IP_MODE (可选: v4 / v6 / dual)${PLAIN}"; return 1 ;;
+    esac
+    if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+        echo -e "${RED}端口无效: $PORT (必须是 1-65535 之间的数字)${PLAIN}"
+        return 1
+    fi
+    if ! [[ "$SECRET" =~ ^[0-9a-fA-F]{32}$ ]]; then
+        echo -e "${RED}SECRET 必须是 32 位 hex 字符 (a-f/0-9)！当前值: $SECRET${PLAIN}"
+        return 1
+    fi
     
-    # mtg 双栈模式使用同一端口 (dual-stack 监听)，无需单独输入 IPv6 端口
-    PORT=$(read_valid_port "请输入端口 (默认 443): " "443")
-    
-    SECRET=$(generate_secret)
-    echo -e "${GREEN}生成的密钥: $SECRET${PLAIN}"
+    echo -e "${GREEN}密钥: $SECRET${PLAIN}"
 
     create_service_mtg "$PORT" "$SECRET" "$DOMAIN" "$IP_MODE"
     check_service_status mtg
@@ -474,29 +500,72 @@ install_telemt() {
         echo -e "${GREEN}Telemt 版下载成功。${PLAIN}"
     fi
 
-    read -p "请输入伪装域名 (默认 www.apple.com): " DOMAIN
-    [ -z "$DOMAIN" ] && DOMAIN="www.apple.com"
-    
-    IP_MODE=$(select_ip_mode)
-    
-    PORT=$(read_valid_port "请输入端口 (默认 443): " "443")
-    
-    read -p "请为初始管理员设置一个用户名 (默认 admin): " TELEMT_USER
-    [ -z "$TELEMT_USER" ] && TELEMT_USER="admin"
-    
-    SECRET=$(generate_secret)
-    echo -e "${GREEN}生成的客户端连接密钥: $SECRET${PLAIN}"
+    # 无交互安装：优先使用环境变量，缺省自动填充；交互安装：逐项询问
+    if [ -n "$NON_INTERACTIVE" ]; then
+        DOMAIN="${DOMAIN:-www.apple.com}"
+        IP_MODE="${IP_MODE:-v4}"
+        PORT="${PORT:-443}"
+        TELEMT_USER="${TELEMT_USER:-admin}"
+        SECRET="${SECRET:-$(generate_secret)}"
+        NEW_QUOTA="${TELEMT_QUOTA:-}"
+        NEW_EXPIRE="${TELEMT_EXPIRE:-}"
+        SPEED_UP="${TELEMT_SPEED_UP:-}"
+        SPEED_DOWN="${TELEMT_SPEED_DOWN:-}"
+        if [ -n "$SPEED_UP" ]; then
+            [ -z "$SPEED_DOWN" ] && SPEED_DOWN="$SPEED_UP"
+            NEW_SPEED="$SPEED_UP $SPEED_DOWN"
+        else
+            NEW_SPEED=""
+        fi
+    else
+        read -p "请输入伪装域名 (默认 www.apple.com): " DOMAIN
+        [ -z "$DOMAIN" ] && DOMAIN="www.apple.com"
+        
+        IP_MODE=$(select_ip_mode)
+        
+        PORT=$(read_valid_port "请输入端口 (默认 443): " "443")
+        
+        read -p "请为初始管理员设置一个用户名 (默认 admin): " TELEMT_USER
+        [ -z "$TELEMT_USER" ] && TELEMT_USER="admin"
+        
+        # 若已预先设置 SECRET 环境变量则沿用，否则自动生成（保证多次安装密钥一致）
+        [ -z "$SECRET" ] && SECRET=$(generate_secret)
 
-    echo ""
-    read -p "请输入此用户的月度流量配额 (GB为单位, 直接回车表示不启用限流): " NEW_QUOTA
-    NEW_QUOTA=$(echo "$NEW_QUOTA" | tr -d '\r ')
-    if [[ -n "$NEW_QUOTA" && ! "$NEW_QUOTA" =~ ^[0-9.]+$ ]]; then
-        echo -e "${RED}输入有误，配额必须是数字，将默认关闭该用户限流。${PLAIN}"
-        NEW_QUOTA=""
+        echo ""
+        read -p "请输入此用户的月度流量配额 (GB为单位, 直接回车表示不启用限流): " NEW_QUOTA
+        NEW_QUOTA=$(echo "$NEW_QUOTA" | tr -d '\r ')
+        if [[ -n "$NEW_QUOTA" && ! "$NEW_QUOTA" =~ ^[0-9.]+$ ]]; then
+            echo -e "${RED}输入有误，配额必须是数字，将默认关闭该用户限流。${PLAIN}"
+            NEW_QUOTA=""
+        fi
+        
+        read -p "请输入此用户的强制到期日期 (格式 2026-10-01 或 2026-10-01 12:00:00, 回车表示永久): " NEW_EXPIRE
+        NEW_EXPIRE=$(echo "$NEW_EXPIRE" | tr -d '\r' | xargs)
+        NEW_SPEED=""
     fi
     
-    read -p "请输入此用户的强制到期日期 (格式 2026-10-01 或 2026-10-01 12:00:00, 回车表示永久): " NEW_EXPIRE
-    NEW_EXPIRE=$(echo "$NEW_EXPIRE" | tr -d '\r' | xargs)
+    # 统一校验
+    case "$IP_MODE" in
+        v4|v6|dual) ;;
+        *) echo -e "${RED}无效的 IP_MODE: $IP_MODE (可选: v4 / v6 / dual)${PLAIN}"; return 1 ;;
+    esac
+    if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+        echo -e "${RED}端口无效: $PORT (必须是 1-65535 之间的数字)${PLAIN}"
+        return 1
+    fi
+    if ! [[ "$TELEMT_USER" =~ ^[A-Za-z0-9_-]+$ ]]; then
+        echo -e "${RED}用户名只能包含字母、数字、下划线或中划线！${PLAIN}"
+        return 1
+    fi
+    if [[ -n "$NEW_QUOTA" && ! "$NEW_QUOTA" =~ ^[0-9.]+$ ]]; then
+        echo -e "${RED}输入有误，配额必须是数字，将关闭该用户限流。${PLAIN}"
+        NEW_QUOTA=""
+    fi
+    if ! [[ "$SECRET" =~ ^[0-9a-fA-F]{32}$ ]]; then
+        echo -e "${RED}SECRET 必须是 32 位 hex 字符 (a-f/0-9)！当前值: $SECRET${PLAIN}"
+        return 1
+    fi
+    echo -e "${GREEN}客户端连接密钥: $SECRET${PLAIN}"
     
     # 构造附加区块
     QUOTA_BLOCK=""
@@ -517,6 +586,12 @@ $TELEMT_USER = $QUOTA_BYTES"
         fi
         EXPIRE_BLOCK="[access.user_expirations]
 $TELEMT_USER = $ISO_EXPIRE"
+    fi
+
+    SPEED_BLOCK=""
+    if [ -n "$NEW_SPEED" ]; then
+        SPEED_BLOCK="[access.user_speed_limits]
+$TELEMT_USER = \"$NEW_SPEED\""
     fi
     
     # Telemt 专有配置: 总是保存在 /etc/telemt.toml
@@ -554,6 +629,8 @@ $TELEMT_USER = "$SECRET"
 $QUOTA_BLOCK
 
 $EXPIRE_BLOCK
+
+$SPEED_BLOCK
 EOF
 
     set_quota_record_zero "$TELEMT_USER"
@@ -577,25 +654,40 @@ EOF
     FULL_EE_SECRET="$B64_SECRET"
     show_info_telemt "$PORT" "$FULL_EE_SECRET" "$DOMAIN" "$IP_MODE"
     
-    # 仅在设置了流量配额时才询问是否启用月度自动重置
+    # 仅在设置了流量配额时才启用月度自动重置
     if [ -n "$NEW_QUOTA" ]; then
-        echo -e ""
-        echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${PLAIN}"
-        read -p "是否启用流量配额月度自动重置？(y/n, 默认 y): " enable_reset
-        enable_reset=$(echo "$enable_reset" | tr -d '\r ' | tr 'Y' 'y')
-        [ -z "$enable_reset" ] && enable_reset="y"
-        if [ "$enable_reset" == "y" ]; then
-            read -p "请输入每月重置日 (直接回车默认为1号): " reset_day
-            reset_day=$(echo "$reset_day" | tr -d '\r ')
-            [ -z "$reset_day" ] && reset_day=1
-            cat > /etc/telemt_reset.conf <<REOF
+        if [ -n "$NON_INTERACTIVE" ]; then
+            # 无交互模式：仅在显式指定 TELEMT_RESET_DAY 时启用
+            if [ -n "${TELEMT_RESET_DAY:-}" ]; then
+                reset_day="$TELEMT_RESET_DAY"
+                cat > /etc/telemt_reset.conf <<REOF
 # Telemt 流量配额自动重置配置
 MODE=monthly
 RESET_DAY=$reset_day
 ONCE_DATE=
 REOF
-            install_reset_cron
-            echo -e "${GREEN}✅ 已启用每月 ${reset_day} 号零点自动重置活跃用户流量。${PLAIN}"
+                install_reset_cron
+                echo -e "${GREEN}✅ 已启用每月 ${reset_day} 号零点自动重置活跃用户流量。${PLAIN}"
+            fi
+        else
+            echo -e ""
+            echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${PLAIN}"
+            read -p "是否启用流量配额月度自动重置？(y/n, 默认 y): " enable_reset
+            enable_reset=$(echo "$enable_reset" | tr -d '\r ' | tr 'Y' 'y')
+            [ -z "$enable_reset" ] && enable_reset="y"
+            if [ "$enable_reset" == "y" ]; then
+                read -p "请输入每月重置日 (直接回车默认为1号): " reset_day
+                reset_day=$(echo "$reset_day" | tr -d '\r ')
+                [ -z "$reset_day" ] && reset_day=1
+                cat > /etc/telemt_reset.conf <<REOF
+# Telemt 流量配额自动重置配置
+MODE=monthly
+RESET_DAY=$reset_day
+ONCE_DATE=
+REOF
+                install_reset_cron
+                echo -e "${GREEN}✅ 已启用每月 ${reset_day} 号零点自动重置活跃用户流量。${PLAIN}"
+            fi
         fi
     fi
 }
@@ -1071,8 +1163,30 @@ delete_all() {
     echo -e "${GREEN}卸载完成。${PLAIN}"
 }
 
+# rep 重新安装前的清理：仅删除服务与配置，保留脚本本体与全局快捷命令
+rep_cleanup() {
+    echo -e "${BLUE}正在清理旧服务配置 (保留脚本本体)...${PLAIN}"
+    delete_mtg 2>/dev/null
+    delete_telemt 2>/dev/null
+}
+
+# 根据 INSTALL_MODE 选择安装的后端（无交互模式下使用），默认 go 版
+install_selected() {
+    case "${INSTALL_MODE:-go}" in
+        go|mtg|mtg-go) install_mtg ;;
+        telemt|rust|telemt-rust) install_telemt ;;
+        *)
+            echo -e "${RED}无效的 INSTALL_MODE: $INSTALL_MODE (可选: go / telemt)${PLAIN}"
+            return 1
+            ;;
+    esac
+}
+
 back_to_menu() {
     echo ""
+    if [ -n "$NON_INTERACTIVE" ]; then
+        return
+    fi
     read -n 1 -s -r -p "按任意键返回主菜单..."
     menu
 }
@@ -1978,7 +2092,8 @@ menu() {
     echo -e "${BLUE}                                  |___/ ${PLAIN}${GREEN}Lite Manager${PLAIN}"
     echo -e ""
     echo -e "  ${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${PLAIN}"
-    echo -e "          ${GREEN}MTProxy 管理脚本 v2.0${PLAIN}"
+    echo -e "          ${GREEN}MTProxy 管理脚本 v2.0${PLAIN}  (${YELLOW}${SCRIPT_VERSION}${PLAIN})"
+    echo -e "          ${GREEN}Author: ${SCRIPT_AUTHOR}${PLAIN}"
     echo -e "  ${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${PLAIN}"
     echo -e ""
     echo -e "  系统: ${GREEN}${OS}${PLAIN}  |  模式: ${GREEN}${INIT_SYSTEM}${PLAIN}"
@@ -2031,19 +2146,56 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-# 命令行参数：支持 Cron 静默调用
-if [ "$1" == "check_reset" ]; then
-    check_and_reset_quota
-    exit 0
-fi
+# 命令行参数：支持 Cron 静默调用与无交互安装/管理
+_cmd0="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
 
-# 命令行参数：手动立即触发重置（用于测试）
-if [ "$1" == "force_reset" ]; then
-    echo -e "${BLUE}正在立即执行流量配额重置...${PLAIN}"
-    auto_reset_quota
-    echo -e "${GREEN}重置完成！以下为最新日志:${PLAIN}"
-    tail -3 /var/log/telemt_reset.log 2>/dev/null
-    exit 0
-fi
+case "$_cmd0" in
+    check_reset)
+        check_and_reset_quota
+        exit 0
+        ;;
+    force_reset)
+        echo -e "${BLUE}正在立即执行流量配额重置...${PLAIN}"
+        auto_reset_quota
+        echo -e "${GREEN}重置完成！以下为最新日志:${PLAIN}"
+        tail -3 /var/log/telemt_reset.log 2>/dev/null
+        exit 0
+        ;;
+    rep)
+        NON_INTERACTIVE=1
+        install_base_deps
+        rep_cleanup
+        install_selected
+        exit 0
+        ;;
+    ins)
+        NON_INTERACTIVE=1
+        install_base_deps
+        install_selected
+        exit 0
+        ;;
+    del)
+        delete_all
+        exit 0
+        ;;
+    list)
+        NON_INTERACTIVE=1
+        show_detail_info
+        exit 0
+        ;;
+    start)
+        control_service start
+        exit 0
+        ;;
+    stop)
+        control_service stop
+        exit 0
+        ;;
+    restart)
+        control_service restart
+        exit 0
+        ;;
+esac
 
+# 无参数：进入交互式菜单
 menu

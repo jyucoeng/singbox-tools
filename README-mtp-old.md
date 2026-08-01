@@ -1,21 +1,24 @@
-## mtproxy用法示例：
+## mtproxy用法示例（旧版脚本 mtp-old.sh）：
+
+> **⚠️ 此文档对应旧版脚本 `mtp-old.sh`**，仅保留 legacy 安装方式（含 Python 版）。
+> 新版本功能更全（多用户管理、流量配额、到期日、限速等），建议使用 [README-mtp-new.md](README-mtp-new.md) 中描述的 `mtp-new.sh`。
 
 ### 1、安装服务（交互式或非交互式）：
 
 #### 未PORT设置（交互式安装，会显示菜单）：
 ```
-bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp-old.sh)
 ```
 
 #### 非交互式安装
 ```
-PORT=31009 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp.sh)
+PORT=31009 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp-old.sh)
 ```
 
 ### 高级用法
 
 ```
-PORT=32000 DOMAIN='你的伪装域名,不填默认为www.microsoft.com' IP_MODE='v4/v6/dual' INSTALL_MODE='go/py' SECRET='' PORT_V6='?'   bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp.sh) rep
+PORT=32000 DOMAIN='你的伪装域名,不填默认为www.microsoft.com' IP_MODE='v4/v6/dual' INSTALL_MODE='go/py' SECRET='' PORT_V6='?'   bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp-old.sh) rep
 ```
 
 ## 环境变量说明
@@ -50,26 +53,26 @@ PORT=32000 DOMAIN='你的伪装域名,不填默认为www.microsoft.com' IP_MODE=
 
 ### 2、卸载已安装的服务：
 ```
-bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp.sh) del
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp-old.sh) del
 ```
 
 ### 3、列出已安装服务的详细信息：
 ```
-bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp.sh) list
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp-old.sh) list
 ```
 
 ### 4、启动已安装的服务：
 ```
-bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp.sh) start
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp-old.sh) start
 ```
 
 ### 5、停止已安装的服务：
 ```
-bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp.sh) stop
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp-old.sh) stop
 ```
 ### 6、重启已安装的服务：
 ```
- bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp.sh) restart
+ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp-old.sh) restart
 ```
 
 
