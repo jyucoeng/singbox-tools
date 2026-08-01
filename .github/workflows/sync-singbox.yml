@@ -1,0 +1,58 @@
+name: 同步 sing-box v1.13.14 二进制到 Release
+
+"on":
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 下载上游 4 个 sing-box 二进制包
+        run: |
+          UPSTREAM="https://github.com/SagerNet/sing-box/releases/download/v1.13.14"
+          mkdir -p release
+          for f in \
+            sing-box-1.13.14-linux-amd64.tar.gz \
+            sing-box-1.13.14-linux-arm64.tar.gz \
+            sing-box-1.13.14-linux-amd64-musl.tar.gz \
+            sing-box-1.13.14-linux-arm64-musl.tar.gz; do
+            echo ">> 下载 $f"
+            curl -fL --retry 3 -o "release/$f" "$UPSTREAM/$f" || exit 1
+          done
+          echo "== 下载完成 =="
+          ls -lh release/
+
+      - name: 校验包内包含 sing-box ELF 二进制
+        run: |
+          for f in release/*.tar.gz; do
+            tar -tzf "$f" | grep -q '/sing-box$' || { echo "$f 内未找到 sing-box 二进制"; exit 1; }
+            echo "OK: $f"
+          done
+          echo "== 全部包校验通过 =="
+
+      - name: 创建 Release 并上传（tag 与上游保持一致）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v1.13.14"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo ">> 已存在 Release，删除旧版并清理 tag"
+            gh release delete "$TAG" --yes --cleanup-tag
+          else
+            git push origin --delete "refs/tags/$TAG" 2>/dev/null || true
+          fi
+          printf '%s\n' \
+            "从 https://github.com/SagerNet/sing-box 上游 release 同步的 v1.13.14 二进制包：" \
+            "- sing-box-1.13.14-linux-amd64.tar.gz" \
+            "- sing-box-1.13.14-linux-arm64.tar.gz" \
+            "- sing-box-1.13.14-linux-amd64-musl.tar.gz" \
+            "- sing-box-1.13.14-linux-arm64-musl.tar.gz" > notes.txt
+          gh release create "$TAG" release/* \
+            --title "sing-box v1.13.14 (依赖二进制)" \
+            --notes-file notes.txt
+          echo "== Release $TAG 已更新 =="
