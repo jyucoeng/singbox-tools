@@ -1,0 +1,54 @@
+name: 同步上游二进制依赖到 Release
+
+"on":
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 下载上游 4 个二进制
+        run: |
+          UPSTREAM="https://github.com/0xdabiaoge/MTProxy/releases/download/Go-Rust"
+          mkdir -p release
+          for f in mtg-go-amd64 mtg-go-arm64 telemt-linux-amd64 telemt-linux-arm64; do
+            echo ">> 下载 $f"
+            curl -fL --retry 3 -o "release/$f" "$UPSTREAM/$f" || exit 1
+            chmod +x "release/$f"
+          done
+          echo "== 下载完成 =="
+          ls -lh release/
+
+      - name: 校验为有效 ELF 可执行文件
+        run: |
+          for f in release/*; do
+            file "$f" | grep -q ELF || { echo "$f 不是 ELF 可执行文件"; exit 1; }
+          done
+          echo "== 全部为有效 ELF 二进制 =="
+
+      - name: 创建 Release 并上传（tag 与上游保持一致）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="Go-Rust"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo ">> 已存在 Release，删除旧版并清理 tag"
+            gh release delete "$TAG" --yes --cleanup-tag
+          else
+            git push origin --delete "refs/tags/$TAG" 2>/dev/null || true
+          fi
+          printf '%s\n' \
+            "从 https://github.com/0xdabiaoge/MTProxy 上游 release 同步的 4 个二进制依赖：" \
+            "- mtg-go-amd64" \
+            "- mtg-go-arm64" \
+            "- telemt-linux-amd64" \
+            "- telemt-linux-arm64" > notes.txt
+          gh release create "$TAG" release/* \
+            --title "Go-Rust (MTProxy 依赖二进制)" \
+            --notes-file notes.txt
+          echo "== Release $TAG 已更新 =="
