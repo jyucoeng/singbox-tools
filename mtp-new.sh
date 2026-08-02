@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.2.2(2026-08-02)"
+SCRIPT_VERSION="2.2.3(2026-08-02)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
@@ -3235,7 +3235,7 @@ manage_telemt_users() {
     echo -e "  ${GREEN}10.${PLAIN} 总流量使用统计 (历史累计)"
     echo -e "  ${GREEN}0.${PLAIN} 返回主菜单"
     echo -e "${BLUE}======================================${PLAIN}"
-    read -p "  请选择操作 [0-9]/10: " tm_choice
+    read -p "  请选择操作 [0-10]: " tm_choice
     case $tm_choice in
         1) list_telemt_users ;;
         2) query_telemt_user ;;
