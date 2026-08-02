@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.2.10(2026-08-02)"
+SCRIPT_VERSION="2.2.11(2026-08-02)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
@@ -821,7 +821,8 @@ def usage_report():
     out.append(BLUE + '  本月最近流量流水 (按用户维度, 时间在行尾):' + PLAIN)
     if os.path.exists(LOG):
         pat = re.compile(r'\| %s-\d\d \d\d:\d\d:\d\d$' % cur_month)
-        recent = [ln for ln in open(LOG, encoding='utf-8', errors='replace') if pat.search(ln.rstrip('\n'))][-10:]
+        recent = [ln for ln in open(LOG, encoding='utf-8', errors='replace')
+                  if pat.search(ln.rstrip('\n')) and '已用 0B' not in ln][-10:]
         if recent:
             for ln in recent:
                 out.append(ln.rstrip('\n'))
