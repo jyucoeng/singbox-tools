@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.2.4(2026-08-02)"
+SCRIPT_VERSION="2.2.9(2026-08-02)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
@@ -177,6 +177,24 @@ get_service_status_str() {
     fi
     
     echo -e "$status"
+}
+
+# Telegram 推送配置状态（主菜单信息行展示用）
+get_tg_status_str() {
+    if [ ! -f "/etc/telemt_tg.conf" ]; then
+        echo -e "${YELLOW}○ 未配置${PLAIN}"
+        return
+    fi
+    local token chat time
+    token=$(grep -E '^BOT_TOKEN=' /etc/telemt_tg.conf | head -1 | cut -d'=' -f2-)
+    chat=$(grep -E '^CHAT_ID=' /etc/telemt_tg.conf | head -1 | cut -d'=' -f2-)
+    time=$(grep -E '^TG_TIME=' /etc/telemt_tg.conf | head -1 | cut -d'=' -f2-)
+    [ -z "$time" ] && time="09:00"
+    if [ -n "$token" ] && [ -n "$chat" ]; then
+        echo -e "${GREEN}● 已配置${PLAIN} (Bot:${token:0:5}... → ${chat}  日报 ${time})"
+    else
+        echo -e "${YELLOW}△ 配置不完整${PLAIN}"
+    fi
 }
 
 # --- 查看所有服务状态 ---
@@ -3290,13 +3308,9 @@ manage_telemt_users() {
     echo -e "  ${GREEN}4.${PLAIN} 踢出(删除)指定用户"
     echo -e "  ${GREEN}5.${PLAIN} 管理配额/到期/限速/密钥/端口"
     echo -e "  ${GREEN}6.${PLAIN} 自动重置配置 (Cron 月度轮转)"
-    echo -e "  ${GREEN}7.${PLAIN} 本月流量使用统计"
-    echo -e "  ${GREEN}8.${PLAIN} Telegram 推送配置"
-    echo -e "  ${GREEN}9.${PLAIN} 立即发送本月统计到 Telegram"
-    echo -e "  ${GREEN}10.${PLAIN} 总流量使用统计 (历史累计)"
     echo -e "  ${GREEN}0.${PLAIN} 返回主菜单"
     echo -e "${BLUE}======================================${PLAIN}"
-    read -p "  请选择操作 [0-10]: " tm_choice
+    read -p "  请选择操作 [0-6]: " tm_choice
     case $tm_choice in
         1) list_telemt_users ;;
         2) query_telemt_user ;;
@@ -3304,10 +3318,6 @@ manage_telemt_users() {
         4) del_telemt_user ;;
         5) reset_telemt_user_quota ;;
         6) setup_quota_reset_cron; show_reset_status ;;
-        7) traffic_usage_report ;;
-        8) setup_tg_push ;;
-        9) tg_usage_report force ;;
-        10) traffic_total_report ;;
         0) return ;;
         *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
     esac
@@ -3335,6 +3345,7 @@ menu() {
     echo -e ""
     echo -e "  系统: ${GREEN}${OS}${PLAIN}  |  模式: ${GREEN}${INIT_SYSTEM}${PLAIN}"
     echo -e "  Go 版: $(get_service_status_str mtg)  Telemt 版: $(get_service_status_str telemt)"
+    echo -e "  Telegram 推送: $(get_tg_status_str)"
     echo -e ""
     echo -e "  ${YELLOW}【安 装】${PLAIN}"
     echo -e "    ${GREEN}[1]${PLAIN} 安装 Go 版          ${GREEN}[2]${PLAIN} 安装 Telemt (高性能进阶版)"
@@ -3343,19 +3354,23 @@ menu() {
     echo -e "    ${GREEN}[3]${PLAIN} 查看连接信息        ${GREEN}[4]${PLAIN} 修改配置"
     echo -e "    ${GREEN}[5]${PLAIN} 删除配置            ${GREEN}[6]${PLAIN} Telemt 多用户管理"
     echo -e ""
+    echo -e "  ${YELLOW}【TG 配置】${PLAIN}"
+    echo -e "    ${GREEN}[7]${PLAIN} Telegram 推送配置   ${GREEN}[8]${PLAIN} 用户流量统计"
+    echo -e "    ${GREEN}[9]${PLAIN} 立即发送统计        ${GREEN}[10]${PLAIN} 总流量统计"
+    echo -e ""
     echo -e "  ${YELLOW}【状态与日志】${PLAIN}"
-    echo -e "    ${GREEN}[7]${PLAIN} 查看运行状态        ${GREEN}[8]${PLAIN} 查看日志"
+    echo -e "    ${GREEN}[11]${PLAIN} 查看运行状态        ${GREEN}[12]${PLAIN} 查看日志"
     echo -e ""
     echo -e "  ${YELLOW}【服务控制】${PLAIN}"
-    echo -e "    ${GREEN}[9]${PLAIN} 启动服务           ${GREEN}[10]${PLAIN} 停止服务"
-    echo -e "    ${GREEN}[11]${PLAIN} 重启服务"
+    echo -e "    ${GREEN}[13]${PLAIN} 启动服务           ${GREEN}[14]${PLAIN} 停止服务"
+    echo -e "    ${GREEN}[15]${PLAIN} 重启服务"
     echo -e ""
     echo -e "  ${RED}【危险操作】${PLAIN}"
-    echo -e "    ${RED}[12]${PLAIN} 卸载全部并清理"
+    echo -e "    ${RED}[16]${PLAIN} 卸载全部并清理"
     echo -e ""
     echo -e "    ${GREEN}[0]${PLAIN} 退出脚本"
     echo -e ""
-    read -p "  请输入选项 [0-12]: " choice
+    read -p "  请输入选项 [0-16]: " choice
     debug_log "【调试】menu 选择: $choice"
 
     case $choice in
@@ -3365,12 +3380,16 @@ menu() {
         4) modify_config ;;
         5) delete_config ;;
         6) manage_telemt_users; back_to_menu ;;
-        7) check_all_status; back_to_menu ;;
-        8) view_logs; back_to_menu ;;
-        9) control_service start; back_to_menu ;;
-        10) control_service stop; back_to_menu ;;
-        11) control_service restart; back_to_menu ;;
-        12) delete_all; exit 0 ;;
+        7) setup_tg_push; back_to_menu ;;
+        8) traffic_usage_report; back_to_menu ;;
+        9) tg_usage_report force; back_to_menu ;;
+        10) traffic_total_report; back_to_menu ;;
+        11) check_all_status; back_to_menu ;;
+        12) view_logs; back_to_menu ;;
+        13) control_service start; back_to_menu ;;
+        14) control_service stop; back_to_menu ;;
+        15) control_service restart; back_to_menu ;;
+        16) delete_all; exit 0 ;;
         0) echo -e "${GREEN}再见!${PLAIN}"; exit 0 ;;
         *) echo -e "${RED}无效选项${PLAIN}"; sleep 1; menu ;;
     esac
