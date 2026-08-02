@@ -2060,12 +2060,17 @@ delete_all() {
     rm -f "/usr/local/bin/mtp"
     
     echo -e "${RED}清理本地安装包...${PLAIN}"
-    rm -f "${SCRIPT_DIR}/mtg-go"*
-    rm -f "${SCRIPT_DIR}/mtp-rust"*
-    rm -f "${SCRIPT_DIR}/telemt"*
+    # 仅在脚本通过真实文件执行（非 /dev/fd 管道等）时才清理脚本所在目录的安装包
+    if [ -d "$SCRIPT_DIR" ] && [[ "$SCRIPT_DIR" != /dev/fd ]] && [[ "$SCRIPT_DIR" != /dev/stdin ]]; then
+        rm -f "${SCRIPT_DIR}/mtg-go"*
+        rm -f "${SCRIPT_DIR}/mtp-rust"*
+        rm -f "${SCRIPT_DIR}/telemt"*
+    fi
 
-    # 删除脚本自身
-    rm -f "$0"
+    # 删除脚本自身（仅当通过真实文件执行，避免误删 /dev/fd 管道/进程替换）
+    if [ -f "$0" ] && [[ "$0" != /dev/fd/* ]] && [[ "$0" != /dev/stdin ]]; then
+        rm -f "$0"
+    fi
     
     echo -e "${GREEN}卸载完成。${PLAIN}"
 }
