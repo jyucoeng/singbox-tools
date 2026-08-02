@@ -497,7 +497,7 @@ QUOTA = os.environ.get('TELEMT_QUOTA', '/etc/telemt_quota.json')
 LOG = os.environ.get('TELEMT_LOG', '/var/log/telemt_traffic.log')
 EXHAUSTED = os.environ.get('TELEMT_EXHAUSTED', '/etc/telemt_exhausted.json')
 TG_CONF = os.environ.get('TELEMT_TG_CONF', '/etc/telemt_tg.conf')
-TELEMT_CONF = os.environ.get('TELEMT_CONF', '/etc/telemt.conf')
+TELEMT_CONF = os.environ.get('TELEMT_CONF', '/opt/mtproxy/config/telemt.conf')
 DATA_DIR = os.environ.get('TELEMT_DATA_DIR', '/opt/mtproxy/exhausteddata')
 
 RED = '\033[31m'
@@ -2114,7 +2114,7 @@ list_telemt_users_plain() {
     local IPV6="${PUBLIC_IPV6:-}"
     [ -z "$IPV4" ] && IPV4=$(get_public_ip)
     [ -z "$IPV6" ] && IPV6=$(get_public_ipv6)
-    stats_py users --ipv4 "$IPV4" --ipv6 "$IPV6"
+    TELEMT_CONF="$CONFIG_DIR/telemt.conf" stats_py users --ipv4 "$IPV4" --ipv6 "$IPV6"
     return $?
 }
 list_telemt_users() {
@@ -2480,7 +2480,7 @@ show_telemt_user() {
     local IPV6="${PUBLIC_IPV6:-}"
     [ -z "$IPV4" ] && IPV4=$(get_public_ip)
     [ -z "$IPV6" ] && IPV6=$(get_public_ipv6)
-    stats_py user --name "$TARGET_USER" --ipv4 "$IPV4" --ipv6 "$IPV6"
+    TELEMT_CONF="$CONFIG_DIR/telemt.conf" stats_py user --name "$TARGET_USER" --ipv4 "$IPV4" --ipv6 "$IPV6"
     return $?
 }
 query_telemt_user() {
