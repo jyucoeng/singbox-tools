@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.2.21(2026-08-02)"
+SCRIPT_VERSION="2.2.33(2026-08-02)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
@@ -505,7 +505,9 @@ stats_py() {
 # -*- coding: utf-8 -*-
 """Telemt 流量统计 / Telegram 推送 / 用户用量展示（由 mtp-new.sh 调用）"""
 import base64
+import contextlib
 import datetime
+import io
 import json
 import os
 import re
@@ -518,6 +520,7 @@ QUOTA = os.environ.get('TELEMT_QUOTA', '/etc/telemt_quota.json')
 LOG = os.environ.get('TELEMT_LOG', '/var/log/telemt_traffic.log')
 EXHAUSTED = os.environ.get('TELEMT_EXHAUSTED', '/etc/telemt_exhausted.json')
 TG_CONF = os.environ.get('TELEMT_TG_CONF', '/etc/telemt_tg.conf')
+TG_LOG = os.environ.get('TELEMT_TG_LOG', '/var/log/telemt_tg_send.log')
 TELEMT_CONF = os.environ.get('TELEMT_CONF', '/opt/mtproxy/config/telemt.conf')
 DATA_DIR = os.environ.get('TELEMT_DATA_DIR', '/opt/mtproxy/exhausteddata')
 SNAP_STATE = os.path.join(DATA_DIR, 'traffic_snapshot_state')
@@ -795,6 +798,7 @@ def usage_report():
     total_limit = 0
     exhausted_count = 0
     has_row = 0
+    totals = total_cache()
     for user, used_bytes, limit_bytes in quota_rows():
         used_s = fmt_bytes(used_bytes)
         limit_s = fmt_bytes(limit_bytes)
@@ -814,7 +818,11 @@ def usage_report():
         total_used += used_bytes
         total_limit += limit_bytes
         has_row = 1
-        out.append('  %-16s %-10s %-10s %-10s %-8s %s' % (user, used_s, limit_s, remain_s, pct + '%', ex_t))
+        line = '  %-16s %-10s %-10s %-10s %-8s %s' % (user, used_s, limit_s, remain_s, pct + '%', ex_t)
+        ut = sum(v for (u, mo), v in totals.items() if u == user)
+        if ut > 0:
+            line += '   累计: %s' % fmt_bytes(ut)
+        out.append(line)
     out.append('  ----------------------------------------------------------------')
     if not has_row:
         out.append(YELLOW + '  暂未配置任何带配额的用户。' + PLAIN)
@@ -901,6 +909,7 @@ def mask_ip(ip):
 
 def report_text():
     rows = quota_rows()
+    totals = total_cache()
     total_used = 0
     total_limit = 0
     exhausted_count = 0
@@ -925,7 +934,11 @@ def report_text():
         total_used += used_bytes
         total_limit += limit_bytes
         has_row = 1
-        body += '%-14s %-9s %-9s %-9s %-7s %s\n' % (user, used_s, limit_s, remain_s, pct + '%', ex_t)
+        body += '%-14s %-9s %-9s %-9s %-7s %s' % (user, used_s, limit_s, remain_s, pct + '%', ex_t)
+        ut = sum(v for (u, mo), v in totals.items() if u == user)
+        if ut > 0:
+            body += '   累计: %s' % fmt_bytes(ut)
+        body += '\n'
 
     bj_t = bj_time().strftime('%Y-%m-%d %H:%M:%S')
     utc_t = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
@@ -937,10 +950,17 @@ def report_text():
         pass
     ip_line = ''
     try:
-        req = urllib.request.Request('https://api.ipify.org', headers={'User-Agent': 'Mozilla'})
-        pub_ip = urllib.request.urlopen(req, timeout=4).read().decode('utf-8', 'replace').strip()
+        req = urllib.request.Request('https://ipwho.is/', headers={'User-Agent': 'Mozilla'})
+        geo = json.loads(urllib.request.urlopen(req, timeout=4).read().decode('utf-8', 'replace'))
+        pub_ip = geo.get('ip', '')
         if pub_ip:
-            ip_line = '🌐 IP 信息: %s\n' % mask_ip(pub_ip)
+            city = geo.get('city', '') or ''
+            country = geo.get('country', '') or ''
+            loc = ', '.join(x for x in (city, country) if x)
+            if loc:
+                ip_line = '🌐 IP 信息: %s, %s\n' % (mask_ip(pub_ip), loc)
+            else:
+                ip_line = '🌐 IP 信息: %s\n' % mask_ip(pub_ip)
     except Exception:
         pass
 
@@ -983,19 +1003,31 @@ def split_parts(text, max_bytes=3700):
     return parts
 
 
-def tg_send(text):
+def tg_log(tag, msg):
+    try:
+        with open(TG_LOG, 'a', encoding='utf-8') as f:
+            f.write('%s [%s] %s\n' % (now_str(), tag, msg))
+    except OSError:
+        pass
+
+
+def tg_send(text, tag='unknown'):
     if not text:
+        tg_log(tag, '无消息内容，跳过')
         return 1
     if not os.path.exists(TG_CONF):
+        tg_log(tag, '未配置 Telegram 推送 (缺少配置文件)')
         print(YELLOW + '未配置 Telegram 推送 (/etc/telemt_tg.conf)。' + PLAIN)
         return 1
     conf = read_conf(TG_CONF)
     token = conf.get('BOT_TOKEN', '')
     chat = conf.get('CHAT_ID', '')
     if not token:
+        tg_log(tag, '缺少 BOT_TOKEN')
         print(RED + '未配置 BOT_TOKEN！' + PLAIN)
         return 1
     if not chat:
+        tg_log(tag, '缺少 CHAT_ID')
         print(RED + '未配置 CHAT_ID！' + PLAIN)
         return 1
     url = 'https://api.telegram.org/bot%s/sendMessage' % token
@@ -1004,6 +1036,7 @@ def tg_send(text):
         parts = [text]
     total = len(parts)
     fail = 0
+    tg_log(tag, '开始发送 %d 条消息' % total)
     for idx, part in enumerate(parts, 1):
         body = part
         if total > 1:
@@ -1018,12 +1051,18 @@ def tg_send(text):
             res = resp.read().decode('utf-8', 'replace')
         except Exception as e:
             fail += 1
+            tg_log(tag, '第 %d/%d 条发送失败: %s' % (idx, total, str(e)[:150]))
             print(RED + 'Telegram 推送失败(第 %d/%d 条): %s' % (idx, total, str(e)[:200]) + PLAIN, file=sys.stderr)
             continue
         if '"ok":true' in res:
             continue
         fail += 1
+        tg_log(tag, '第 %d/%d 条发送失败: %s' % (idx, total, res[:150]))
         print(RED + 'Telegram 推送失败(第 %d/%d 条): %s' % (idx, total, res[:200]) + PLAIN, file=sys.stderr)
+    if fail > 0:
+        tg_log(tag, '发送完成，失败 %d/%d 条' % (fail, total))
+    else:
+        tg_log(tag, '发送成功 (%d 条)' % total)
     return 1 if fail > 0 else 0
 
 
@@ -1037,14 +1076,21 @@ def tg_usage_report(force):
         return 0
     conf = read_conf(TG_CONF)
     if not force:
+        if str(conf.get('TG_ENABLE_DAILY', '1')) != '1':
+            dbg('日报发送已关闭，跳过')
+            return 0
         bj_now = bj_time().strftime('%H:%M')
         want = conf.get('TG_TIME') or conf.get('TG_PUSH_TIME') or ''
         if bj_now != want:
             dbg('tg_report: 非推送时间点, bj=%s want=%s, 跳过' % (bj_now, want))
             return 0
+    else:
+        if str(conf.get('TG_ENABLE_MANUAL_REPORT', '1')) != '1':
+            print(YELLOW + '「手动统计月报」开关未开启，即将跳过发送该 TG 消息。' + PLAIN)
+            return 0
     dbg('tg_report: force=%s, 准备推送' % force)
     snapshot()
-    return tg_send(report_text())
+    return tg_send(report_text(), 'manual_report' if force else 'daily')
 
 
 def tg_secret(secret, domain):
@@ -1268,6 +1314,32 @@ def users_display(ipv4, ipv6):
     return 0
 
 
+def tg_userconf(name):
+    if not os.path.exists(TG_CONF):
+        print(YELLOW + '未配置 Telegram 推送，请先在主菜单 [7] 配置 TG。' + PLAIN)
+        return 1
+    conf = read_conf(TG_CONF)
+    key = 'TG_ENABLE_USERCONF_ALL' if not name else 'TG_ENABLE_USERCONF_ONE'
+    if str(conf.get(key, '1')) != '1':
+        print(YELLOW + '「%s」开关未开启，即将跳过发送该 TG 消息。' % ('全部用户配置清单' if not name else '指定用户配置详情') + PLAIN)
+        return 0
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        if name:
+            user_display(name, '', '')
+        else:
+            users_display('', '')
+    text = re.sub(r'\x1b\[[0-9;]*m', '', buf.getvalue()).strip()
+    if not text:
+        print(YELLOW + '无任何用户配置信息。' + PLAIN)
+        return 0
+    if name:
+        text = '📋 用户配置详情: %s\n%s' % (name, text)
+    else:
+        text = '📋 全部用户配置清单\n%s' % text
+    return tg_send(text, 'userconf_one' if name else 'userconf_all')
+
+
 def main(argv):
     cmd = argv[0] if argv else ''
     dbg('入口: %s %s' % (cmd, ' '.join(argv[1:])))
@@ -1283,6 +1355,8 @@ def main(argv):
         return user_display(_get_opt(argv, '--name', ''), _get_opt(argv, '--ipv4', ''), _get_opt(argv, '--ipv6', ''))
     if cmd == 'lookup':
         return lookup_user(_get_opt(argv, '--secret', ''))
+    if cmd == 'tg_userconf':
+        return tg_userconf(_get_opt(argv, '--name', ''))
     if cmd == 'tg_report':
         return tg_usage_report('--force' in argv)
     if cmd == 'tg_send':
@@ -1354,6 +1428,135 @@ tg_usage_report() {
         stats_py tg_report
     fi
     return $?
+}
+
+# 发送用户配置清单/详情到 Telegram（指定用户名则发详情，留空/回车则发全部；非交互用 TELEMT_USER 或命令行参数）
+tg_send_user_conf() {
+    local UNAME="${TELEMT_USER:-$1}"
+    if [ -z "$UNAME" ]; then
+        if [ "${NON_INTERACTIVE:-0}" != "1" ]; then
+            echo ""
+            read -p "输入要发送配置的用户名 (直接回车=发送全部用户): " UNAME
+            UNAME=$(echo "$UNAME" | tr -d '\r ' | xargs)
+        fi
+    fi
+    stats_py tg_userconf --name "$UNAME"
+    return $?
+}
+
+# 立即推送全部 TG 消息（全部配置清单 + 本月月报，逐项尊重开关）
+tg_push_all() {
+    echo -e "${BLUE}▶ 开始立即推送全部 TG 消息 ...${PLAIN}"
+    stats_py tg_userconf --name ""
+    tg_usage_report force
+    tg_notify_log "push_all" "立即推送全部消息完成"
+}
+
+# 主菜单入口：TG 通知细分（发送用户配置/月报/开关设置）
+tg_send_user_conf_menu() {
+    clear
+    echo -e "${BLUE}===========================================${PLAIN}"
+    echo -e "${GREEN}              TG 通知细分          ${PLAIN}"
+    echo -e "${BLUE}===========================================${PLAIN}"
+    echo -e "  ${GREEN}1.${PLAIN} 消息发送开关设置"
+    echo -e "  ${GREEN}2.${PLAIN} 立即推送全部用户配置清单到 TG"
+    echo -e "  ${GREEN}3.${PLAIN} 立即推送指定用户配置详情到 TG"
+    echo -e "  ${GREEN}4.${PLAIN} 立即推送本月统计月报到 TG"
+    echo -e "  ${GREEN}5.${PLAIN} 立即推送全部 TG 消息"
+    echo -e "  ${GREEN}0.${PLAIN} 返回主菜单"
+    echo -e "${BLUE}===========================================${PLAIN}"
+    read -p "  请选择操作 [0-5]: " uc_choice
+    case $uc_choice in
+        1) tg_notify_switch_menu ;;
+        2) stats_py tg_userconf --name "" ;;
+        3)
+            local UNAME=""
+            read -p "请输入要推送配置的用户名: " UNAME
+            UNAME=$(echo "$UNAME" | tr -d '\r ' | xargs)
+            if [ -n "$UNAME" ]; then
+                stats_py tg_userconf --name "$UNAME"
+            else
+                echo -e "${YELLOW}未输入用户名，已取消。${PLAIN}"
+            fi
+            ;;
+        4) tg_usage_report force ;;
+        5) tg_push_all ;;
+        0) return ;;
+        *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
+    esac
+    echo ""
+    read -n 1 -s -r -p "按任意键继续..."
+    tg_send_user_conf_menu
+}
+
+# 写 TG 消息发送日志（北京时间）
+tg_notify_log() {
+    echo "$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S') [$1] $2" >> /var/log/telemt_tg_send.log 2>/dev/null
+}
+
+# 写入/更新 tg.conf 中的开关项
+set_tg_switch() {
+    local KEY="$1" VAL="$2"
+    if [ ! -f /etc/telemt_tg.conf ]; then
+        echo "${KEY}=${VAL}" > /etc/telemt_tg.conf
+    elif grep -q "^${KEY}=" /etc/telemt_tg.conf; then
+        sed -i "s/^${KEY}=.*/${KEY}=${VAL}/" /etc/telemt_tg.conf
+    else
+        echo "${KEY}=${VAL}" >> /etc/telemt_tg.conf
+    fi
+}
+
+# TG 消息发送开关设置（默认全部开启；关闭后对应消息一直不发送）
+tg_notify_switch_menu() {
+    if [ ! -f /etc/telemt_tg.conf ]; then
+        echo -e "${YELLOW}尚未配置 Telegram 推送，请先在主菜单 [7] 配置。${PLAIN}"
+        return
+    fi
+    source /etc/telemt_tg.conf
+    local d="${TG_ENABLE_DAILY:-1}"
+    local a="${TG_ENABLE_USERCONF_ALL:-1}"
+    local o="${TG_ENABLE_USERCONF_ONE:-1}"
+    local m="${TG_ENABLE_MANUAL_REPORT:-1}"
+    local sw
+    while :; do
+        clear
+        echo -e "${BLUE}===========================================${PLAIN}"
+        echo -e "${GREEN}          消息发送开关设置          ${PLAIN}"
+        echo -e "${BLUE}===========================================${PLAIN}"
+        echo -e "  说明: 默认全部勾选=发送；取消勾选后对应消息将一直不发送。"
+        echo ""
+        echo -e "  ${GREEN}[1]${PLAIN} 每日统计日报        $( [ "$d" = "1" ] && echo -e "${GREEN}✅ 已勾选(发送)${PLAIN}" || echo -e "${RED}❌ 已取消(不发送)${PLAIN}" )"
+        echo -e "  ${GREEN}[2]${PLAIN} 全部用户配置清单    $( [ "$a" = "1" ] && echo -e "${GREEN}✅ 已勾选(发送)${PLAIN}" || echo -e "${RED}❌ 已取消(不发送)${PLAIN}" )"
+        echo -e "  ${GREEN}[3]${PLAIN} 指定用户配置详情    $( [ "$o" = "1" ] && echo -e "${GREEN}✅ 已勾选(发送)${PLAIN}" || echo -e "${RED}❌ 已取消(不发送)${PLAIN}" )"
+        echo -e "  ${GREEN}[4]${PLAIN} 手动统计月报        $( [ "$m" = "1" ] && echo -e "${GREEN}✅ 已勾选(发送)${PLAIN}" || echo -e "${RED}❌ 已取消(不发送)${PLAIN}" )"
+        echo -e "  ${GREEN}[0]${PLAIN} 返回上级菜单"
+        echo -e "${BLUE}===========================================${PLAIN}"
+        read -p "  选择序号切换勾选状态 [0-4]: " sw
+        case $sw in
+            1)
+                if [ "$d" = "1" ]; then d=0; else d=1; fi
+                set_tg_switch TG_ENABLE_DAILY "$d"
+                tg_notify_log "switch" "每日统计日报 -> $([ "$d" = "1" ] && echo 勾选 || echo 取消)"
+                ;;
+            2)
+                if [ "$a" = "1" ]; then a=0; else a=1; fi
+                set_tg_switch TG_ENABLE_USERCONF_ALL "$a"
+                tg_notify_log "switch" "全部用户配置清单 -> $([ "$a" = "1" ] && echo 勾选 || echo 取消)"
+                ;;
+            3)
+                if [ "$o" = "1" ]; then o=0; else o=1; fi
+                set_tg_switch TG_ENABLE_USERCONF_ONE "$o"
+                tg_notify_log "switch" "指定用户配置详情 -> $([ "$o" = "1" ] && echo 勾选 || echo 取消)"
+                ;;
+            4)
+                if [ "$m" = "1" ]; then m=0; else m=1; fi
+                set_tg_switch TG_ENABLE_MANUAL_REPORT "$m"
+                tg_notify_log "switch" "手动统计月报 -> $([ "$m" = "1" ] && echo 勾选 || echo 取消)"
+                ;;
+            0) return ;;
+            *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
+        esac
+    done
 }
 
 # 配置 Telegram 推送（非交互用 TELEMT_TG_TOKEN / TELEMT_TG_CHAT / TELEMT_TG_TIME）
@@ -1445,6 +1648,10 @@ setup_tg_push() {
 BOT_TOKEN=$TOKEN
 CHAT_ID=$CHAT
 TG_TIME=${TGTIME:-$TG_PUSH_TIME}
+TG_ENABLE_DAILY=${TG_ENABLE_DAILY:-1}
+TG_ENABLE_USERCONF_ALL=${TG_ENABLE_USERCONF_ALL:-1}
+TG_ENABLE_USERCONF_ONE=${TG_ENABLE_USERCONF_ONE:-1}
+TG_ENABLE_MANUAL_REPORT=${TG_ENABLE_MANUAL_REPORT:-1}
 EOF
     
     install_tg_cron
@@ -1453,8 +1660,10 @@ EOF
         if tg_send "✅ MTProxy 流量统计推送已启用
 
 每天北京时间 ${TGTIME} 将自动发送本月流量统计到本会话"; then
+            tg_notify_log "test" "测试消息发送成功"
             echo -e "${GREEN}测试消息发送成功。${PLAIN}"
         else
+            tg_notify_log "test" "测试消息发送失败"
             echo -e "${YELLOW}测试消息发送失败，请检查 Token / ChatID 是否正确。${PLAIN}"
         fi
     fi
@@ -3526,7 +3735,7 @@ menu() {
     echo -e ""
     echo -e "  ${YELLOW}【TG 配置】${PLAIN}"
     echo -e "    ${GREEN}[7]${PLAIN} Telegram 推送配置   ${GREEN}[8]${PLAIN} 用户流量统计"
-    echo -e "    ${GREEN}[9]${PLAIN} 立即发送统计        ${GREEN}[10]${PLAIN} 总流量统计"
+    echo -e "    ${GREEN}[9]${PLAIN} TG 通知细分          ${GREEN}[10]${PLAIN} 总流量统计"
     echo -e ""
     echo -e "  ${YELLOW}【状态与日志】${PLAIN}"
     echo -e "    ${GREEN}[11]${PLAIN} 查看运行状态        ${GREEN}[12]${PLAIN} 查看日志"
@@ -3552,7 +3761,7 @@ menu() {
         6) manage_telemt_users; back_to_menu ;;
         7) setup_tg_push; back_to_menu ;;
         8) traffic_usage_report; back_to_menu ;;
-        9) tg_usage_report force; back_to_menu ;;
+        9) tg_send_user_conf_menu ;;
         10) traffic_total_report; back_to_menu ;;
         11) check_all_status; back_to_menu ;;
         12) view_logs; back_to_menu ;;
@@ -3655,6 +3864,11 @@ case "$_cmd0" in
     tg_autopush)
         NON_INTERACTIVE=1
         tg_usage_report
+        exit $?
+        ;;
+    tg_userconf)
+        NON_INTERACTIVE=1
+        tg_send_user_conf "$2"
         exit $?
         ;;
     tg_config)
