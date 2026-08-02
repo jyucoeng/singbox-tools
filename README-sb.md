@@ -415,8 +415,8 @@ tail -200 /root/doraemon/argo.log
 ## 版本变更信息
 
 v1.0.13
- - 命令参数大小写不敏感（`Del`/`DELALL`/`INS` 等均支持）
- - `ensure_cloudflared` 增加版本对比：HEAD 请求获取最新版号，同版本时跳过下载
+ - sing-box 内核（1.13.14）下载源切换到本仓库 jyucoeng/singbox-tools（release: v1.13.14）
+ - 新增 .github/workflows/sync-singbox.yml：手动触发，从上游镜像 4 个 linux 二进制包（amd64/arm64 及 musl 变体）到本仓库 release
 
 v1.0.12
  - `del` 改为保留 sing-box/cloudflared 二进制（只删配置），新增 `delall` 命令完全删除
