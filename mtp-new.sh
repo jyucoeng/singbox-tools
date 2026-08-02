@@ -1836,7 +1836,6 @@ EOF
     check_service_status telemt
     
     echo -e "${GREEN}端口和域名已成功更新并热生效！${PLAIN}"
-    echo -e "${GREEN}如需查看详细的多用户密码与链接，请在主菜单选择 [6] Telemt 多用户管理。${PLAIN}"
 }
 
 modify_config() {
