@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.0.12(2026-07-31)"
+VERSION="1.0.13(2026-08-02)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -1114,7 +1114,9 @@ update_singbox() {
     fi
 
     local archive="sing-box-${sb_ver}-linux-${cpu}${sb_lib_suffix}.tar.gz"
-    local url="https://github.com/SagerNet/sing-box/releases/download/v${sb_ver}/${archive}"
+    # 本仓库自持源（由 sync-singbox.yml 从上游镜像），如需切回官方源，取消下行注释并注释上行
+    local url="https://github.com/jyucoeng/singbox-tools/releases/download/v${sb_ver}/${archive}"
+    # local url="https://github.com/SagerNet/sing-box/releases/download/v${sb_ver}/${archive}"
     local tmp_archive="/tmp/${archive}"
 
     (curl -Lo "$tmp_archive" -# --connect-timeout 5 --max-time 120 --retry 2 --retry-delay 2 --retry-all-errors "$url") \
