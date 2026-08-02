@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.2.33(2026-08-02)"
+SCRIPT_VERSION="2.2.34(2026-08-02)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
@@ -3734,7 +3734,7 @@ menu() {
     echo -e "    ${GREEN}[5]${PLAIN} 删除配置            ${GREEN}[6]${PLAIN} Telemt 多用户管理"
     echo -e ""
     echo -e "  ${YELLOW}【TG 配置】${PLAIN}"
-    echo -e "    ${GREEN}[7]${PLAIN} Telegram 推送配置   ${GREEN}[8]${PLAIN} 用户流量统计"
+    echo -e "    ${GREEN}[7]${PLAIN} TG 推送配置          ${GREEN}[8]${PLAIN} 用户流量统计"
     echo -e "    ${GREEN}[9]${PLAIN} TG 通知细分          ${GREEN}[10]${PLAIN} 总流量统计"
     echo -e ""
     echo -e "  ${YELLOW}【状态与日志】${PLAIN}"
