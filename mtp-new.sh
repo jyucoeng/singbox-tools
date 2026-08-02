@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.2.48(2026-08-02)"
+SCRIPT_VERSION="2.2.49(2026-08-02)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
@@ -1490,8 +1490,7 @@ traffic_stats_menu() {
     case $ts_choice in
         1) traffic_report_local ;;
         2)
-            snapshot_traffic_stats
-            stats_py users
+            list_telemt_users_plain
             ;;
         3)
             local TUNAME=""
