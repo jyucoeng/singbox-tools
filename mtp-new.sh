@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.2.3(2026-08-02)"
+SCRIPT_VERSION="2.2.4(2026-08-02)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
@@ -2669,6 +2669,20 @@ del_telemt_user_by_name() {
     echo -e "${GREEN}删除用户 [$target_name] 成功并且已将其强制踢下线以及清理全部关联数据！${PLAIN}"
 }
 
+# 读取 toml 指定段落中指定键的当前值（去首尾引号与 \r，供修改前回显对照）
+get_toml_val() {
+    local sec="$1" key="$2"
+    awk -v s="$sec" -v k="$key" '
+        $0 ~ /^\[/ { insec = ($0 == "[" s "]") ? 1 : 0; next }
+        insec && $0 ~ "^" k "[ \t]*=" {
+            sub(/^[^=]*=[ \t]*/, "")
+            sub(/^"/, ""); sub(/"$/, "")
+            gsub(/\r/, "")
+            print
+        }
+    ' /etc/telemt.toml
+}
+
 reset_telemt_user_quota() {
     if [ ! -f "/etc/telemt.toml" ]; then
         echo -e "${YELLOW}未检测到 Telemt 配置文件！${PLAIN}"
@@ -2722,6 +2736,13 @@ reset_telemt_user_quota() {
     
     local target_name=${user_names[$SEL_INDEX]}
     
+    # 读取该用户当前配置，供各选项修改前回显对照
+    local cur_expire=$(get_toml_val "access.user_expirations" "$target_name")
+    local cur_quota=$(get_toml_val "access.user_data_quota" "$target_name")
+    local cur_speed=$(get_toml_val "access.user_speed_limits" "$target_name")
+    local cur_secret=$(get_toml_val "access.users" "$target_name")
+    local cur_port=$(get_toml_val "access.user_ports" "$target_name")
+    
     echo -e "您正在为 ${GREEN}$target_name${PLAIN} 配置："
     echo -e "1. ${YELLOW}仅清空当期已用流量账单 (恢复全部配额)${PLAIN}"
     echo -e "2. ${YELLOW}重新设定到期期限并清空账单${PLAIN}"
@@ -2739,6 +2760,12 @@ reset_telemt_user_quota() {
             echo -e "${GREEN}已清空用户 $target_name 的配额用量账单。${PLAIN}"
         fi
     elif [ "$POL_OPT" -eq 2 ]; then
+        if [ -n "$cur_expire" ]; then
+            CUR_EXP_DISP=$(echo "$cur_expire" | tr 'T' ' ' | sed 's/+.*$//')
+            echo -e "当前到期: ${YELLOW}${CUR_EXP_DISP}${PLAIN}"
+        else
+            echo -e "当前到期: ${YELLOW}永久有效${PLAIN}"
+        fi
         read -p "请输入新的强制到期日期 (格式 2026-10-01 或 2026-10-01 12:00:00, 回车表示取消限期): " NEW_EXPIRE
         NEW_EXPIRE=$(echo "$NEW_EXPIRE" | tr -d '\r' | xargs)
         sed -i "/^\[access\.user_expirations\]/,/^\[/{/^$target_name *=/d}" /etc/telemt.toml
@@ -2765,6 +2792,12 @@ reset_telemt_user_quota() {
             echo -e "${GREEN}已彻底解除该用户的期限限制，恢复为永久有效。${PLAIN}"
         fi
     elif [ "$POL_OPT" -eq 3 ]; then
+        if [ -n "$cur_quota" ]; then
+            CUR_QUOTA_GB=$(awk "BEGIN {printf \"%.2f\", $cur_quota / 1073741824}")
+            echo -e "当前配额: ${YELLOW}${CUR_QUOTA_GB} GB${PLAIN}"
+        else
+            echo -e "当前配额: ${YELLOW}未设置 (无限制)${PLAIN}"
+        fi
         read -p "请输入此用户的新的总流量配额上限 (GB为单位, 回车则解除配额): " NEW_QUOTA
         NEW_QUOTA=$(echo "$NEW_QUOTA" | tr -d '\r ')
         sed -i "/^\[access\.user_data_quota\]/,/^\[/{/^$target_name *=/d}" /etc/telemt.toml
@@ -2788,6 +2821,12 @@ reset_telemt_user_quota() {
         fi
     elif [ "$POL_OPT" -eq 4 ]; then
         echo -e "${BLUE}—— 一键设定配额 + 到期日（适合无限制用户转为受限）——${PLAIN}"
+        if [ -n "$cur_quota" ]; then
+            CUR_QUOTA_GB=$(awk "BEGIN {printf \"%.2f\", $cur_quota / 1073741824}")
+            echo -e "当前配额: ${YELLOW}${CUR_QUOTA_GB} GB${PLAIN}"
+        else
+            echo -e "当前配额: ${YELLOW}未设置 (无限制)${PLAIN}"
+        fi
         
         read -p "请输入流量配额 (GB为单位, 回车表示解除配额): " NEW_QUOTA
         NEW_QUOTA=$(echo "$NEW_QUOTA" | tr -d '\r ')
@@ -2810,6 +2849,12 @@ reset_telemt_user_quota() {
             echo -e "${YELLOW}已解除该用户的流量配额限制。${PLAIN}"
         fi
         
+        if [ -n "$cur_expire" ]; then
+            CUR_EXP_DISP=$(echo "$cur_expire" | tr 'T' ' ' | sed 's/+.*$//')
+            echo -e "当前到期: ${YELLOW}${CUR_EXP_DISP}${PLAIN}"
+        else
+            echo -e "当前到期: ${YELLOW}永久有效${PLAIN}"
+        fi
         read -p "请输入到期日期 (格式 2026-10-01 或 2026-10-01 12:00:00, 回车表示取消限期): " NEW_EXPIRE
         NEW_EXPIRE=$(echo "$NEW_EXPIRE" | tr -d '\r' | xargs)
         sed -i "/^\[access\.user_expirations\]/,/^\[/{/^$target_name *=/d}" /etc/telemt.toml
@@ -2831,6 +2876,14 @@ reset_telemt_user_quota() {
         fi
     elif [ "$POL_OPT" -eq 5 ]; then
         echo -e "${BLUE}—— 重新分配独立上下行网速 ——${PLAIN}"
+        if [ -n "$cur_speed" ]; then
+            SP_UP=$(echo "$cur_speed" | awk '{print $1}')
+            SP_DN=$(echo "$cur_speed" | awk '{print $2}')
+            [ -z "$SP_DN" ] && SP_DN=$SP_UP
+            echo -e "当前限速: ${YELLOW}↑上行 ${SP_UP} MB/s ｜ ↓下行 ${SP_DN} MB/s${PLAIN}"
+        else
+            echo -e "当前限速: ${YELLOW}无限制极速${PLAIN}"
+        fi
         read -p "请输入该用户【上行】速度限制 (MB/s, 例如 1.5, 回车则极速不限流): " SPEED_UP
         SPEED_UP=$(echo "$SPEED_UP" | tr -d '\r ' | xargs)
         if [ -n "$SPEED_UP" ]; then
@@ -2855,6 +2908,9 @@ reset_telemt_user_quota() {
         fi
     elif [ "$POL_OPT" -eq 6 ]; then
         echo -e "${BLUE}—— 修改通信密钥 ——${PLAIN}"
+        if [ -n "$cur_secret" ]; then
+            echo -e "当前密钥: ${YELLOW}${cur_secret}${PLAIN}"
+        fi
         read -p "请输入新的通信密钥 (32 位 hex, 回车自动生成): " NEW_SECRET
         NEW_SECRET=$(echo "$NEW_SECRET" | tr -d '\r ' | xargs)
         [ -z "$NEW_SECRET" ] && NEW_SECRET=$(generate_secret)
@@ -2867,6 +2923,11 @@ reset_telemt_user_quota() {
         fi
     elif [ "$POL_OPT" -eq 7 ]; then
         echo -e "${BLUE}—— 重新分配专属独立端口 ——${PLAIN}"
+        if [ -n "$cur_port" ]; then
+            echo -e "当前专属端口: ${YELLOW}${cur_port}${PLAIN}"
+        else
+            echo -e "当前端口: ${YELLOW}全局共享${PLAIN}"
+        fi
         read -p "请输入新的专属端口 (1-65535, 回车或 0 表示移除专属端口恢复共享): " NEW_DEDICATED_PORT
         NEW_DEDICATED_PORT=$(echo "$NEW_DEDICATED_PORT" | tr -d '\r ' | xargs)
         sed -i "/^\[access\.user_ports\]/,/^\[/{/^$target_name *=/d}" /etc/telemt.toml
