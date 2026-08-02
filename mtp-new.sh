@@ -121,10 +121,10 @@ generate_secret() {
 
 # --- IP 模式选择 ---
 select_ip_mode() {
-    echo -e "请选择监听模式:"
-    echo -e "1. ${GREEN}IPv4 仅${PLAIN} (默认，高稳定性)"
-    echo -e "2. ${YELLOW}IPv6 仅${PLAIN}"
-    echo -e "3. ${BLUE}双栈模式 (IPv4 + IPv6)${PLAIN}"
+    echo -e "请选择监听模式:" >&2
+    echo -e "1. ${GREEN}IPv4 仅${PLAIN} (默认，高稳定性)" >&2
+    echo -e "2. ${YELLOW}IPv6 仅${PLAIN}" >&2
+    echo -e "3. ${BLUE}双栈模式 (IPv4 + IPv6)${PLAIN}" >&2
     read -p "请选择 [1-3] (默认 1): " mode
     case $mode in
         2) echo "v6" ;;
@@ -145,7 +145,7 @@ read_valid_port() {
             echo "$val"
             return 0
         fi
-        echo -e "${RED}端口必须是 1-65535 之间的数字！${PLAIN}"
+        echo -e "${RED}端口必须是 1-65535 之间的数字！${PLAIN}" >&2
     done
 }
 
