@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.2.43(2026-08-02)"
+SCRIPT_VERSION="2.2.45(2026-08-02)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
@@ -878,6 +878,7 @@ def total_report():
         t[0] += val
         t[1] += 1
     ranked = sorted(totals.items(), key=lambda kv: kv[1][0], reverse=True)
+    sys.stdout.write(report_header('MTProxy 总流量统计') + '\n\n')
     print('')
     print('==================================================')
     print(GREEN + '       总流量使用统计 (历史累计, 按已用排序)      ' + PLAIN)
@@ -905,6 +906,41 @@ def mask_ip(ip):
         return '.'.join(parts[:3]) + '.***'
     l = len(ip)
     return (ip[:l - 3] if l > 3 else ip[:1]) + '***'
+
+
+def report_header(title):
+    bj_t = bj_time().strftime('%Y-%m-%d %H:%M:%S')
+    utc_t = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    host = ''
+    try:
+        import socket
+        host = socket.gethostname()
+    except Exception:
+        pass
+    ip_line = ''
+    try:
+        req = urllib.request.Request('https://ipwho.is/', headers={'User-Agent': 'Mozilla'})
+        geo = json.loads(urllib.request.urlopen(req, timeout=4).read().decode('utf-8', 'replace'))
+        pub_ip = geo.get('ip', '')
+        if pub_ip:
+            city = geo.get('city', '') or ''
+            country = geo.get('country', '') or ''
+            loc = ', '.join(x for x in (city, country) if x)
+            if loc:
+                ip_line = '🌐 IP 信息: %s, %s\n' % (mask_ip(pub_ip), loc)
+            else:
+                ip_line = '🌐 IP 信息: %s\n' % mask_ip(pub_ip)
+    except Exception:
+        pass
+
+    msg = '🎮 %s\n' % title
+    msg += '🕐 运行时间: %s (北京时间)\n' % bj_t
+    msg += '🕐 运行时间: %s (UTC)\n' % utc_t
+    if ip_line:
+        msg += ip_line
+    if host:
+        msg += '🖥️ 服务器: %s\n' % host
+    return msg
 
 
 def report_text():
@@ -940,37 +976,7 @@ def report_text():
             body += '   累计: %s' % fmt_bytes(ut)
         body += '\n'
 
-    bj_t = bj_time().strftime('%Y-%m-%d %H:%M:%S')
-    utc_t = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-    host = ''
-    try:
-        import socket
-        host = socket.gethostname()
-    except Exception:
-        pass
-    ip_line = ''
-    try:
-        req = urllib.request.Request('https://ipwho.is/', headers={'User-Agent': 'Mozilla'})
-        geo = json.loads(urllib.request.urlopen(req, timeout=4).read().decode('utf-8', 'replace'))
-        pub_ip = geo.get('ip', '')
-        if pub_ip:
-            city = geo.get('city', '') or ''
-            country = geo.get('country', '') or ''
-            loc = ', '.join(x for x in (city, country) if x)
-            if loc:
-                ip_line = '🌐 IP 信息: %s, %s\n' % (mask_ip(pub_ip), loc)
-            else:
-                ip_line = '🌐 IP 信息: %s\n' % mask_ip(pub_ip)
-    except Exception:
-        pass
-
-    msg = '🎮 MTProxy 本月流量统计日报 (服务器报告)\n'
-    msg += '🕐 运行时间: %s (北京时间)\n' % bj_t
-    msg += '🕐 运行时间: %s (UTC)\n' % utc_t
-    if ip_line:
-        msg += ip_line
-    if host:
-        msg += '🖥️ 服务器: %s\n' % host
+    msg = report_header('MTProxy 本月流量统计日报')
     msg += '\n'
     msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
     msg += '%-14s %-9s %-9s %-9s %-7s %s\n' % ('用户名', '已用', '限额', '剩余', '使用率', '耗尽时间')
@@ -1209,6 +1215,8 @@ def user_display(name, ipv4, ipv6):
             total_months += 1
 
     out = []
+    out.append(report_header('MTProxy 用户配置详情'))
+    out.append('')
     out.append('===========================================')
     out.append(GREEN + '        用户 %s 当前配置       ' % name + PLAIN)
     out.append('===========================================')
@@ -1249,6 +1257,8 @@ def users_display(ipv4, ipv6):
     quota = read_json(QUOTA, {})
 
     out = []
+    out.append(report_header('MTProxy 全部用户配置清单'))
+    out.append('')
     out.append('===========================================')
     out.append(GREEN + '      Telemt 用户列表及专属分享链接       ' + PLAIN)
     out.append('===========================================')
@@ -1338,10 +1348,6 @@ def tg_userconf(name):
     if not text:
         print(YELLOW + '无任何用户配置信息。' + PLAIN)
         return 0
-    if name:
-        text = '📋 用户配置详情: %s\n%s' % (name, text)
-    else:
-        text = '📋 全部用户配置清单\n%s' % text
     return tg_send(text, 'userconf_one' if name else 'userconf_all')
 
 
