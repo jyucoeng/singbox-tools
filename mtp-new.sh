@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.2.9(2026-08-02)"
+SCRIPT_VERSION="2.2.10(2026-08-02)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
@@ -517,6 +517,7 @@ EXHAUSTED = os.environ.get('TELEMT_EXHAUSTED', '/etc/telemt_exhausted.json')
 TG_CONF = os.environ.get('TELEMT_TG_CONF', '/etc/telemt_tg.conf')
 TELEMT_CONF = os.environ.get('TELEMT_CONF', '/opt/mtproxy/config/telemt.conf')
 DATA_DIR = os.environ.get('TELEMT_DATA_DIR', '/opt/mtproxy/exhausteddata')
+SNAP_STATE = os.path.join(DATA_DIR, 'traffic_snapshot_state')
 
 RED = '\033[31m'
 GREEN = '\033[32m'
@@ -721,6 +722,7 @@ def snapshot():
     if not os.path.exists(LOG):
         open(LOG, 'a').close()
     now = now_str()
+    state = read_json(SNAP_STATE, {})
     rows = []
     for user, limit_s in sections.get('access.user_data_quota', []):
         if not user:
@@ -732,13 +734,22 @@ def snapshot():
         used_bytes = quota_used(quota, user)
         used_s = fmt_bytes(used_bytes)
         limit_s = fmt_bytes(limit_bytes)
+        last_used = state.get(user)
+        exhausted_first = False
         if limit_bytes > 0 and used_bytes >= limit_bytes:
             if not record_exhausted(user, now):
+                exhausted_first = True
                 rows.append('%s | 用尽流量: 已用 %s / 限额 %s | %s' % (user, used_s, limit_s, now))
-        rows.append('%s | 已用 %s / 限额 %s | %s' % (user, used_s, limit_s, now))
-    with open(LOG, 'a', encoding='utf-8') as f:
-        for r in rows:
-            f.write(r + '\n')
+        if used_bytes > 0 and (exhausted_first or last_used is None or used_bytes != last_used):
+            rows.append('%s | 已用 %s / 限额 %s | %s' % (user, used_s, limit_s, now))
+        state[user] = used_bytes
+    if rows:
+        with open(LOG, 'a', encoding='utf-8') as f:
+            for r in rows:
+                f.write(r + '\n')
+    if state:
+        os.makedirs(DATA_DIR, exist_ok=True)
+        write_json(SNAP_STATE, state)
     update_total_cache()
     dbg('snapshot: %s 个配额用户, 追加 %d 行, LOG=%s' % (len(sections.get('access.user_data_quota', [])), len(rows), LOG))
     return 0
