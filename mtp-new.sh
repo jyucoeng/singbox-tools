@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.2.16(2026-08-02)"
+SCRIPT_VERSION="2.2.17(2026-08-02)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
@@ -21,8 +21,11 @@ fi
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 
 # 自动注册全局快捷命令 mtp（如果尚未注册）
-if [ ! -L "/usr/local/bin/mtp" ] || [ "$(readlink -f /usr/local/bin/mtp 2>/dev/null)" != "$SCRIPT_PATH" ]; then
-    ln -sf "$SCRIPT_PATH" /usr/local/bin/mtp 2>/dev/null
+# 注意：通过 bash <(curl ...) 运行时 $0 是 /dev/fd/*，不能把链接指到临时 fd
+if [ -n "$SCRIPT_PATH" ] && [[ "$SCRIPT_PATH" != /dev/fd/* && "$SCRIPT_PATH" != /dev/stdin* ]]; then
+    if [ ! -L "/usr/local/bin/mtp" ] || [ "$(readlink -f /usr/local/bin/mtp 2>/dev/null)" != "$SCRIPT_PATH" ]; then
+        ln -sf "$SCRIPT_PATH" /usr/local/bin/mtp 2>/dev/null
+    fi
 fi
 
 # 颜色定义
