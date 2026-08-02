@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.2.47(2026-08-02)"
+SCRIPT_VERSION="2.2.48(2026-08-02)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
@@ -1256,7 +1256,7 @@ def user_display(name, ipv4, ipv6):
     out.append('===========================================')
     out.append(GREEN + '        用户 %s 当前配置       ' % name + PLAIN)
     out.append('===========================================')
-    out.append('👤 用户名: ' + YELLOW + name + PLAIN + '  (状态: %s)' % status_str)
+    out.append('   👤 用户名: ' + YELLOW + name + PLAIN + '  (状态: %s)' % status_str)
     out.append('   🔑 密钥: %s' % secret)
     out.append('   🌐 端口: ' + RED + link_port + PLAIN + ' [%s]' % port_lbl)
     out.append('   📅 到期: %s' % expire_str)
@@ -1351,7 +1351,7 @@ def users_display(ipv4, ipv6):
             up_s = sp[0] if sp else ''
             down_s = sp[1] if len(sp) > 1 else up_s
             speed_str = '   🚀 独立带宽：' + YELLOW + '↑上行 %s MB/s' % up_s + PLAIN + ' ｜ ' + BLUE + '↓下行 %s MB/s' % down_s + PLAIN
-        out.append('👤 用户名: ' + YELLOW + user + PLAIN + '  (密钥: %s | 状态: %s)' % (secret, status_str))
+        out.append('   👤 用户名: ' + YELLOW + user + PLAIN + '  (密钥: %s | 状态: %s)' % (secret, status_str))
         out.append('   🌐 端口: ' + RED + link_port + PLAIN + ' [%s]   📅 到期: %s' % (port_lbl, expire_str))
         out.append('   📊 %s' % quota_str)
         out.append(speed_str)
