@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.2.37(2026-08-02)"
+SCRIPT_VERSION="2.2.43(2026-08-02)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
@@ -1061,8 +1061,10 @@ def tg_send(text, tag='unknown'):
         print(RED + 'Telegram 推送失败(第 %d/%d 条): %s' % (idx, total, res[:200]) + PLAIN, file=sys.stderr)
     if fail > 0:
         tg_log(tag, '发送完成，失败 %d/%d 条' % (fail, total))
+        print(RED + '❌ TG 推送失败: %d/%d 条未送达' % (fail, total) + PLAIN, file=sys.stderr)
     else:
         tg_log(tag, '发送成功 (%d 条)' % total)
+        print(GREEN + '✅ TG 推送成功 (%d 条)' % total + PLAIN)
     return 1 if fail > 0 else 0
 
 
@@ -1086,8 +1088,8 @@ def tg_usage_report(force):
             return 0
     else:
         if str(conf.get('TG_ENABLE_MANUAL_REPORT', '1')) != '1':
-            print(YELLOW + '「手动统计月报」开关未开启，即将跳过发送该 TG 消息。' + PLAIN)
-            return 0
+            print(YELLOW + '⏭️ 由于「手动统计月报」开关未开启，将跳过该 TG 消息的推送。' + PLAIN)
+            return 2
     dbg('tg_report: force=%s, 准备推送' % force)
     snapshot()
     return tg_send(report_text(), 'manual_report' if force else 'daily')
@@ -1115,11 +1117,14 @@ def lookup_by_secret(b64):
     return None
 
 
-def lookup_user(b64):
+def lookup_user(b64, user_only=False):
     user = lookup_by_secret(b64)
     if user is None:
         print(YELLOW + '未找到使用该 TG 链接的用户。' + PLAIN)
         return 1
+    if user_only:
+        print(user)
+        return 0
     print(GREEN + '✅ 该链接对应的用户是: ' + PLAIN + YELLOW + user + PLAIN)
     return 0
 
@@ -1321,8 +1326,8 @@ def tg_userconf(name):
     conf = read_conf(TG_CONF)
     key = 'TG_ENABLE_USERCONF_ALL' if not name else 'TG_ENABLE_USERCONF_ONE'
     if str(conf.get(key, '1')) != '1':
-        print(YELLOW + '「%s」开关未开启，即将跳过发送该 TG 消息。' % ('全部用户配置清单' if not name else '指定用户配置详情') + PLAIN)
-        return 0
+        print(YELLOW + '⏭️ 由于「%s」开关未开启，将跳过该 TG 消息的推送。' % ('全部用户配置清单' if not name else '指定用户配置详情') + PLAIN)
+        return 2
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         if name:
@@ -1347,6 +1352,13 @@ def main(argv):
         return snapshot()
     if cmd == 'usage':
         return usage_report()
+    if cmd == 'report':
+        if not os.path.exists(QUOTA):
+            print(YELLOW + '尚无流量账单 (/etc/telemt_quota.json 不存在)，请先安装 Telemt 并产生流量。' + PLAIN)
+            return 0
+        snapshot()
+        sys.stdout.write(report_text() + '\n')
+        return 0
     if cmd == 'usage_total':
         return total_report()
     if cmd == 'users':
@@ -1354,7 +1366,7 @@ def main(argv):
     if cmd == 'user':
         return user_display(_get_opt(argv, '--name', ''), _get_opt(argv, '--ipv4', ''), _get_opt(argv, '--ipv6', ''))
     if cmd == 'lookup':
-        return lookup_user(_get_opt(argv, '--secret', ''))
+        return lookup_user(_get_opt(argv, '--secret', ''), '--user-only' in argv)
     if cmd == 'tg_userconf':
         return tg_userconf(_get_opt(argv, '--name', ''))
     if cmd == 'tg_report':
@@ -1414,6 +1426,50 @@ traffic_total_report() {
     return $?
 }
 
+# 本地查看本月统计月报（日报文本，仅控制台展示，不推送）
+traffic_report_local() {
+    stats_py report
+    return $?
+}
+
+# 主菜单入口：流量统计（仅本地查看，推送在 TG 通知细分中）
+traffic_stats_menu() {
+    clear
+    echo -e "${BLUE}===========================================${PLAIN}"
+    echo -e "${GREEN}              流量统计          ${PLAIN}"
+    echo -e "${BLUE}===========================================${PLAIN}"
+    echo -e "  ${GREEN}1.${PLAIN} 查看本月统计月报"
+    echo -e "  ${GREEN}2.${PLAIN} 查看全部用户配置清单"
+    echo -e "  ${GREEN}3.${PLAIN} 查看指定用户配置详情"
+    echo -e "  ${GREEN}4.${PLAIN} 查看总流量统计 (历史累计)"
+    echo -e "  ${GREEN}0.${PLAIN} 返回主菜单"
+    echo -e "${BLUE}===========================================${PLAIN}"
+    read -p "  请选择操作 [0-4]: " ts_choice
+    case $ts_choice in
+        1) traffic_report_local ;;
+        2)
+            snapshot_traffic_stats
+            stats_py users
+            ;;
+        3)
+            local TUNAME=""
+            read -p "请输入要查看的用户名: " TUNAME
+            TUNAME=$(echo "$TUNAME" | tr -d '\r ' | xargs)
+            if [ -n "$TUNAME" ]; then
+                TELEMT_USER="$TUNAME" show_telemt_user
+            else
+                echo -e "${YELLOW}未输入用户名，已取消。${PLAIN}"
+            fi
+            ;;
+        4) traffic_total_report ;;
+        0) return ;;
+        *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
+    esac
+    echo ""
+    read -n 1 -s -r -p "按任意键继续..."
+    traffic_stats_menu
+}
+
 # 发送一条文本消息到 Telegram（薄封装）
 tg_send() {
     stats_py tg_send --text "$1"
@@ -1447,9 +1503,25 @@ tg_send_user_conf() {
 # 立即推送全部 TG 消息（全部配置清单 + 本月月报，逐项尊重开关）
 tg_push_all() {
     echo -e "${BLUE}▶ 开始立即推送全部 TG 消息 ...${PLAIN}"
-    stats_py tg_userconf --name ""
-    tg_usage_report force
-    tg_notify_log "push_all" "立即推送全部消息完成"
+    local R1=0 R2=0
+    stats_py tg_userconf --name ""; R1=$?
+    tg_usage_report force; R2=$?
+    echo -e ""
+    echo -e "${BLUE}────────── 推送结果汇总 ──────────${PLAIN}"
+    echo -e "  ${GREEN}1.${PLAIN} 全部用户配置清单: $(tg_push_result_str $R1)"
+    echo -e "  ${GREEN}2.${PLAIN} 本月统计月报:     $(tg_push_result_str $R2)"
+    echo -e "${BLUE}────────────────────────────────${PLAIN}"
+    tg_notify_log "push_all" "立即推送全部消息完成 (清单:$R1 月报:$R2)"
+}
+
+# 推送结果状态文本（0=成功 1=失败 2=开关未开跳过）
+tg_push_result_str() {
+    case "$1" in
+        0) echo -e "${GREEN}✅ 推送成功${PLAIN}" ;;
+        1) echo -e "${RED}❌ 推送失败${PLAIN}" ;;
+        2) echo -e "${YELLOW}⏭️ 已跳过 (开关未开启)${PLAIN}" ;;
+        *) echo -e "${RED}未知状态 ($1)${PLAIN}" ;;
+    esac
 }
 
 # 主菜单入口：TG 通知细分（发送用户配置/月报/开关设置）
@@ -3030,7 +3102,15 @@ lookup_telemt_user_by_link() {
         echo -e "${RED}链接中未找到 secret 参数！${PLAIN}"
         return 1
     fi
-    stats_py lookup --secret "$SECRET"
+    local FOUND_USER=""
+    FOUND_USER=$(stats_py lookup --secret "$SECRET" --user-only 2>/dev/null | tail -1)
+    if [ -z "$FOUND_USER" ]; then
+        stats_py lookup --secret "$SECRET"
+        return 1
+    fi
+    echo -e "${GREEN}✅ 该链接对应的用户是: ${PLAIN}${YELLOW}$FOUND_USER${PLAIN}"
+    echo -e "${BLUE}以下为该用户的当前配置:${PLAIN}"
+    TELEMT_USER="$FOUND_USER" show_telemt_user
     return $?
 }
 
@@ -3745,7 +3825,7 @@ menu() {
     echo -e ""
     echo -e "  系统: ${GREEN}${OS}${PLAIN}  |  模式: ${GREEN}${INIT_SYSTEM}${PLAIN}"
     echo -e "  Go 版: $(get_service_status_str mtg)  Telemt 版: $(get_service_status_str telemt)"
-    echo -e "  Telegram 推送: $(get_tg_status_str)"
+    echo -e "  TG 消息推送: $(get_tg_status_str)"
     echo -e ""
     echo -e "  ${YELLOW}【安 装】${PLAIN}"
     echo -e "    ${GREEN}[1]${PLAIN} 安装 Go 版          ${GREEN}[2]${PLAIN} 安装 Telemt (高性能进阶版)"
@@ -3755,22 +3835,22 @@ menu() {
     echo -e "    ${GREEN}[5]${PLAIN} 删除配置            ${GREEN}[6]${PLAIN} Telemt 多用户管理"
     echo -e ""
     echo -e "  ${YELLOW}【TG 配置】${PLAIN}"
-    echo -e "    ${GREEN}[7]${PLAIN} TG 推送配置          ${GREEN}[8]${PLAIN} 用户流量统计"
-    echo -e "    ${GREEN}[9]${PLAIN} TG 通知细分          ${GREEN}[10]${PLAIN} 总流量统计"
+    echo -e "    ${GREEN}[7]${PLAIN} TG 推送配置          ${GREEN}[8]${PLAIN} 流量统计"
+    echo -e "    ${GREEN}[9]${PLAIN} TG 通知细分"
     echo -e ""
     echo -e "  ${YELLOW}【状态与日志】${PLAIN}"
-    echo -e "    ${GREEN}[11]${PLAIN} 查看运行状态        ${GREEN}[12]${PLAIN} 查看日志"
+    echo -e "    ${GREEN}[10]${PLAIN} 查看运行状态        ${GREEN}[11]${PLAIN} 查看日志"
     echo -e ""
     echo -e "  ${YELLOW}【服务控制】${PLAIN}"
-    echo -e "    ${GREEN}[13]${PLAIN} 启动服务           ${GREEN}[14]${PLAIN} 停止服务"
-    echo -e "    ${GREEN}[15]${PLAIN} 重启服务"
+    echo -e "    ${GREEN}[12]${PLAIN} 启动服务           ${GREEN}[13]${PLAIN} 停止服务"
+    echo -e "    ${GREEN}[14]${PLAIN} 重启服务"
     echo -e ""
     echo -e "  ${RED}【危险操作】${PLAIN}"
-    echo -e "    ${RED}[16]${PLAIN} 卸载全部并清理"
+    echo -e "    ${RED}[15]${PLAIN} 卸载全部并清理"
     echo -e ""
     echo -e "    ${GREEN}[0]${PLAIN} 退出脚本"
     echo -e ""
-    read -p "  请输入选项 [0-16]: " choice
+    read -p "  请输入选项 [0-15]: " choice
     debug_log "【调试】menu 选择: $choice"
 
     case $choice in
@@ -3781,15 +3861,14 @@ menu() {
         5) delete_config ;;
         6) manage_telemt_users; back_to_menu ;;
         7) setup_tg_push; back_to_menu ;;
-        8) traffic_usage_report; back_to_menu ;;
-        9) tg_send_user_conf_menu ;;
-        10) traffic_total_report; back_to_menu ;;
-        11) check_all_status; back_to_menu ;;
-        12) view_logs; back_to_menu ;;
-        13) control_service start; back_to_menu ;;
-        14) control_service stop; back_to_menu ;;
-        15) control_service restart; back_to_menu ;;
-        16) delete_all; exit 0 ;;
+        8) traffic_stats_menu; back_to_menu ;;
+        9) tg_send_user_conf_menu; back_to_menu ;;
+        10) check_all_status; back_to_menu ;;
+        11) view_logs; back_to_menu ;;
+        12) control_service start; back_to_menu ;;
+        13) control_service stop; back_to_menu ;;
+        14) control_service restart; back_to_menu ;;
+        15) delete_all; exit 0 ;;
         0) echo -e "${GREEN}再见!${PLAIN}"; exit 0 ;;
         *) echo -e "${RED}无效选项${PLAIN}"; sleep 1; menu ;;
     esac
