@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.2.49(2026-08-02)"
+SCRIPT_VERSION="2.2.51(2026-08-02)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
@@ -1365,7 +1365,7 @@ def users_display(ipv4, ipv6):
     return 0
 
 
-def tg_userconf(name):
+def tg_userconf(name, ipv4='', ipv6=''):
     if not os.path.exists(TG_CONF):
         print(YELLOW + '未配置 Telegram 推送，请先在主菜单 [7] 配置 TG。' + PLAIN)
         return 1
@@ -1377,9 +1377,9 @@ def tg_userconf(name):
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         if name:
-            user_display(name, '', '')
+            user_display(name, ipv4, ipv6)
         else:
-            users_display('', '')
+            users_display(ipv4, ipv6)
     text = re.sub(r'\x1b\[[0-9;]*m', '', buf.getvalue()).strip()
     if not text:
         print(YELLOW + '无任何用户配置信息。' + PLAIN)
@@ -1410,7 +1410,7 @@ def main(argv):
     if cmd == 'lookup':
         return lookup_user(_get_opt(argv, '--secret', ''), '--user-only' in argv)
     if cmd == 'tg_userconf':
-        return tg_userconf(_get_opt(argv, '--name', ''))
+        return tg_userconf(_get_opt(argv, '--name', ''), _get_opt(argv, '--ipv4', ''), _get_opt(argv, '--ipv6', ''))
     if cmd == 'tg_report':
         return tg_usage_report('--force' in argv)
     if cmd == 'tg_send':
@@ -1478,7 +1478,7 @@ traffic_report_local() {
 traffic_stats_menu() {
     clear
     echo -e "${BLUE}===========================================${PLAIN}"
-    echo -e "${GREEN}              流量统计          ${PLAIN}"
+    echo -e "${GREEN}             [8] 流量统计           ${PLAIN}"
     echo -e "${BLUE}===========================================${PLAIN}"
     echo -e "  ${GREEN}1.${PLAIN} 查看本月统计月报"
     echo -e "  ${GREEN}2.${PLAIN} 查看全部用户配置清单"
@@ -1537,7 +1537,18 @@ tg_send_user_conf() {
             UNAME=$(echo "$UNAME" | tr -d '\r ' | xargs)
         fi
     fi
-    stats_py tg_userconf --name "$UNAME"
+    tg_userconf_push "$UNAME"
+    return $?
+}
+
+# 推送用户配置清单/详情到 TG（自动附带服务器 IP，使消息体包含 tg:// 分享链接）
+tg_userconf_push() {
+    local UNAME="$1"
+    local IPV4="${PUBLIC_IPV4:-}"
+    local IPV6="${PUBLIC_IPV6:-}"
+    [ -z "$IPV4" ] && IPV4=$(get_public_ip)
+    [ -z "$IPV6" ] && IPV6=$(get_public_ipv6)
+    stats_py tg_userconf --name "$UNAME" --ipv4 "$IPV4" --ipv6 "$IPV6"
     return $?
 }
 
@@ -1545,7 +1556,7 @@ tg_send_user_conf() {
 tg_push_all() {
     echo -e "${BLUE}▶ 开始立即推送全部 TG 消息 ...${PLAIN}"
     local R1=0 R2=0
-    stats_py tg_userconf --name ""; R1=$?
+    tg_userconf_push ""; R1=$?
     tg_usage_report force; R2=$?
     echo -e ""
     echo -e "${BLUE}────────── 推送结果汇总 ──────────${PLAIN}"
@@ -1569,7 +1580,7 @@ tg_push_result_str() {
 tg_send_user_conf_menu() {
     clear
     echo -e "${BLUE}===========================================${PLAIN}"
-    echo -e "${GREEN}              TG 通知细分          ${PLAIN}"
+    echo -e "${GREEN}             [9] TG 通知细分          ${PLAIN}"
     echo -e "${BLUE}===========================================${PLAIN}"
     echo -e "  ${GREEN}1.${PLAIN} 消息发送开关设置"
     echo -e "  ${GREEN}2.${PLAIN} 立即推送全部用户配置清单到 TG"
@@ -1581,13 +1592,13 @@ tg_send_user_conf_menu() {
     read -p "  请选择操作 [0-5]: " uc_choice
     case $uc_choice in
         1) tg_notify_switch_menu ;;
-        2) stats_py tg_userconf --name "" ;;
+        2) tg_userconf_push "" ;;
         3)
             local UNAME=""
             read -p "请输入要推送配置的用户名: " UNAME
             UNAME=$(echo "$UNAME" | tr -d '\r ' | xargs)
             if [ -n "$UNAME" ]; then
-                stats_py tg_userconf --name "$UNAME"
+                tg_userconf_push "$UNAME"
             else
                 echo -e "${YELLOW}未输入用户名，已取消。${PLAIN}"
             fi
@@ -1644,7 +1655,7 @@ tg_notify_switch_menu() {
     while :; do
         clear
         echo -e "${BLUE}===========================================${PLAIN}"
-        echo -e "${GREEN}          消息发送开关设置          ${PLAIN}"
+        echo -e "${GREEN}          [9-1] 消息发送开关设置          ${PLAIN}"
         echo -e "${BLUE}===========================================${PLAIN}"
         echo -e "  说明: 默认全部勾选=发送；取消勾选后对应消息将一直不发送。"
         echo ""
@@ -1695,7 +1706,7 @@ tg_notify_switch_menu() {
 setup_tg_push() {
     echo -e ""
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${PLAIN}"
-    echo -e "${GREEN}      Telegram 流量统计推送配置     ${PLAIN}"
+    echo -e "${GREEN}       [7] Telegram 流量统计推送配置     ${PLAIN}"
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${PLAIN}"
     
     local OLD_TOKEN="" OLD_CHAT="" OLD_TIME=""
@@ -3854,7 +3865,7 @@ show_reset_status() {
 manage_telemt_users() {
     clear
     echo -e "${BLUE}======================================${PLAIN}"
-    echo -e "${GREEN}      Telemt 高级多用户管理菜单     ${PLAIN}"
+    echo -e "${GREEN}      [6] Telemt 高级多用户管理菜单     ${PLAIN}"
     echo -e "${BLUE}======================================${PLAIN}"
     echo -e "  ${GREEN}1.${PLAIN} 查看所有用户及专属分享链接"
     echo -e "  ${GREEN}2.${PLAIN} 查询指定用户配置 (模糊匹配)"
