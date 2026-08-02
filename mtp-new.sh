@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.2.1(2026-08-02)"
+SCRIPT_VERSION="2.2.2(2026-08-02)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
@@ -2504,7 +2504,7 @@ query_telemt_user() {
     local in_users=0
     local -a match_names=()
     while IFS= read -r line || [ -n "$line" ]; do
-        if [[ "$line" =~ ^\[access\.users\] ]]; then
+        if [[ "$line" =~ ^\[access[.]users\] ]]; then
             in_users=1
             continue
         fi
@@ -2539,6 +2539,8 @@ query_telemt_user() {
             return
         fi
         pick="${match_names[$((Q_SEL-1))]}"
+    elif [ ${#match_names[@]} -eq 1 ]; then
+        pick="${match_names[0]}"
     fi
     
     echo ""
