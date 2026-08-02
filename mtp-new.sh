@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.2.20(2026-08-02)"
+SCRIPT_VERSION="2.2.21(2026-08-02)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
@@ -2928,8 +2928,17 @@ reset_telemt_user_quota() {
     echo -e "5. ${YELLOW}重新单独设定网速带宽上下行分离限制${PLAIN}"
     echo -e "6. ${YELLOW}修改通信密钥 (强制该用户重新登录)${PLAIN}"
     echo -e "7. ${YELLOW}重新分配/移除专属独立端口${PLAIN}"
-    read -p "选择重置策略 [1-7] (回车默认1): " POL_OPT
+    echo -e "0. ${PLAIN}返回上级菜单${PLAIN}"
+    read -p "选择重置策略 [0-7] (回车默认1): " POL_OPT
     [ -z "$POL_OPT" ] && POL_OPT=1
+    if ! [[ "$POL_OPT" =~ ^[0-7]$ ]]; then
+        echo -e "${YELLOW}无效选项，已取消操作。${PLAIN}"
+        return
+    fi
+    if [ "$POL_OPT" -eq 0 ]; then
+        echo -e "${YELLOW}已返回上级菜单。${PLAIN}"
+        return
+    fi
     
     if [ "$POL_OPT" -eq 1 ]; then
         if [ -f "/etc/telemt_quota.json" ]; then
