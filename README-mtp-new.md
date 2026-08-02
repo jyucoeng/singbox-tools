@@ -307,4 +307,4 @@ alice | 已用 2.00GB / 限额 2.00GB | 2026-08-03 10:00:12
 
 ## 感谢
 
-- [0xdabiaoge大佬](https://github.com/0xdabiaoge/MTProxy)
+本项目魔改自 [0xdabiaoge/MTProxy](https://github.com/0xdabiaoge/MTProxy)，感谢原作者的优秀工作。本脚本在其基础上重写了安装/卸载、服务管理、多用户管理、流量统计、配额重置与 Telegram 推送等逻辑，二进制依赖仍沿用原仓库的编译产物。
