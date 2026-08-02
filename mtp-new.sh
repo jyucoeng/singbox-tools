@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.2.15(2026-08-02)"
+SCRIPT_VERSION="2.2.16(2026-08-02)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
@@ -1040,6 +1040,32 @@ def tg_secret(secret, domain):
     return base64.urlsafe_b64encode(bytes.fromhex(full)).decode().rstrip('=')
 
 
+def lookup_by_secret(b64):
+    try:
+        raw = base64.urlsafe_b64decode(b64 + '=' * (-len(b64) % 4))
+    except (ValueError, TypeError):
+        return None
+    full_hex = raw.hex()
+    if not full_hex.startswith('ee'):
+        return None
+    secret = full_hex[2:34].lower()
+    if len(secret) != 32:
+        return None
+    for user, val in parse_sections(TOML).get('access.users', []):
+        if val.lower() == secret:
+            return user
+    return None
+
+
+def lookup_user(b64):
+    user = lookup_by_secret(b64)
+    if user is None:
+        print(YELLOW + '未找到使用该 TG 链接的用户。' + PLAIN)
+        return 1
+    print(GREEN + '✅ 该链接对应的用户是: ' + PLAIN + YELLOW + user + PLAIN)
+    return 0
+
+
 def user_display(name, ipv4, ipv6):
     sections = parse_sections(TOML)
     conf = read_conf(TELEMT_CONF)
@@ -1211,6 +1237,8 @@ def main(argv):
         return users_display(_get_opt(argv, '--ipv4', ''), _get_opt(argv, '--ipv6', ''))
     if cmd == 'user':
         return user_display(_get_opt(argv, '--name', ''), _get_opt(argv, '--ipv4', ''), _get_opt(argv, '--ipv6', ''))
+    if cmd == 'lookup':
+        return lookup_user(_get_opt(argv, '--secret', ''))
     if cmd == 'tg_report':
         return tg_usage_report('--force' in argv)
     if cmd == 'tg_send':
@@ -2708,6 +2736,31 @@ del_telemt_user() {
     echo -e "${GREEN}删除用户 [$target_name] 成功并且已将其强制踢下线以及清理全部关联数据！${PLAIN}"
 }
 
+# 通过 TG 分享链接反查用户（TELEMT_LINK 可非交互指定）
+lookup_telemt_user_by_link() {
+    if [ ! -f "/etc/telemt.toml" ]; then
+        echo -e "${YELLOW}未检测到 Telemt 配置文件！${PLAIN}"
+        return 1
+    fi
+    local LINK="${TELEMT_LINK:-}"
+    if [ -z "$LINK" ]; then
+        echo ""
+        read -p "请粘贴 TG 分享链接 (tg://proxy?server=...&secret=..., 回车取消): " LINK
+    fi
+    LINK=$(echo "$LINK" | tr -d '\r ' | xargs)
+    if [ -z "$LINK" ]; then
+        echo -e "${YELLOW}已取消操作。${PLAIN}"
+        return
+    fi
+    local SECRET=$(echo "$LINK" | sed -n 's/.*[?&]secret=\([^&]*\).*/\1/p')
+    if [ -z "$SECRET" ]; then
+        echo -e "${RED}链接中未找到 secret 参数！${PLAIN}"
+        return 1
+    fi
+    stats_py lookup --secret "$SECRET"
+    return $?
+}
+
 # 非交互删除指定 Telemt 用户（TELEMT_USER 指定目标）
 del_telemt_user_by_name() {
     if [ ! -f "/etc/telemt.toml" ]; then
@@ -3370,9 +3423,10 @@ manage_telemt_users() {
     echo -e "  ${GREEN}4.${PLAIN} 踢出(删除)指定用户"
     echo -e "  ${GREEN}5.${PLAIN} 管理配额/到期/限速/密钥/端口"
     echo -e "  ${GREEN}6.${PLAIN} 自动重置配置 (Cron 月度轮转)"
+    echo -e "  ${GREEN}7.${PLAIN} TG 分享链接反查用户"
     echo -e "  ${GREEN}0.${PLAIN} 返回主菜单"
     echo -e "${BLUE}======================================${PLAIN}"
-    read -p "  请选择操作 [0-6]: " tm_choice
+    read -p "  请选择操作 [0-7]: " tm_choice
     case $tm_choice in
         1) list_telemt_users ;;
         2) query_telemt_user ;;
@@ -3380,6 +3434,7 @@ manage_telemt_users() {
         4) del_telemt_user ;;
         5) reset_telemt_user_quota ;;
         6) setup_quota_reset_cron; show_reset_status ;;
+        7) lookup_telemt_user_by_link ;;
         0) return ;;
         *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
     esac
