@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.2.45(2026-08-02)"
+SCRIPT_VERSION="2.2.47(2026-08-02)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
@@ -324,6 +324,42 @@ view_logs() {
 # --- Go 版安装逻辑 ---
 install_mtg() {
     prefetch_ips
+
+    # === 检测已安装/运行状态，避免覆盖运行中二进制导致 Text file busy ===
+    local MTG_INSTALLED=0 MTG_RUNNING=0
+    if [ -f "$BIN_DIR/mtg-go" ] || [ -f "/etc/systemd/system/mtg.service" ] || [ -f "/etc/init.d/mtg" ]; then
+        MTG_INSTALLED=1
+        if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+            systemctl is-active --quiet mtg 2>/dev/null && MTG_RUNNING=1
+        else
+            rc-service mtg status 2>/dev/null | grep -q "started" && MTG_RUNNING=1
+        fi
+    fi
+
+    if [ "$MTG_INSTALLED" -eq 1 ]; then
+        if [ "$MTG_RUNNING" -eq 1 ]; then
+            echo -e "${YELLOW}检测到 Go 版 (mtg) 已安装并正在运行！${PLAIN}"
+        else
+            echo -e "${YELLOW}检测到 Go 版 (mtg) 已安装 (当前未运行)。${PLAIN}"
+        fi
+        if [ -z "$NON_INTERACTIVE" ]; then
+            read -p "是否继续覆盖重装？(将先停止旧服务) [y/N]: " REINSTALL_CONFIRM
+            if [ "$REINSTALL_CONFIRM" != "y" ] && [ "$REINSTALL_CONFIRM" != "Y" ]; then
+                echo -e "${YELLOW}已取消重装，返回主菜单。${PLAIN}"
+                return 0
+            fi
+        fi
+        if [ "$MTG_RUNNING" -eq 1 ]; then
+            echo -e "${BLUE}正在停止旧 mtg 服务...${PLAIN}"
+            if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+                systemctl stop mtg 2>/dev/null
+            else
+                rc-service mtg stop 2>/dev/null
+            fi
+            sleep 1
+        fi
+    fi
+
     ARCH=$(uname -m)
     case $ARCH in
         x86_64) MTG_ARCH="amd64" ;;
@@ -1786,6 +1822,41 @@ install_telemt() {
     if [[ "$INIT_SYSTEM" != "systemd" && "$INIT_SYSTEM" != "openrc" ]]; then
         echo -e "${RED}您的系统 ($INIT_SYSTEM) 不受支持！Telemt 仅支持 Systemd 和 OpenRC。${PLAIN}"
         return 1
+    fi
+
+    # === 检测已安装/运行状态，避免覆盖运行中二进制导致 Text file busy ===
+    local TELEMT_INSTALLED=0 TELEMT_RUNNING=0
+    if [ -f "$BIN_DIR/telemt" ] || [ -f "/etc/systemd/system/telemt.service" ] || [ -f "/etc/init.d/telemt" ]; then
+        TELEMT_INSTALLED=1
+        if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+            systemctl is-active --quiet telemt 2>/dev/null && TELEMT_RUNNING=1
+        else
+            rc-service telemt status 2>/dev/null | grep -q "started" && TELEMT_RUNNING=1
+        fi
+    fi
+
+    if [ "$TELEMT_INSTALLED" -eq 1 ]; then
+        if [ "$TELEMT_RUNNING" -eq 1 ]; then
+            echo -e "${YELLOW}检测到 Telemt 已安装并正在运行！${PLAIN}"
+        else
+            echo -e "${YELLOW}检测到 Telemt 已安装 (当前未运行)。${PLAIN}"
+        fi
+        if [ -z "$NON_INTERACTIVE" ]; then
+            read -p "是否继续覆盖重装？(将先停止旧服务) [y/N]: " REINSTALL_CONFIRM
+            if [ "$REINSTALL_CONFIRM" != "y" ] && [ "$REINSTALL_CONFIRM" != "Y" ]; then
+                echo -e "${YELLOW}已取消重装，返回主菜单。${PLAIN}"
+                return 0
+            fi
+        fi
+        if [ "$TELEMT_RUNNING" -eq 1 ]; then
+            echo -e "${BLUE}正在停止旧 Telemt 服务...${PLAIN}"
+            if [[ "$INIT_SYSTEM" == "systemd" ]]; then
+                systemctl stop telemt 2>/dev/null
+            else
+                rc-service telemt stop 2>/dev/null
+            fi
+            sleep 1
+        fi
     fi
 
     ARCH=$(uname -m)
