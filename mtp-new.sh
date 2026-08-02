@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.2.34(2026-08-02)"
+SCRIPT_VERSION="2.2.36(2026-08-02)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
@@ -1506,6 +1506,16 @@ set_tg_switch() {
     fi
 }
 
+# 全部设置勾选状态（1=全部恢复勾选, 0=全部取消勾选）
+tg_switch_all() {
+    local val="$1"
+    set_tg_switch TG_ENABLE_DAILY "$val"
+    set_tg_switch TG_ENABLE_USERCONF_ALL "$val"
+    set_tg_switch TG_ENABLE_USERCONF_ONE "$val"
+    set_tg_switch TG_ENABLE_MANUAL_REPORT "$val"
+    tg_notify_log "switch" "$([ "$val" = "1" ] && echo 全部恢复勾选 || echo 全部取消勾选)"
+}
+
 # TG 消息发送开关设置（默认全部开启；关闭后对应消息一直不发送）
 tg_notify_switch_menu() {
     if [ ! -f /etc/telemt_tg.conf ]; then
@@ -1529,9 +1539,10 @@ tg_notify_switch_menu() {
         echo -e "  ${GREEN}[2]${PLAIN} 全部用户配置清单    $( [ "$a" = "1" ] && echo -e "${GREEN}✅ 已勾选(发送)${PLAIN}" || echo -e "${RED}❌ 已取消(不发送)${PLAIN}" )"
         echo -e "  ${GREEN}[3]${PLAIN} 指定用户配置详情    $( [ "$o" = "1" ] && echo -e "${GREEN}✅ 已勾选(发送)${PLAIN}" || echo -e "${RED}❌ 已取消(不发送)${PLAIN}" )"
         echo -e "  ${GREEN}[4]${PLAIN} 手动统计月报        $( [ "$m" = "1" ] && echo -e "${GREEN}✅ 已勾选(发送)${PLAIN}" || echo -e "${RED}❌ 已取消(不发送)${PLAIN}" )"
+        echo -e "  ${GREEN}[5]${PLAIN} 全部恢复勾选          ${GREEN}[6]${PLAIN} 全部取消勾选"
         echo -e "  ${GREEN}[0]${PLAIN} 返回上级菜单"
         echo -e "${BLUE}===========================================${PLAIN}"
-        read -p "  选择序号切换勾选状态 [0-4]: " sw
+        read -p "  选择序号切换勾选状态 [0-6]: " sw
         case $sw in
             1)
                 if [ "$d" = "1" ]; then d=0; else d=1; fi
@@ -1552,6 +1563,14 @@ tg_notify_switch_menu() {
                 if [ "$m" = "1" ]; then m=0; else m=1; fi
                 set_tg_switch TG_ENABLE_MANUAL_REPORT "$m"
                 tg_notify_log "switch" "手动统计月报 -> $([ "$m" = "1" ] && echo 勾选 || echo 取消)"
+                ;;
+            5)
+                d=1; a=1; o=1; m=1
+                tg_switch_all 1
+                ;;
+            6)
+                d=0; a=0; o=0; m=0
+                tg_switch_all 0
                 ;;
             0) return ;;
             *) echo -e "${RED}无效选项${PLAIN}"; sleep 1 ;;
