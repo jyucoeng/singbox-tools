@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.2.36(2026-08-02)"
+SCRIPT_VERSION="2.2.37(2026-08-02)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
@@ -1689,7 +1689,8 @@ EOF
     return 0
 }
 
-# 注册每日日报 Cron（每小时触发一次，由 tg_usage_report 内部判断北京时间是否到点）
+# 注册每日日报 Cron（每小时触发一次，由 tg_usage_report 内部判断北京时间是否到点；
+# 不写 TZ 行以免影响该用户下其他 cron 项目的定时）
 install_tg_cron() {
     local cron_cmd="0 * * * * /usr/local/bin/mtp tg_autopush >/dev/null 2>&1"
     (crontab -l 2>/dev/null | grep -v "mtp tg_"; echo "$cron_cmd") | crontab -
@@ -3383,11 +3384,11 @@ auto_reset_quota() {
     local log_file="/var/log/telemt_reset.log"
     
     if [ ! -f "$toml_file" ]; then
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] 错误: 配置文件 $toml_file 不存在，跳过重置" >> "$log_file"
+        echo "[$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S')] 错误: 配置文件 $toml_file 不存在，跳过重置" >> "$log_file"
         return 1
     fi
     if [ ! -f "$quota_json" ]; then
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] 信息: 流量记录 $quota_json 不存在，无需重置" >> "$log_file"
+        echo "[$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S')] 信息: 流量记录 $quota_json 不存在，无需重置" >> "$log_file"
         return 0
     fi
     
@@ -3395,7 +3396,7 @@ auto_reset_quota() {
     snapshot_traffic_stats
     
     # 收集过期用户列表（这些用户不重置）
-    local current_iso=$(date +"%Y-%m-%d %H:%M:%S")
+    local current_iso=$(TZ=Asia/Shanghai date +"%Y-%m-%d %H:%M:%S")
     local expired_users=""
     local in_expire_section=0
     while IFS= read -r line; do
@@ -3447,7 +3448,7 @@ auto_reset_quota() {
         fi
     done < "$toml_file"
     
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] 自动重置完成: 成功归零 $reset_count 位活跃用户, 跳过 $skip_count 位已过期用户" >> "$log_file"
+    echo "[$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S')] 自动重置完成: 成功归零 $reset_count 位活跃用户, 跳过 $skip_count 位已过期用户" >> "$log_file"
     
     # 重启服务刷新内存缓存
     if [[ "$INIT_SYSTEM" == "systemd" ]]; then
@@ -3477,18 +3478,18 @@ check_and_reset_quota() {
     fi
     
     if [ "$MODE" == "monthly" ]; then
-        local today_day=$(date +"%d" | sed 's/^0//')
+        local today_day=$(TZ=Asia/Shanghai date +"%d" | sed 's/^0//')
         local reset_day=${RESET_DAY:-1}
         if [ "$today_day" -eq "$reset_day" ]; then
             auto_reset_quota
         fi
     elif [ "$MODE" == "once" ]; then
-        local today=$(date +"%Y-%m-%d")
+        local today=$(TZ=Asia/Shanghai date +"%Y-%m-%d")
         if [ "$today" == "$ONCE_DATE" ]; then
             auto_reset_quota
             # 执行完毕后自动切换为 disabled
             sed -i 's/^MODE=.*/MODE=disabled/' "$conf_file"
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] 一次性重置任务已执行完毕，自动关闭" >> /var/log/telemt_reset.log
+            echo "[$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M:%S')] 一次性重置任务已执行完毕，自动关闭" >> /var/log/telemt_reset.log
         fi
     fi
 }
@@ -3620,9 +3621,10 @@ EOF
     esac
 }
 
-# 注册 Cron 定时任务（每天零点静默检查）
+# 注册 Cron 定时任务（每小时整点触发；由 check_reset 内部按北京时间判断是否到达重置日，
+# 避免在 crontab 顶部加 TZ 行影响该用户下其他项目的定时）
 install_reset_cron() {
-    local cron_cmd="0 0 * * * /usr/local/bin/mtp check_reset >/dev/null 2>&1"
+    local cron_cmd="0 * * * * /usr/local/bin/mtp check_reset >/dev/null 2>&1"
     
     # 先移除旧的同类条目，再添加
     (crontab -l 2>/dev/null | grep -v "mtp check_reset"; echo "$cron_cmd") | crontab -
