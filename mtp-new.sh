@@ -3266,7 +3266,7 @@ menu() {
     echo -e "${BLUE}                                  |___/ ${PLAIN}${GREEN}Lite Manager${PLAIN}"
     echo -e ""
     echo -e "  ${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${PLAIN}"
-    echo -e "          ${GREEN}MTProxy 管理脚本${PLAIN}  (${YELLOW}${SCRIPT_VERSION}${PLAIN})"
+    echo -e "          ${GREEN}MTProxy 管理脚本${PLAIN}  ${YELLOW}${SCRIPT_VERSION}${PLAIN}"
     echo -e "          ${GREEN}Author: ${SCRIPT_AUTHOR}${PLAIN}"
     echo -e "  ${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${PLAIN}"
     echo -e ""
