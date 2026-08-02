@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.2.17(2026-08-02)"
+SCRIPT_VERSION="2.2.20(2026-08-02)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
@@ -618,7 +618,7 @@ def bj_time():
 
 
 def now_str():
-    return datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    return bj_time().strftime('%Y-%m-%d %H:%M:%S')
 
 
 def get_exhausted(user):
@@ -626,7 +626,7 @@ def get_exhausted(user):
     ts = ex.get(user, '')
     if not ts:
         return ''
-    if ts[:7] == datetime.datetime.now().strftime('%Y-%m'):
+    if ts[:7] == bj_time().strftime('%Y-%m'):
         return ts
     return ''
 
@@ -783,7 +783,7 @@ def usage_report():
     if not os.path.exists(QUOTA):
         print(YELLOW + '尚无流量账单 (/etc/telemt_quota.json 不存在)，请先安装 Telemt 并产生流量。' + PLAIN)
         return 0
-    cur_month = datetime.datetime.now().strftime('%Y-%m')
+    cur_month = bj_time().strftime('%Y-%m')
     out = []
     out.append('')
     out.append('==================================================')
@@ -837,6 +837,20 @@ def usage_report():
     return 0
 
 
+def total_cache():
+    state_file = os.path.join(DATA_DIR, 'telemt_total.json')
+    cache = {}
+    try:
+        with open(state_file, encoding='utf-8') as f:
+            for ln in f:
+                parts = ln.split()
+                if len(parts) >= 3 and parts[0] != 'OFFSET':
+                    cache[(parts[0], parts[1])] = int(float(parts[2]))
+    except OSError:
+        pass
+    return cache
+
+
 def total_report():
     if not os.path.exists(LOG):
         print(YELLOW + '暂无流水日志 (/var/log/telemt_traffic.log)，无法统计历史累计总流量。' + PLAIN)
@@ -846,12 +860,7 @@ def total_report():
     if not os.path.exists(state_file):
         print(YELLOW + '暂无历史累计数据，请先产生流量或等待快照。' + PLAIN)
         return 0
-    cache = {}
-    with open(state_file, encoding='utf-8') as f:
-        for ln in f:
-            parts = ln.split()
-            if len(parts) >= 3 and parts[0] != 'OFFSET':
-                cache[(parts[0], parts[1])] = int(float(parts[2]))
+    cache = total_cache()
     if not cache:
         print(YELLOW + '  暂无可解析的历史流量记录。' + PLAIN)
         return 0
@@ -1093,6 +1102,7 @@ def user_display(name, ipv4, ipv6):
     quota_str = '未限流'
     status_str = GREEN + '🟢 正常' + PLAIN
     ex_str = ''
+    quota_hit = False
     if name in quota_map and quota_map[name]:
         try:
             limit_bytes = int(quota_map[name])
@@ -1103,8 +1113,8 @@ def user_display(name, ipv4, ipv6):
         limit_mb = int(limit_bytes / 1048576)
         limit_gb = '%.2f' % (limit_bytes / 1073741824.0)
         if limit_bytes > 0 and used_bytes >= limit_bytes:
+            quota_hit = True
             quota_str = '已用: ' + RED + '%dMB' % used_mb + PLAIN + ' / 总限额: %sGB (' % limit_gb + RED + '已超限' + PLAIN + ')'
-            status_str = RED + '🔴 断流封禁中（流量耗尽或到期）' + PLAIN
             ex_t = get_exhausted(name)
             if ex_t:
                 ex_str = '   ⏱️  本月流量耗尽时间: %s' % ex_t
@@ -1113,14 +1123,23 @@ def user_display(name, ipv4, ipv6):
             quota_str = '已用: ' + YELLOW + '%dMB' % used_mb + PLAIN + ' / 总限额: %sGB (使用率: %s%%)' % (limit_gb, pct)
 
     expire_str = '永久有效'
+    expire_hit = False
     if name in expire_map and expire_map[name]:
         end_iso = expire_map[name].split('+')[0].replace('T', ' ')
         current_iso = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         if current_iso > end_iso:
+            expire_hit = True
             expire_str = RED + '已过期 (%s)' % end_iso + PLAIN
-            status_str = RED + '🔴 断流封禁中（流量耗尽或到期）' + PLAIN
         else:
             expire_str = '%s 到期' % end_iso
+
+    if quota_hit or expire_hit:
+        if quota_hit and expire_hit:
+            status_str = RED + '🔴 断流封禁中（流量耗尽且已到期）' + PLAIN
+        elif quota_hit:
+            status_str = RED + '🔴 断流封禁中（流量耗尽）' + PLAIN
+        else:
+            status_str = RED + '🔴 断流封禁中（已到期）' + PLAIN
 
     speed_str = '无限制极速'
     if name in speed_map and speed_map[name]:
@@ -1128,6 +1147,15 @@ def user_display(name, ipv4, ipv6):
         up_s = sp[0] if sp else ''
         down_s = sp[1] if len(sp) > 1 else up_s
         speed_str = '上行 %s MB/s ｜ 下行 %s MB/s' % (up_s, down_s)
+
+    update_total_cache()
+    total_c = total_cache()
+    user_total = 0
+    total_months = 0
+    for (u, mo), v in total_c.items():
+        if u == name:
+            user_total += v
+            total_months += 1
 
     out = []
     out.append('===========================================')
@@ -1140,6 +1168,10 @@ def user_display(name, ipv4, ipv6):
     out.append('   📊 配额: %s' % quota_str)
     if ex_str:
         out.append(ex_str)
+    if user_total > 0:
+        out.append('   📈 历史累计: %s (%d 个月)' % (fmt_bytes(user_total), total_months))
+    else:
+        out.append('   📈 历史累计: 暂无记录')
     out.append('   🚀 限速: %s' % speed_str)
     if secret:
         b64 = tg_secret(secret, domain)
@@ -1180,6 +1212,7 @@ def users_display(ipv4, ipv6):
             port_lbl = '专属专线'
         quota_str = '未限流'
         status_str = GREEN + '🟢 正常' + PLAIN
+        quota_hit = False
         if user in quota_map and quota_map[user]:
             try:
                 limit_bytes = int(quota_map[user])
@@ -1190,8 +1223,8 @@ def users_display(ipv4, ipv6):
             limit_mb = int(limit_bytes / 1048576)
             limit_gb = '%.2f' % (limit_bytes / 1073741824.0)
             if limit_bytes > 0 and used_bytes >= limit_bytes:
+                quota_hit = True
                 quota_str = '已用: ' + RED + '%dMB' % used_mb + PLAIN + ' / 总限额: %sGB (' % limit_gb + RED + '已超限' + PLAIN + ')'
-                status_str = RED + '🔴 断流封禁中（流量耗尽或到期）' + PLAIN
                 ex_t = get_exhausted(user)
                 if ex_t:
                     quota_str = quota_str + '  ⏱️ 耗尽于: %s' % ex_t
@@ -1199,14 +1232,22 @@ def users_display(ipv4, ipv6):
                 pct = '%.1f' % (used_mb * 100.0 / limit_mb) if limit_mb > 0 else '0.0'
                 quota_str = '已用: ' + YELLOW + '%dMB' % used_mb + PLAIN + ' / 总限额: %sGB (使用率: %s%%)' % (limit_gb, pct)
         expire_str = '永久有效'
+        expire_hit = False
         if user in expire_map and expire_map[user]:
             end_iso = expire_map[user].split('+')[0].replace('T', ' ')
             current_iso = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             if current_iso > end_iso:
+                expire_hit = True
                 expire_str = RED + '已过期 (%s)' % end_iso + PLAIN
-                status_str = RED + '🔴 断流封禁中（流量耗尽或到期）' + PLAIN
             else:
                 expire_str = '%s 到期' % end_iso
+        if quota_hit or expire_hit:
+            if quota_hit and expire_hit:
+                status_str = RED + '🔴 断流封禁中（流量耗尽且已到期）' + PLAIN
+            elif quota_hit:
+                status_str = RED + '🔴 断流封禁中（流量耗尽）' + PLAIN
+            else:
+                status_str = RED + '🔴 断流封禁中（已到期）' + PLAIN
         speed_str = '   🚀 独立带宽：' + GREEN + '无限制极速' + PLAIN
         if user in speed_map and speed_map[user]:
             sp = speed_map[user].split()
