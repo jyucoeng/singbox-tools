@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.2.11(2026-08-02)"
+SCRIPT_VERSION="2.2.14(2026-08-02)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
@@ -1297,13 +1297,15 @@ setup_tg_push() {
         OLD_TOKEN="$BOT_TOKEN"
         OLD_CHAT="$CHAT_ID"
         OLD_TIME="$TG_TIME"
-        echo -e "  当前配置: Token=${BOT_TOKEN:0:5}...  ChatID=${CHAT_ID}  日报时间=${TG_TIME:-23:00}"
+        echo -e "  当前配置: Token=${BOT_TOKEN:0:5}...  ChatID=${CHAT_ID}"
+        echo -e "  日报时间: ${TG_TIME:-$TG_PUSH_TIME} (北京时间)"
         echo ""
     fi
     
     local TOKEN="${TELEMT_TG_TOKEN:-}"
     local CHAT="${TELEMT_TG_CHAT:-}"
     local TGTIME="${TELEMT_TG_TIME:-}"
+    local SEND_TEST=1
     
     if [ -n "$NON_INTERACTIVE" ]; then
         # 未提供的环境变量沿用已有配置，可只更换其中一个
@@ -1314,14 +1316,53 @@ setup_tg_push() {
             echo -e "${RED}非交互模式需提供 TELEMT_TG_TOKEN 与 TELEMT_TG_CHAT（或已有可沿用的配置）！${PLAIN}"
             return 2
         fi
+    elif [ -n "$OLD_TOKEN" ] || [ -n "$OLD_CHAT" ]; then
+        # 已有配置：TG 信息与日报时间可独立修改
+        echo -e "  ${GREEN}[1]${PLAIN} 修改 TG 推送信息 (Token/ChatID)"
+        echo -e "  ${GREEN}[2]${PLAIN} 仅修改日报时间"
+        echo -e "  ${GREEN}[0]${PLAIN} 返回"
+        read -p "  请选择 [0-2]: " TG_SEL
+        case $TG_SEL in
+            2)
+                read -p "请输入每日日报时间 (北京时间 HH:MM, 直接回车保持不变 [${OLD_TIME:-$TG_PUSH_TIME}]): " TGTIME
+                if [ -n "$TGTIME" ] && ! [[ "$TGTIME" =~ ^[0-9]{2}:[0-9]{2}$ ]]; then
+                    echo -e "${YELLOW}时间格式应为 HH:MM（如 09:30），已忽略该输入。${PLAIN}"
+                    TGTIME=""
+                fi
+                TOKEN="$OLD_TOKEN"
+                CHAT="$OLD_CHAT"
+                SEND_TEST=0
+                ;;
+            1)
+                read -p "请输入 Telegram Bot Token (直接回车保持不变): " TOKEN
+                read -p "请输入接收消息的 Chat ID (直接回车保持不变): " CHAT
+                [ -z "$TOKEN" ] && TOKEN="$OLD_TOKEN"
+                [ -z "$CHAT" ] && CHAT="$OLD_CHAT"
+                if [ -z "$TOKEN" ] || [ -z "$CHAT" ]; then
+                    echo -e "${RED}Token 与 Chat ID 不能为空！${PLAIN}"
+                    return 2
+                fi
+                read -p "请输入每日日报时间 (北京时间 HH:MM, 直接回车保持不变 [${OLD_TIME:-$TG_PUSH_TIME}]): " TGTIME
+                if [ -n "$TGTIME" ] && ! [[ "$TGTIME" =~ ^[0-9]{2}:[0-9]{2}$ ]]; then
+                    echo -e "${YELLOW}时间格式应为 HH:MM（如 09:30），已忽略该输入。${PLAIN}"
+                    TGTIME=""
+                fi
+                ;;
+            *)
+                return ;;
+        esac
     else
-        read -p "请输入 Telegram Bot Token (直接回车保持不变): " TOKEN
-        read -p "请输入接收消息的 Chat ID (直接回车保持不变): " CHAT
-        [ -z "$TOKEN" ] && TOKEN="$OLD_TOKEN"
-        [ -z "$CHAT" ] && CHAT="$OLD_CHAT"
+        # 首次配置：全部询问
+        read -p "请输入 Telegram Bot Token: " TOKEN
+        read -p "请输入接收消息的 Chat ID: " CHAT
         if [ -z "$TOKEN" ] || [ -z "$CHAT" ]; then
             echo -e "${RED}Token 与 Chat ID 不能为空！${PLAIN}"
             return 2
+        fi
+        read -p "请输入每日日报时间 (北京时间 HH:MM, 直接回车默认 ${TG_PUSH_TIME}): " TGTIME
+        if [ -n "$TGTIME" ] && ! [[ "$TGTIME" =~ ^[0-9]{2}:[0-9]{2}$ ]]; then
+            echo -e "${YELLOW}时间格式应为 HH:MM（如 09:30），已忽略该输入。${PLAIN}"
+            TGTIME=""
         fi
     fi
     [ -z "$TGTIME" ] && TGTIME="$OLD_TIME"
@@ -1336,12 +1377,14 @@ EOF
     
     install_tg_cron
     echo -e "${GREEN}✅ 已保存 Telegram 推送配置，并注册每日自动日报 Cron（北京时间 ${TGTIME}）。${PLAIN}"
-    if tg_send "✅ MTProxy 流量统计推送已启用
+    if [ "$SEND_TEST" -eq 1 ]; then
+        if tg_send "✅ MTProxy 流量统计推送已启用
 
 每天北京时间 ${TGTIME} 将自动发送本月流量统计到本会话"; then
-        echo -e "${GREEN}测试消息发送成功。${PLAIN}"
-    else
-        echo -e "${YELLOW}测试消息发送失败，请检查 Token / ChatID 是否正确。${PLAIN}"
+            echo -e "${GREEN}测试消息发送成功。${PLAIN}"
+        else
+            echo -e "${YELLOW}测试消息发送失败，请检查 Token / ChatID 是否正确。${PLAIN}"
+        fi
     fi
     return 0
 }
