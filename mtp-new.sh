@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.2.14(2026-08-02)"
+SCRIPT_VERSION="2.2.15(2026-08-02)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
@@ -2678,6 +2678,13 @@ del_telemt_user() {
     
     local target_line=${user_lines[$DEL_INDEX]}
     local target_name=${user_names[$DEL_INDEX]}
+    
+    echo ""
+    read -p "⚠️  确认踢出并删除用户 [${target_name}] ? (输入 YES 确认, 其他任意键取消): " DEL_CONFIRM
+    if [ "$DEL_CONFIRM" != "YES" ]; then
+        echo -e "${YELLOW}已取消删除。${PLAIN}"
+        return
+    fi
     
     # 精确删除目标行号 ([access.users] 中的那行)
     sed -i "${target_line}d" /etc/telemt.toml
