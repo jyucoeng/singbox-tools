@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.2.51(2026-08-02)"
+SCRIPT_VERSION="2.2.52(2026-08-02)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
@@ -1205,15 +1205,16 @@ def user_display(name, ipv4, ipv6):
         used_mb = int(used_bytes / 1048576)
         limit_mb = int(limit_bytes / 1048576)
         limit_gb = '%.2f' % (limit_bytes / 1073741824.0)
+        used_s = fmt_bytes(used_bytes)
         if limit_bytes > 0 and used_bytes >= limit_bytes:
             quota_hit = True
-            quota_str = '已用: ' + RED + '%dMB' % used_mb + PLAIN + ' / 总限额: %sGB (' % limit_gb + RED + '已超限' + PLAIN + ')'
+            quota_str = '已用: ' + RED + used_s + PLAIN + ' / 总限额: %sGB (' % limit_gb + RED + '已超限' + PLAIN + ')'
             ex_t = get_exhausted(name)
             if ex_t:
                 ex_str = '   ⏱️  本月流量耗尽时间: %s' % ex_t
         else:
             pct = '%.1f' % (used_mb * 100.0 / limit_mb) if limit_mb > 0 else '0.0'
-            quota_str = '已用: ' + YELLOW + '%dMB' % used_mb + PLAIN + ' / 总限额: %sGB (使用率: %s%%)' % (limit_gb, pct)
+            quota_str = '已用: ' + YELLOW + used_s + PLAIN + ' / 总限额: %sGB (使用率: %s%%)' % (limit_gb, pct)
 
     expire_str = '永久有效'
     expire_hit = False
@@ -1319,15 +1320,16 @@ def users_display(ipv4, ipv6):
             used_mb = int(used_bytes / 1048576)
             limit_mb = int(limit_bytes / 1048576)
             limit_gb = '%.2f' % (limit_bytes / 1073741824.0)
+            used_s = fmt_bytes(used_bytes)
             if limit_bytes > 0 and used_bytes >= limit_bytes:
                 quota_hit = True
-                quota_str = '已用: ' + RED + '%dMB' % used_mb + PLAIN + ' / 总限额: %sGB (' % limit_gb + RED + '已超限' + PLAIN + ')'
+                quota_str = '已用: ' + RED + used_s + PLAIN + ' / 总限额: %sGB (' % limit_gb + RED + '已超限' + PLAIN + ')'
                 ex_t = get_exhausted(user)
                 if ex_t:
                     quota_str = quota_str + '  ⏱️ 耗尽于: %s' % ex_t
             else:
                 pct = '%.1f' % (used_mb * 100.0 / limit_mb) if limit_mb > 0 else '0.0'
-                quota_str = '已用: ' + YELLOW + '%dMB' % used_mb + PLAIN + ' / 总限额: %sGB (使用率: %s%%)' % (limit_gb, pct)
+                quota_str = '已用: ' + YELLOW + used_s + PLAIN + ' / 总限额: %sGB (使用率: %s%%)' % (limit_gb, pct)
         expire_str = '永久有效'
         expire_hit = False
         if user in expire_map and expire_map[user]:
