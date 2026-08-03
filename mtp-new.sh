@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.2.52(2026-08-02)"
+SCRIPT_VERSION="2.2.53(2026-08-02)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
@@ -548,6 +548,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 import urllib.parse
 import urllib.request
 
@@ -591,6 +592,21 @@ def fmt_bytes(b):
     if b >= 1024:
         return '%.1fKB' % (b / 1024.0)
     return '%dB' % b
+
+
+def _disp_w(s):
+    w = 0
+    for ch in str(s):
+        if unicodedata.east_asian_width(ch) in ('W', 'F'):
+            w += 2
+        else:
+            w += 1
+    return w
+
+
+def pad(s, width):
+    s = str(s)
+    return s + ' ' * max(0, width - _disp_w(s))
 
 
 def parse_sections(path):
@@ -828,7 +844,7 @@ def usage_report():
     out.append('==================================================')
     out.append(GREEN + '       Telemt 本月流量使用统计 (%s)      ' % cur_month + PLAIN)
     out.append('==================================================')
-    out.append('  %-16s %-10s %-10s %-10s %-8s %s' % ('用户名', '已用', '限额', '剩余', '使用率', '耗尽时间'))
+    out.append('  %s %s %s %s %s %s' % (pad('用户名', 16), pad('已用', 10), pad('限额', 10), pad('剩余', 10), pad('使用率', 8), pad('耗尽时间', 12)))
     out.append('  ----------------------------------------------------------------')
     total_used = 0
     total_limit = 0
@@ -854,7 +870,7 @@ def usage_report():
         total_used += used_bytes
         total_limit += limit_bytes
         has_row = 1
-        line = '  %-16s %-10s %-10s %-10s %-8s %s' % (user, used_s, limit_s, remain_s, pct + '%', ex_t)
+        line = '  %s %s %s %s %s %s' % (pad(user, 16), pad(used_s, 10), pad(limit_s, 10), pad(remain_s, 10), pad(pct + '%', 8), pad(ex_t, 12))
         ut = sum(v for (u, mo), v in totals.items() if u == user)
         if ut > 0:
             line += '   累计: %s' % fmt_bytes(ut)
@@ -919,7 +935,7 @@ def total_report():
     print('==================================================')
     print(GREEN + '       总流量使用统计 (历史累计, 按已用排序)      ' + PLAIN)
     print('==================================================')
-    print('  %-6s %-16s %-12s %-8s' % ('排名', '用户名', '历史累计', '统计月数'))
+    print('  %s %s %s %s' % (pad('排名', 6), pad('用户名', 16), pad('历史累计', 12), pad('统计月数', 8)))
     print('  ----------------------------------------------------------------')
     rank = 0
     grand_bytes = 0
@@ -927,7 +943,7 @@ def total_report():
     for user, (tb, m) in ranked:
         rank += 1
         total_users += 1
-        print('  %-6d %-16s %-12s %-8d' % (rank, user, fmt_bytes(tb), m))
+        print('  %s %s %s %s' % (pad(rank, 6), pad(user, 16), pad(fmt_bytes(tb), 12), pad(m, 8)))
         grand_bytes += tb
     print('  ----------------------------------------------------------------')
     print('  历史累计总用量: %s    有流量记录用户: %d 个' % (fmt_bytes(grand_bytes), total_users))
@@ -1006,7 +1022,7 @@ def report_text():
         total_used += used_bytes
         total_limit += limit_bytes
         has_row = 1
-        body += '%-14s %-9s %-9s %-9s %-7s %s' % (user, used_s, limit_s, remain_s, pct + '%', ex_t)
+        body += '%s %s %s %s %s %s' % (pad(user, 14), pad(used_s, 9), pad(limit_s, 9), pad(remain_s, 9), pad(pct + '%', 7), pad(ex_t, 10))
         ut = sum(v for (u, mo), v in totals.items() if u == user)
         if ut > 0:
             body += '   累计: %s' % fmt_bytes(ut)
@@ -1015,7 +1031,7 @@ def report_text():
     msg = report_header('MTProxy 本月流量统计日报')
     msg += '\n'
     msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
-    msg += '%-14s %-9s %-9s %-9s %-7s %s\n' % ('用户名', '已用', '限额', '剩余', '使用率', '耗尽时间')
+    msg += '%s %s %s %s %s %s\n' % (pad('用户名', 14), pad('已用', 9), pad('限额', 9), pad('剩余', 9), pad('使用率', 7), pad('耗尽时间', 10))
     msg += body
     msg += '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'
     if not has_row:
