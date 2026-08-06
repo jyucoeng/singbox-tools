@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.6.12(2026-08-06)"
+VERSION="1.6.15(2026-08-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -3574,7 +3574,7 @@ check_port_conflicts_or_exit() {
 # 与命令行非交互模式共存：带参数走原逻辑，无参数或 menu 命令进入交互菜单
 
 reading() {
-    read -r -p "$(red "$1")" "$2"
+    read -r -p "$(yellow "$1")" "$2"
 }
 
 is_installed_sb() {
@@ -3712,12 +3712,17 @@ menu_ask_port() {
 menu_collect_install() {
     local _ans _ch _sel _has_all _has_vmess _has_trojan
 
-    purple "===== 基础设置 ====="
-    reading "节点名称前缀 (回车跳过): " _ans
-    if [ -n "$_ans" ]; then
-        export name="$_ans"
+    echo ""
+    purple "===== 日志调试 ====="
+    yellow "  仅用于安装时日志调试，默认关闭"
+    reading "是否开启日志调试? [y/N]: " _ans
+    if [ "$_ans" = "y" ] || [ "$_ans" = "Y" ]; then
+        export DEBUG_FLAG="1"
+    else
+        export DEBUG_FLAG="0"
     fi
 
+    purple "===== 基础设置 ====="
     reading "IP偏好 [4=仅IPv4 / 6=仅IPv6 / 回车=自动]: " _ans
     if [ "$_ans" = "4" ] || [ "$_ans" = "6" ]; then
         export ippz="$_ans"
@@ -3831,6 +3836,12 @@ menu_collect_install() {
         else
             export nginx_pt=8080
         fi
+    fi
+
+    echo ""
+    reading "节点名称前缀 (回车跳过): " _ans
+    if [ -n "$_ans" ]; then
+        export name="$_ans"
     fi
 }
 
