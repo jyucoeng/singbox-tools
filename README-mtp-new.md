@@ -2,7 +2,7 @@
 
 `mtp-new.sh` 是 MTProxy 管理脚本，同时支持**交互式菜单**与**无交互参数安装**两种模式。
 
-### 1、交互式菜单（无参数运行）
+### 1、交互式菜单（无参数运行，推荐此运行方式，因为安装参数有点多，带交互方式比较友好）
 
 ```
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp-new.sh)
@@ -26,7 +26,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 | 12/13/14 | 启动/停止/重启服务 |
 | 15 | 卸载全部并清理 |
 
-### 2、无交互安装（环境变量方式）
+### 2、无交互安装（环境变量方式，如果记不住参数，请去使用交互式菜单操作。）
 
 #### 安装 Go 版（mtg）
 
