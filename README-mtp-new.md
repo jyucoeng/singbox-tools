@@ -303,7 +303,7 @@ alice | 已用 2.00GB / 限额 2.00GB | 2026-08-03 10:00:12
 ### 6、注意事项
 
 - 需要 **root** 权限运行
-- 安装流程：优先使用本地同目录下的预编译二进制（`mtg-go-<arch>` / `telemt-linux-<arch>` / `telemt`），未找到则从本项目 [singbox-tools](https://github.com/jyucoeng/singbox-tools) 的 `Go-Rust` Release 下载（二进制镜像自上游 [0xdabiaoge/MTProxy](https://github.com/0xdabiaoge/MTProxy)）
+- 安装流程：优先使用本地同目录下的预编译二进制（`mtg-go-<arch>` / `telemt-linux-<arch>` / `telemt`），未找到则从本项目 [singbox-tools](https://github.com/jyucoeng/singbox-tools) 的 `Go-Rust` Release 下载
 - 支持系统：Debian/Ubuntu（systemd）、CentOS/RHEL（systemd）、Alpine（OpenRC）
 - Telemt 多用户功能：专属端口、流量配额、到期日、独立限速、月度自动重置（Cron）
 - 流量统计：每小时自动快照 + 本月用量报表 + 各用户流量耗尽时间记录
