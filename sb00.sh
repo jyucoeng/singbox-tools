@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.6.7(2026-08-06)"
+VERSION="1.6.10(2026-08-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -748,10 +748,11 @@ cleanup_singbox_shortcut() {
 # 显示菜单
 showmode() {
     blue "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    yellow "     Sing-box 一键脚本"
-    yellow "     协议: vmess/trojan (Argo 选1), vless+hy2+tuic+anytls+socks5"
+    green "     Sing-box 一键脚本"
+    yellow "     协议: vmess/trojan (Argo 选1)"
+    yellow "           vless+hy2+tuic+anytls+socks5"
     green "     Author：$AUTHOR"
-    yellow "     ${VERSION}"
+    green "     Version: ${VERSION}"
     blue "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
