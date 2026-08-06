@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.6.55(2026-08-06)"
+VERSION="1.6.56(2026-08-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -4069,7 +4069,7 @@ menu_collect_install() {
     echo ""
     purple "===== SNI / CDN 设置 ====="
     green "  1) 全部使用默认值(偷懒就用默认)"
-    green "     默认值：CDN 优选域名=saas.sin.fan, CDN 端口=443,"
+    green "     默认值：CDN 优选域名=saas.sin.fan, CDN 端口=443(仅限 HTTPS 系端口 ${HTTPS_CDN_PORTS[*]}),"
     green "             Hysteria2 伪装域名=www.apple.com, VLESS 伪装域名=www.apple.com,"
     green "             VLESS 伪装端口=443, TUIC 伪装域名=www.apple.com"
     green "  2) 逐个展开单独设置（可自定义，推荐）"
@@ -4079,9 +4079,24 @@ menu_collect_install() {
         reading "  CDN 优选域名 (默认=saas.sin.fan): " _ans
         [ -n "$_ans" ] && export cdn_host="$_ans"
         green "  ↳ CDN 优选域名: ${cdn_host:-saas.sin.fan}"
+        yellow "  可选 CDN 优选端口(仅限 HTTPS 系端口)：${HTTPS_CDN_PORTS[*]}"
         reading "  CDN 端口 (默认=443): " _ans
-        [ -n "$_ans" ] && export cdn_pt="$_ans"
-        green "  ↳ CDN 端口: ${cdn_pt:-443}"
+        if [ -n "$_ans" ]; then
+            local _p _cdn_ok=false
+            for _p in "${HTTPS_CDN_PORTS[@]}"; do
+                [ "$_ans" = "$_p" ] && { _cdn_ok=true; break; }
+            done
+            if $_cdn_ok; then
+                export cdn_pt="$_ans"
+                green "  ↳ CDN 端口: ${cdn_pt}"
+            else
+                yellow "  ❌ CDN 端口仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS[*]})，已用默认 443"
+                export cdn_pt="443"
+                green "  ↳ CDN 端口: ${cdn_pt} (默认)"
+            fi
+        else
+            green "  ↳ CDN 端口: ${cdn_pt:-443} (默认)"
+        fi
         reading "  Hysteria2 伪装域名 (默认=www.apple.com): " _ans
         [ -n "$_ans" ] && export hy_sni="$_ans"
         green "  ↳ Hysteria2 伪装域名: ${hy_sni:-www.apple.com}"
