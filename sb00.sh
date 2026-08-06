@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.6.28(2026-08-06)"
+VERSION="1.6.32(2026-08-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -3697,14 +3697,16 @@ menu_ask_port() {
     local _proto="$1" _in=""
     reading "  请输入 ${_proto} 监听端口 (回车=随机): " _in
     if [ -z "$_in" ]; then
+        green "  ↳ ${_proto} 端口: 随机" >&2
         echo ""
         return 0
     fi
     if [[ ! "$_in" =~ ^[0-9]+$ ]] || [ "$_in" -lt 1 ] || [ "$_in" -gt 65535 ]; then
-        yellow "  ❌ 端口无效 (1-65535)，将使用随机端口"
+        yellow "  ❌ 端口无效 (1-65535)，将使用随机端口" >&2
         echo ""
         return 0
     fi
+    green "  ↳ ${_proto} 端口: ${_in}" >&2
     echo "$_in"
 }
 
@@ -3718,19 +3720,27 @@ menu_collect_install() {
     reading "是否开启日志调试? [y/N]: " _ans
     if [ "$_ans" = "y" ] || [ "$_ans" = "Y" ]; then
         export DEBUG_FLAG="1"
+        green "  ↳ 日志调试: 开启"
     else
         export DEBUG_FLAG="0"
+        green "  ↳ 日志调试: 关闭 (默认)"
     fi
 
     purple "===== 基础设置 ====="
     reading "IP偏好 [4=仅IPv4 / 6=仅IPv6 / 回车=自动]: " _ans
     if [ "$_ans" = "4" ] || [ "$_ans" = "6" ]; then
         export ippz="$_ans"
+        green "  ↳ IP偏好: 仅IPv${_ans}"
+    else
+        green "  ↳ IP偏好: 自动 (默认)"
     fi
 
     reading "UUID (回车自动生成): " _ans
     if [ -n "$_ans" ]; then
         export uuid="$_ans"
+        green "  ↳ UUID: ${_ans}"
+    else
+        green "  ↳ UUID: 自动生成 (默认)"
     fi
 
     echo ""
@@ -3742,6 +3752,7 @@ menu_collect_install() {
     reading "输入选项 (回车默认=全部直连协议 b c d e): " _ch
     [ -z "$_ch" ] && _ch="b c d e"
     _ch="$(printf '%s' "$_ch" | tr ',' ' ' | tr '[:upper:]' '[:lower:]')"
+    green "  ↳ 直连协议: ${_ch}"
 
     # Argo 隧道协议：二选一或二选零
     echo ""
@@ -3751,9 +3762,9 @@ menu_collect_install() {
     reading "输入选项 (回车=不选): " _ans
     _ans="$(printf '%s' "$_ans" | tr '[:upper:]' '[:lower:]')"
     case "$_ans" in
-        *g*) _ch="$_ch g" ;;
-        *f*) _ch="$_ch f" ;;
-        *) : ;;
+        *g*) _ch="$_ch g"; green "  ↳ Argo 协议: Trojan-WS-TLS" ;;
+        *f*) _ch="$_ch f"; green "  ↳ Argo 协议: Vmess-WS-TLS" ;;
+        *) : ; green "  ↳ Argo 协议: 不选 (默认)" ;;
     esac
 
     # Socks5 协议：可要可不要
@@ -3761,8 +3772,8 @@ menu_collect_install() {
     purple "===== Socks5 协议 (可要可不要) ====="
     reading "是否安装 Socks5? [y/N] (回车默认=不要): " _ans
     case "$_ans" in
-        y|Y) _ch="$_ch h" ;;
-        *) : ;;
+        y|Y) _ch="$_ch h"; green "  ↳ Socks5: 安装" ;;
+        *) : ; green "  ↳ Socks5: 不安装 (默认)" ;;
     esac
 
     # 标记选中的协议（空值=随机端口，先只做启用标记）
@@ -3788,6 +3799,7 @@ menu_collect_install() {
     green "  2) 逐个自定义端口 (推荐)"
     reading "输入选择 (回车默认=1): " _ans
     if [ "$_ans" = "2" ]; then
+        green "  ↳ 端口: 逐个自定义"
         [ -n "$trp" ] && export trpt="$(menu_ask_port "Trojan-WS (Argo)")"
         [ -n "$vmp" ] && export vmpt="$(menu_ask_port "Vmess-WS (Argo)")"
         for _sel in vlr hyp tup anyp; do
@@ -3799,6 +3811,8 @@ menu_collect_install() {
             esac
         done
         [ -n "$trp$vmp" ] && export argo_pt="$(menu_ask_port "Argo")"
+    else
+        green "  ↳ 端口: 全部随机生成 (默认)"
     fi
 
     # Argo 隧道配置（vmess/trojan 已强制二选一，这里最多启用一个）
@@ -3818,10 +3832,15 @@ menu_collect_install() {
         green "  2) 固定隧道 (需要自己的域名 + Token/JSON)"
         reading "输入编号 (回车默认=1): " _ans
         if [ "$_ans" = "2" ]; then
+            green "  ↳ Argo 隧道: 固定隧道"
             reading "  请输入 Argo 域名: " _ans
             [ -n "$_ans" ] && export ARGO_DOMAIN="$_ans"
+            green "  ↳ Argo 域名: ${ARGO_DOMAIN:-未设置}"
             reading "  请输入 Argo Token 或粘贴 JSON 凭据: " _ans
             [ -n "$_ans" ] && export ARGO_AUTH="$_ans"
+            green "  ↳ Argo Token/JSON: 已设置"
+        else
+            green "  ↳ Argo 隧道: 临时隧道 (默认)"
         fi
     fi
 
@@ -3830,19 +3849,28 @@ menu_collect_install() {
     reading "是否开启节点订阅 [y/N]: " _ans
     if [ "$_ans" = "y" ] || [ "$_ans" = "Y" ]; then
         export subscribe=true
+        green "  ↳ 订阅: 开启"
         reading "订阅服务端口 Nginx (回车默认=8080): " _ans
         if [ -n "$_ans" ]; then
             export nginx_pt="$_ans"
         else
             export nginx_pt=8080
         fi
+        green "  ↳ 订阅端口: ${nginx_pt}"
+    else
+        green "  ↳ 订阅: 不开启 (默认)"
     fi
 
     # VLESS 才询问 reality_private
     if [ -n "$vlr" ]; then
         echo ""
         reading "reality_private (回车=自动生成): " _ans
-        [ -n "$_ans" ] && export reality_private="$_ans"
+        if [ -n "$_ans" ]; then
+            export reality_private="$_ans"
+            green "  ↳ reality_private: 已输入"
+        else
+            green "  ↳ reality_private: 自动生成 (默认)"
+        fi
     fi
 
     # SNI / CDN 值设定
@@ -3855,18 +3883,27 @@ menu_collect_install() {
     green "  2) 逐个展开单独设置（可自定义，推荐）"
     reading "输入选择 (回车默认=1): " _ans
     if [ "$_ans" = "2" ]; then
+        green "  ↳ SNI/CDN: 逐个设置"
         reading "  CDN 优选域名 (默认=saas.sin.fan): " _ans
         [ -n "$_ans" ] && export cdn_host="$_ans"
+        green "  ↳ CDN 优选域名: ${cdn_host:-saas.sin.fan}"
         reading "  CDN 端口 (默认=443): " _ans
         [ -n "$_ans" ] && export cdn_pt="$_ans"
+        green "  ↳ CDN 端口: ${cdn_pt:-443}"
         reading "  Hysteria2 伪装域名 (默认=www.apple.com): " _ans
         [ -n "$_ans" ] && export hy_sni="$_ans"
+        green "  ↳ Hysteria2 伪装域名: ${hy_sni:-www.apple.com}"
         reading "  VLESS 伪装域名 (默认=www.apple.com): " _ans
         [ -n "$_ans" ] && export vl_sni="$_ans"
+        green "  ↳ VLESS 伪装域名: ${vl_sni:-www.apple.com}"
         reading "  VLESS 伪装端口 (默认=443): " _ans
         [ -n "$_ans" ] && export vl_sni_pt="$_ans"
+        green "  ↳ VLESS 伪装端口: ${vl_sni_pt:-443}"
         reading "  TUIC 伪装域名 (默认=www.apple.com): " _ans
         [ -n "$_ans" ] && export tu_sni="$_ans"
+        green "  ↳ TUIC 伪装域名: ${tu_sni:-www.apple.com}"
+    else
+        green "  ↳ SNI/CDN: 全部使用默认值"
     fi
 
     # 节点名称前缀（最后询问）
@@ -3874,6 +3911,9 @@ menu_collect_install() {
     reading "节点名称前缀 (回车跳过): " _ans
     if [ -n "$_ans" ]; then
         export name="$_ans"
+        green "  ↳ 节点名称前缀: ${_ans}"
+    else
+        green "  ↳ 节点名称前缀: 跳过 (默认)"
     fi
 }
 
