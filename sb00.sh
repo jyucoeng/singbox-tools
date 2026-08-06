@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.6.3(2026-08-06)"
+VERSION="1.6.7(2026-08-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -748,8 +748,10 @@ cleanup_singbox_shortcut() {
 # 显示菜单
 showmode() {
     blue "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    gradient "     Sing-box 一键脚本  ${VERSION}"
+    yellow "     Sing-box 一键脚本"
+    yellow "     协议: vmess/trojan (Argo 选1), vless+hy2+tuic+anytls+socks5"
     green "     Author：$AUTHOR"
+    yellow "     ${VERSION}"
     blue "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
@@ -3575,7 +3577,9 @@ reading() {
 }
 
 is_installed_sb() {
-    pgrep -f "$SINGBOX_FOLDER_PATH/sing-box" > /dev/null 2>&1
+    pgrep -f "$SINGBOX_FOLDER_PATH/sing-box" > /dev/null 2>&1 \
+        || [ -x "$SINGBOX_FOLDER_PATH/sing-box" ] \
+        || [ -s "$SINGBOX_FOLDER_PATH/sb.json" ]
 }
 
 menu_pause() {
@@ -4086,21 +4090,28 @@ interactive_main() {
         if is_installed_sb; then
             yellow "  【安 装】"
             green "    [1] 安装节点    [2] 覆盖式安装/重置 (rep)"
+            echo ""
             yellow "  【管 理】"
             green "    [3] 服务管理"
+            echo ""
             yellow "  【查 看】"
             green "    [4] 查看节点信息 (list)    [5] 查看运行状态"
             green "    [6] 订阅管理 (sub)"
+            echo ""
             yellow "  【日 志】"
             green "    [7] 查看日志 (logs)"
+            echo ""
             red   "  【危险操作】"
             red   "    [8] 卸载 (del, 保留二进制)  [9] 卸载全部并清理 (delall)"
+            echo ""
             purple "    [0] 退出"
         else
             yellow "  【安 装】"
             green "    [1] 安装节点"
+            echo ""
             red   "  【危险操作】"
             red   "    [2] 清理卸载残留 (del)"
+            echo ""
             purple "    [0] 退出"
         fi
         echo ""
