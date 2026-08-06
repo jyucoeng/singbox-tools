@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.6.10(2026-08-06)"
+VERSION="1.6.12(2026-08-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -4088,47 +4088,29 @@ interactive_main() {
         showmode
         menu_status_block
         echo ""
-        if is_installed_sb; then
-            yellow "  【安 装】"
-            green "    [1] 安装节点    [2] 覆盖式安装/重置 (rep)"
-            echo ""
-            yellow "  【管 理】"
-            green "    [3] 服务管理"
-            echo ""
-            yellow "  【查 看】"
-            green "    [4] 查看节点信息 (list)    [5] 查看运行状态"
-            green "    [6] 订阅管理 (sub)"
-            echo ""
-            yellow "  【日 志】"
-            green "    [7] 查看日志 (logs)"
-            echo ""
-            red   "  【危险操作】"
-            red   "    [8] 卸载 (del, 保留二进制)  [9] 卸载全部并清理 (delall)"
-            echo ""
-            purple "    [0] 退出"
-        else
-            yellow "  【安 装】"
-            green "    [1] 安装节点"
-            echo ""
-            red   "  【危险操作】"
-            red   "    [2] 清理卸载残留 (del)"
-            echo ""
-            purple "    [0] 退出"
-        fi
+        yellow "  【安 装】"
+        green "    [1] 安装节点    [2] 覆盖式安装/重置 (rep)"
+        echo ""
+        yellow "  【管 理】"
+        green "    [3] 服务管理"
+        echo ""
+        yellow "  【查 看】"
+        green "    [4] 查看节点信息 (list)    [5] 查看运行状态"
+        green "    [6] 订阅管理 (sub)"
+        echo ""
+        yellow "  【日 志】"
+        green "    [7] 查看日志 (logs)"
+        echo ""
+        red   "  【危险操作】"
+        red   "    [8] 卸载 (del, 保留二进制)  [9] 卸载全部并清理 (delall)"
+        echo ""
+        purple "    [0] 退出"
         echo ""
         reading "  请输入选项: " _ch
         case "$_ch" in
             0|q|Q) echo "再见 👋"; exit 0 ;;
             1) interactive_install; menu_pause ;;
-            2)
-                if is_installed_sb; then
-                    interactive_reinstall
-                    menu_pause
-                else
-                    cleandel
-                    green "✅ 已清理"
-                    sleep 1
-                fi ;;
+            2) interactive_reinstall; menu_pause ;;
             3) interactive_service_menu ;;
             4) cip; menu_pause ;;
             5) menu_status_block; show_local_ip_info_with_out_ip_hint; menu_pause ;;
