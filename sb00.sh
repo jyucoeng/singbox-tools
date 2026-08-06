@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.6.63(2026-08-06)"
+VERSION="1.6.64(2026-08-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -3793,16 +3793,19 @@ menu_ask_port() {
         if [ -z "$_in" ]; then
             if [ -n "$_def" ]; then
                 green "  ↳ ${_proto} 端口: ${_def} (默认)" >&2
+                echo "" >&2
                 echo "$_def"
             else
                 _rp="$(rand_port)"
                 green "  ↳ ${_proto} 端口: ${_rp} (随机)" >&2
+                echo "" >&2
                 echo "$_rp"
             fi
             return 0
         fi
         if [[ "$_in" =~ ^[0-9]+$ ]] && [ "$_in" -ge 1 ] && [ "$_in" -le 65535 ]; then
             green "  ↳ ${_proto} 端口: ${_in}" >&2
+            echo "" >&2
             echo "$_in"
             return 0
         fi
