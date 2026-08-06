@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.6.32(2026-08-06)"
+VERSION="1.6.36(2026-08-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -911,12 +911,29 @@ rand_port() {
 
     # 备选：awk + 随机种子（兼容性很好）
     if command -v awk > /dev/null 2>&1; then
-        awk 'BEGIN{srand(); print int(10000 + rand()*55535)}'
+        awk -v s="$(od -An -N4 -tu4 /dev/urandom 2>/dev/null)" 'BEGIN{srand(s); print int(10000 + rand()*55535)}'
         return
     fi
 
     # 兜底：用时间戳拼一个（保证有结果）
     echo $((($(date +%s) % 55535) + 10000))
+}
+
+# 生成 UUID v4
+gen_uuid() {
+    local _g
+    _g="$(cat /proc/sys/kernel/random/uuid 2>/dev/null)"
+    [ -z "$_g" ] && _g="$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+    if [ -z "$_g" ]; then
+        _g="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+        _g="${_g:0:8}-${_g:8:4}-4${_g:13:3}-${_g:17:4}-${_g:21:12}"
+    fi
+    printf '%s' "$_g"
+}
+
+# 生成 reality_private（32 字节随机 base64）
+gen_reality_private() {
+    head -c 32 /dev/urandom 2>/dev/null | base64 | tr -d '\n'
 }
 
 gen_socks5_username() {
@@ -3694,19 +3711,21 @@ menu_reload_proto_flags() {
 
 # 读取端口；空则返回空（表示随机生成）
 menu_ask_port() {
-    local _proto="$1" _in=""
+    local _proto="$1" _in="" _rp=""
     reading "  请输入 ${_proto} 监听端口 (回车=随机): " _in
     if [ -z "$_in" ]; then
-        green "  ↳ ${_proto} 端口: 随机" >&2
-        echo ""
+        _rp="$(rand_port)"
+        yellow "  ↳ ${_proto} 端口: ${_rp} (随机)" >&2
+        echo "$_rp"
         return 0
     fi
     if [[ ! "$_in" =~ ^[0-9]+$ ]] || [ "$_in" -lt 1 ] || [ "$_in" -gt 65535 ]; then
-        yellow "  ❌ 端口无效 (1-65535)，将使用随机端口" >&2
-        echo ""
+        _rp="$(rand_port)"
+        yellow "  ❌ 端口无效 (1-65535)，已改随机端口: ${_rp}" >&2
+        echo "$_rp"
         return 0
     fi
-    green "  ↳ ${_proto} 端口: ${_in}" >&2
+    yellow "  ↳ ${_proto} 端口: ${_in}" >&2
     echo "$_in"
 }
 
@@ -3740,7 +3759,10 @@ menu_collect_install() {
         export uuid="$_ans"
         green "  ↳ UUID: ${_ans}"
     else
-        green "  ↳ UUID: 自动生成 (默认)"
+        local _g
+        _g="$(gen_uuid)"
+        export uuid="$_g"
+        green "  ↳ UUID: ${_g} (自动生成)"
     fi
 
     echo ""
@@ -3813,7 +3835,16 @@ menu_collect_install() {
         [ -n "$trp$vmp" ] && export argo_pt="$(menu_ask_port "Argo")"
     else
         green "  ↳ 端口: 全部随机生成 (默认)"
+        [ -n "$trp" ] && { trpt="$(rand_port)"; export trpt; green "  ↳ Trojan-WS (Argo) 端口: ${trpt} (随机)"; }
+        [ -n "$vmp" ] && { vmpt="$(rand_port)"; export vmpt; green "  ↳ Vmess-WS (Argo) 端口: ${vmpt} (随机)"; }
+        [ -n "$vlr" ] && { vlrt="$(rand_port)"; export vlrt; green "  ↳ VLESS-Reality 端口: ${vlrt} (随机)"; }
+        [ -n "$hyp" ] && { hypt="$(rand_port)"; export hypt; green "  ↳ Hysteria2 端口: ${hypt} (随机)"; }
+        [ -n "$tup" ] && { tupt="$(rand_port)"; export tupt; green "  ↳ TUIC 端口: ${tupt} (随机)"; }
+        [ -n "$anyp" ] && { anypt="$(rand_port)"; export anypt; green "  ↳ AnyTLS 端口: ${anypt} (随机)"; }
+        [ -n "$trp$vmp" ] && { argo_pt="$(rand_port)"; export argo_pt; green "  ↳ Argo 端口: ${argo_pt} (随机)"; }
     fi
+
+    menu_reload_proto_flags
 
     # Argo 隧道配置（vmess/trojan 已强制二选一，这里最多启用一个）
     if [ -n "$vmp" ]; then
@@ -3869,7 +3900,14 @@ menu_collect_install() {
             export reality_private="$_ans"
             green "  ↳ reality_private: 已输入"
         else
-            green "  ↳ reality_private: 自动生成 (默认)"
+            local _rp
+            _rp="$(gen_reality_private)"
+            if [ -n "$_rp" ]; then
+                export reality_private="$_rp"
+                green "  ↳ reality_private: ${_rp} (自动生成)"
+            else
+                green "  ↳ reality_private: 自动生成 (默认)"
+            fi
         fi
     fi
 
@@ -3904,6 +3942,9 @@ menu_collect_install() {
         green "  ↳ TUIC 伪装域名: ${tu_sni:-www.apple.com}"
     else
         green "  ↳ SNI/CDN: 全部使用默认值"
+        green "  ↳ CDN 优选域名=${cdn_host:-saas.sin.fan}, CDN 端口=${cdn_pt:-443},"
+        green "  ↳ Hysteria2 伪装域名=${hy_sni:-www.apple.com}, VLESS 伪装域名=${vl_sni:-www.apple.com},"
+        green "  ↳ VLESS 伪装端口=${vl_sni_pt:-443}, TUIC 伪装域名=${tu_sni:-www.apple.com}"
     fi
 
     # 节点名称前缀（最后询问）
