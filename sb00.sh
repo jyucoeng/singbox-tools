@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.6.15(2026-08-06)"
+VERSION="1.6.16(2026-08-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -4100,20 +4100,23 @@ interactive_main() {
         menu_status_block
         echo ""
         yellow "  【安 装】"
-        green "    [1] 安装节点    [2] 覆盖式安装/重置 (rep)"
+        green "    [1] 安装节点"
+        green "    [2] 覆盖式安装/重置 (rep)"
         echo ""
         yellow "  【管 理】"
         green "    [3] 服务管理"
         echo ""
         yellow "  【查 看】"
-        green "    [4] 查看节点信息 (list)    [5] 查看运行状态"
+        green "    [4] 查看节点信息 (list)"
+        green "    [5] 查看运行状态"
         green "    [6] 订阅管理 (sub)"
         echo ""
         yellow "  【日 志】"
         green "    [7] 查看日志 (logs)"
         echo ""
         red   "  【危险操作】"
-        red   "    [8] 卸载 (del, 保留二进制)  [9] 卸载全部并清理 (delall)"
+        red   "    [8] 卸载 (del, 保留二进制)"
+        red   "    [9] 卸载全部并清理 (delall)"
         echo ""
         purple "    [0] 退出"
         echo ""
