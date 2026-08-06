@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.4.2(2026-08-06)"
+VERSION="1.4.5(2026-08-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -794,7 +794,27 @@ EOF
     if [ -n "$done_link" ] && [ -e "$done_link" ]; then
         echo ""
         green " ✅ 已创建快捷命令：sb（${done_link}）"
-        yellow " 用法：sb（主菜单）/ sb ins / sb list / sb rt / sb res ..."
+        echo ""
+        green " 常用指令："
+        green "    sb                 打开主菜单"
+        green "    sb ins             安装节点"
+        green "    sb rep             覆盖式安装/重置"
+        green "    sb list            查看节点信息"
+        green "    sb list key        查看节点 + vless Reality 私钥"
+        green "    sb res             重启 sing-box 和 cloudflared"
+        green "    sb rt              分流管理"
+        green "    sb sub             订阅管理"
+        green "    sb del             卸载（保留二进制）"
+        green "    sb delall          卸载全部并清理"
+        green "    sb ups             更新 sing-box 内核"
+        green "    sb sc              创建/刷新本快捷命令"
+        green "    sb sc_off          删除本快捷命令"
+        green "    sb autostart       开启开机自启"
+        green "    sb autostart_off   关闭开机自启"
+        green "    sb nginx_start     启动 Nginx"
+        green "    sb nginx_stop      停止 Nginx"
+        green "    sb nginx_restart   重启 Nginx"
+        green "    sb nginx_status    查看 Nginx 状态"
     else
         echo ""
         yellow " ⚠️ 已生成 wrapper，但未能写入系统目录，请手动执行："
