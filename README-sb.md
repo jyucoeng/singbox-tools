@@ -1,4 +1,9 @@
 #  singbox 一键安装脚本
+
+> 本脚本支持两种安装方式：
+> - **交互式菜单安装**：直接运行 `bash sb.sh`（不带参数），通过菜单引导完成安装/卸载/查看等操作。
+> - **非交互式安装**：以环境变量 + 参数命令的方式一行完成（见下方示例）。
+
 # 1、 singbox 安装以及卸载
 ## singbox 一键安装脚本（vmess argo/trojan argo 选1 + hy2+vless-Reality+tuic+anytls+socks5，这些协议可自由组合）
 

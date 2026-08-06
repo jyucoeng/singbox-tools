@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.0.13(2026-08-02)"
+VERSION="1.2.0(2026-08-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -91,12 +91,12 @@ export DEBUG_FLAG=${DEBUG_FLAG:-'0'}
 # ================== 常量和环境变量 结束 ==================
 
 # ================== 颜色函数 ==================
-white() { echo -e "\033[1;37m$1\033[0m"; }
-red() { echo -e "\e[1;91m$1\033[0m"; }
-green() { echo -e "\e[1;32m$1\033[0m"; }
-yellow() { echo -e "\e[1;33m$1\033[0m"; }
-blue() { echo -e "\e[1;34m$1\033[0m"; }
-purple() { echo -e "\e[1;35m$1\033[0m"; }
+white() { printf "\033[1;37m%s\033[0m\n" "$1"; }
+red() { printf "\e[1;91m%s\033[0m\n" "$1"; }
+green() { printf "\e[1;32m%s\033[0m\n" "$1"; }
+yellow() { printf "\e[1;33m%s\033[0m\n" "$1"; }
+blue() { printf "\e[1;34m%s\033[0m\n" "$1"; }
+purple() { printf "\e[1;35m%s\033[0m\n" "$1"; }
 #彩虹打印
 gradient() {
     local text="$1"
@@ -205,21 +205,24 @@ need_argo() {
 # 命令参数转小写，供顶层 guard 大小写不敏感比对
 _cmd0="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
 
-if pgrep -f 'sing-box' > /dev/null 2>&1; then
-    # 已安装
-    if [ "$_cmd0" = "rep" ]; then
-        any_proto_enabled || {
-            echo "提示：rep重置协议时，请在脚本前至少设置一个协议变量哦，再见！💣"
-            exit 1
-        }
-    fi
-else
-    # 未安装
-    if [ "$_cmd0" != "del" ]; then
-        any_proto_enabled || {
-            echo "提示：未安装脚本，请在脚本前至少设置一个协议变量哦，再见！💣"
-            exit 1
-        }
+# 无参数或 menu 命令（交互式菜单）时跳过“必须设置协议变量”的守卫
+if [ -n "$_cmd0" ] && [ "$_cmd0" != "menu" ]; then
+    if pgrep -f 'sing-box' > /dev/null 2>&1; then
+        # 已安装
+        if [ "$_cmd0" = "rep" ]; then
+            any_proto_enabled || {
+                echo "提示：rep重置协议时，请在脚本前至少设置一个协议变量哦，再见！💣"
+                exit 1
+            }
+        fi
+    else
+        # 未安装
+        if [ "$_cmd0" != "del" ]; then
+            any_proto_enabled || {
+                echo "提示：未安装脚本，请在脚本前至少设置一个协议变量哦，再见！💣"
+                exit 1
+            }
+        fi
     fi
 fi
 
@@ -331,7 +334,7 @@ install_deps() {
                 if "${_cmd[@]}" "$p"; then
                     debug_log "【调试】 ✅ 安装成功：$p"
                 else
-                    red "❌ 安装失败：$p（已跳过）"
+                    red "❌ 安装失败：${p}（已跳过）"
                     failed+=("$p")
                 fi
             else
@@ -339,7 +342,7 @@ install_deps() {
                 if "${_cmd[@]}" "$p" >> "$run_log" 2>&1; then
                     green "✅ 安装成功：$p"
                 else
-                    red "❌ 安装失败：$p（已跳过，详见 $run_log）"
+                    red "❌ 安装失败：${p}（已跳过，详见 ${run_log}）"
                     failed+=("$p")
                 fi
             fi
@@ -744,11 +747,13 @@ cleanup_singbox_shortcut() {
 
 # 显示菜单
 showmode() {
-    blue "===================================================="
-    gradient "       singbox 一键脚本（vmess/trojan Argo选1,vless+hy2+tuic+anytls+socks5）"
-    green "       作者：$AUTHOR"
-    yellow "       版本：$VERSION"
-    blue "===================================================="
+    blue "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    green "     Sing-box 一键脚本"
+    yellow "     协议: vmess/trojan (Argo 选1)"
+    yellow "           vless+hy2+tuic+anytls+socks5"
+    green "     Author：$AUTHOR"
+    green "     Version: ${VERSION}"
+    blue "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
 # 安装 Nginx 包
@@ -906,12 +911,29 @@ rand_port() {
 
     # 备选：awk + 随机种子（兼容性很好）
     if command -v awk > /dev/null 2>&1; then
-        awk 'BEGIN{srand(); print int(10000 + rand()*55535)}'
+        awk -v s="$(od -An -N4 -tu4 /dev/urandom 2>/dev/null)" 'BEGIN{srand(s); print int(10000 + rand()*55535)}'
         return
     fi
 
     # 兜底：用时间戳拼一个（保证有结果）
     echo $((($(date +%s) % 55535) + 10000))
+}
+
+# 生成 UUID v4
+gen_uuid() {
+    local _g
+    _g="$(cat /proc/sys/kernel/random/uuid 2>/dev/null)"
+    [ -z "$_g" ] && _g="$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+    if [ -z "$_g" ]; then
+        _g="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+        _g="${_g:0:8}-${_g:8:4}-4${_g:13:3}-${_g:17:4}-${_g:21:12}"
+    fi
+    printf '%s' "$_g"
+}
+
+# 生成 reality_private（32 字节随机 base64）
+gen_reality_private() {
+    head -c 32 /dev/urandom 2>/dev/null | base64 | tr -d '\n'
 }
 
 gen_socks5_username() {
@@ -1018,9 +1040,103 @@ EOF
     debug_log "【调试】prepare_argo_credentials：结束（ARGO_MODE=${ARGO_MODE}）"
 }
 
-echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-echo "Sing-box 一键无交互脚本💣 (Sing-box内核版)"
-echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+# 交互模式（无参数/menu）由 showmode 提供头部，不再打印启动横幅
+case "${1:-}" in
+    ""|menu|MENU) : ;;
+    *)
+        echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+        echo "Sing-box 一键无交互脚本💣 (Sing-box内核版)"
+        echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+        ;;
+esac
+
+# ================== IP→地区 本地缓存（含后台预取） ==================
+# 探测入口：安装/覆盖安装/查看节点等需要展示 IP 地区的路径才会触发 geo_prefetch（幂等）。
+# 按 IP 类型分文件缓存，每行 "IP=地区"：
+#   .geo4  -> 仅 IPv4；.geo6 -> 仅 IPv6；.geo_out -> 仅 out_ip。
+# 读取点 geo_get_ip 先按 IP 查对应本地文件：命中直接返回（不发网络）；未命中先等后台预取写入，仍无则现场查并写回。
+GEO_V4_FILE="$SINGBOX_FOLDER_PATH/.geo4"
+GEO_V6_FILE="$SINGBOX_FOLDER_PATH/.geo6"
+GEO_OUT_FILE="$SINGBOX_FOLDER_PATH/.geo_out"
+GEO_STARTED="$SINGBOX_FOLDER_PATH/.geo_started"
+
+# 按 IP 类型返回对应缓存文件
+geo_file_of() {
+    if echo "$1" | grep -q ':'; then echo "$GEO_V6_FILE"; else echo "$GEO_V4_FILE"; fi
+}
+# 写入 .geo4/.geo6（按 IP 类型），同一 IP 只保留一行（临时文件 + mv 原子替换）
+geo_set() {
+    local _ip="$1" _region="$2" _f _tmp
+    [ -z "$_ip" ] || [ -z "$_region" ] && return 1
+    _f="$(geo_file_of "$_ip")"
+    _tmp="$(mktemp "${_f}.XXXXXX" 2>/dev/null || echo "${_f}.tmp")"
+    grep -v "^${_ip}=" "$_f" 2>/dev/null > "$_tmp" || true
+    echo "$_ip=$_region" >> "$_tmp"
+    mv -f "$_tmp" "$_f"
+}
+# 写入 .geo_out（out_ip），同一 IP 只保留一行
+geo_set_out() {
+    local _ip="$1" _region="$2" _tmp
+    [ -z "$_ip" ] || [ -z "$_region" ] && return 1
+    _tmp="$(mktemp "${GEO_OUT_FILE}.XXXXXX" 2>/dev/null || echo "${GEO_OUT_FILE}.tmp")"
+    grep -v "^${_ip}=" "$GEO_OUT_FILE" 2>/dev/null > "$_tmp" || true
+    echo "$_ip=$_region" >> "$_tmp"
+    mv -f "$_tmp" "$GEO_OUT_FILE"
+}
+
+geo_prefetch() {
+    [ -e "$GEO_STARTED" ] && return 0
+    touch "$GEO_STARTED"
+    {
+        local _ip _r
+        _ip="$(curl -s4 -m3 --connect-timeout 3 -k "$v46url" 2>/dev/null | tr -d '\r\n')"
+        [ -z "$_ip" ] && _ip="$(wget -4 -qO- --tries=1 --timeout=3 "$v46url" 2>/dev/null | tr -d '\r\n')"
+        _r="$(awk -F= -v ip="$_ip" '$1==ip{print $2}' "$GEO_V4_FILE" 2>/dev/null | tail -n1)"
+        [ -z "$_r" ] && {
+            _r="$(curl -s4 -m8 --connect-timeout 3 -k https://ip.fm 2>/dev/null \
+                | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1)"
+            [ -z "$_r" ] && _r="$(wget -4 -qO- --tries=1 --timeout=8 https://ip.fm 2>/dev/null \
+                | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1)"
+            geo_set "$_ip" "$_r"
+        }
+    } &
+    {
+        local _ip _r
+        _ip="$(curl -s6 -m3 --connect-timeout 3 -k "$v46url" 2>/dev/null | tr -d '\r\n')"
+        [ -z "$_ip" ] && _ip="$(wget -6 -qO- --tries=1 --timeout=3 "$v46url" 2>/dev/null | tr -d '\r\n')"
+        _r="$(awk -F= -v ip="$_ip" '$1==ip{print $2}' "$GEO_V6_FILE" 2>/dev/null | tail -n1)"
+        [ -z "$_r" ] && {
+            _r="$(curl -s6 -m8 --connect-timeout 3 -k https://ip.fm 2>/dev/null \
+                | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1)"
+            [ -z "$_r" ] && _r="$(wget -6 -qO- --tries=1 --timeout=8 https://ip.fm 2>/dev/null \
+                | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1)"
+            geo_set "$_ip" "$_r"
+        }
+    } &
+}
+# 读取 IP 的地区：$1=IP。先查对应类型缓存命中即返回；未命中先等预取写入，仍无则现场查并写回缓存。
+geo_get_ip() {
+    local _ip="$1" _region="" _t=0 _proto _f
+    [ -z "$_ip" ] && return 1
+    _f="$(geo_file_of "$_ip")"
+    _region="$(awk -F= -v ip="$_ip" '$1==ip{print $2}' "$_f" 2>/dev/null | tail -n1)"
+    if [ -z "$_region" ] && [ -e "$GEO_STARTED" ]; then
+        while [ "$_t" -lt 20 ]; do
+            _region="$(awk -F= -v ip="$_ip" '$1==ip{print $2}' "$_f" 2>/dev/null | tail -n1)"
+            [ -n "$_region" ] && break
+            sleep 0.1; _t=$((_t+1))
+        done
+    fi
+    if [ -z "$_region" ]; then
+        if echo "$_ip" | grep -q ':'; then _proto="6"; else _proto="4"; fi
+        _region="$(curl -s${_proto} -m8 --connect-timeout 3 -k https://ip.fm 2>/dev/null \
+            | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1)"
+        [ -z "$_region" ] && _region="$(wget -${_proto} -qO- --tries=1 --timeout=8 https://ip.fm 2>/dev/null \
+            | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1)"
+        [ -n "$_region" ] && geo_set "$_ip" "$_region"
+    fi
+    echo "$_region"
+}
 
 hostname=$(uname -a | awk '{print $2}')
 op=$(cat /etc/redhat-release 2> /dev/null || cat /etc/os-release 2> /dev/null | grep -i pretty_name | cut -d \" -f2)
@@ -1170,9 +1286,9 @@ get_short_id() {
     local sid_file="${1:-$SINGBOX_FOLDER_PATH/short_id}"
     local sid=""
 
-    # 兼容：如果脚本里没有 yellow/green，就用 echo
-    command -v yellow > /dev/null 2>&1 || yellow() { echo -e "$*"; }
-    command -v green > /dev/null 2>&1 || green() { echo -e "$*"; }
+    # 兼容：如果脚本里没有 yellow/green，就用 printf
+    command -v yellow > /dev/null 2>&1 || yellow() { printf "%s\n" "$*"; }
+    command -v green > /dev/null 2>&1 || green() { printf "%s\n" "$*"; }
 
     _is_hex() { echo "$1" | grep -qiE '^[0-9a-f]{8}$'; }
 
@@ -1291,7 +1407,7 @@ derive_reality_public_key() {
                 priv_len="$(stat -c%s "$tmp_dir/_x25519_priv_raw" 2> /dev/null || stat -f%z "$tmp_dir/_x25519_priv_raw" 2> /dev/null || echo 0)"
 
                 if [ "$priv_len" != "32" ]; then
-                    debug_log "❗ 【调试】 derive_reality_public_key: 本地解码后长度不为 32 bytes（实际=$priv_len）"
+                    debug_log "❗ 【调试】 derive_reality_public_key: 本地解码后长度不为 32 bytes（实际=${priv_len}）"
                     rm -f "$tmp_dir/_x25519_priv_raw" 2> /dev/null
                 else
                     # PKCS#8 DER 前缀（X25519 固定头）
@@ -1469,7 +1585,7 @@ init_reality_keypair() {
     export reality_private="$priv"
     export reality_public="$pub"
 
-    debug_log "💾 【调试】 init_reality_keypair: 已写入 $key_file（chmod 600）"
+    debug_log "💾 【调试】 init_reality_keypair: 已写入 ${key_file}（chmod 600）"
     debug_log "✅ 【调试】 init_reality_keypair: 完成（priv=${#priv} chars, pub=${#pub} chars）"
 
     # 仅在“新生成私钥”时提示用户保存（避免每次刷屏）
@@ -2279,7 +2395,7 @@ wait_and_check_argo() {
         固定 | fixed | FIXED) argo_tunnel_type="固定" ;;
         临时 | temp | temporary | "") argo_tunnel_type="临时" ;;
         *)
-            yellow "❗ 未知隧道类型：$argo_tunnel_type，按【临时】处理" >&2
+            yellow "❗ 未知隧道类型：${argo_tunnel_type}，按【临时】处理" >&2
             argo_tunnel_type="临时"
             ;;
     esac
@@ -2450,7 +2566,7 @@ EOF
     v4_local="${v4_local:-}"
     v6_local="${v6_local:-}"
 
-    debug_log "【调试】pick_server_ip_for_install：v4_local=$v4_local，v6_local=$v6_local"
+    debug_log "【调试】pick_server_ip_for_install：v4_local=${v4_local}，v6_local=${v6_local}"
 
     # 6) 根据 ipzz/ippz 选择 prefer_ip -> server_ip（先不加括号，统一用“裸 IP”比较）
     local prefer_ip server_ip
@@ -2486,7 +2602,7 @@ EOF
         debug_log "【调试】pick_server_ip_for_install：最终抓取的公网IP,server_ip=$server_ip"
     fi
 
-    debug_log "【调试】pick_server_ip_for_install：开始对比out_ip与server_ip，out_ip=$out_ip，server_ip=$server_ip"
+    debug_log "【调试】pick_server_ip_for_install：开始对比out_ip与server_ip，out_ip=${out_ip}，server_ip=${server_ip}"
 
     # 8) 处理 out_ip：去括号后再比较；若 out_ip 合法且与 server_ip 不同，则 out_ip 覆盖server_ip的值
     local out_norm
@@ -2494,7 +2610,7 @@ EOF
     if is_valid_ip_simple "$out_norm" && [ -n "$out_norm" ]; then
         debug_log "【调试】pick_server_ip_for_install：out_ip经过处理格式后，out_norm=$out_norm"
         if [ -z "$server_ip" ] || ! is_valid_ip_simple "$server_ip" || [ "$out_norm" != "$(strip_ip_brackets_all "$server_ip")" ]; then
-            debug_log "【调试】pick_server_ip_for_install：out_ip合法且与server_ip不同，out_norm=$out_norm，server_ip=$server_ip"
+            debug_log "【调试】pick_server_ip_for_install：out_ip合法且与server_ip不同，out_norm=${out_norm}，server_ip=${server_ip}"
             server_ip="$out_norm"
         fi
     fi
@@ -2539,28 +2655,10 @@ EOF
     v4_local="$(strip_ip_brackets_all "$v4_local")"
     v6_local="$(strip_ip_brackets_all "$v6_local")"
 
-    # B) 获取地区（v4/v6 并发探测，缩短超时）
+    # B) 读取地区（本地 IP→地区 缓存，未命中才查网络并写回）
     local v4dq="" v6dq=""
-    local v4_tmp v6_tmp
-    v4_tmp="$(mktemp /tmp/_geo_v4.XXXXXX 2>/dev/null || echo "/tmp/_geo_v4")"
-    v6_tmp="$(mktemp /tmp/_geo_v6.XXXXXX 2>/dev/null || echo "/tmp/_geo_v6")"
-    {
-      curl -s4 -m3 --connect-timeout 3 -k https://ip.fm 2>/dev/null \
-        | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1 > "$v4_tmp"
-      [ ! -s "$v4_tmp" ] && wget -4 -qO- --tries=1 --timeout=3 https://ip.fm 2>/dev/null \
-        | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1 > "$v4_tmp"
-    } &
-    {
-      curl -s6 -m3 --connect-timeout 3 -k https://ip.fm 2>/dev/null \
-        | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1 > "$v6_tmp"
-      [ ! -s "$v6_tmp" ] && wget -6 -qO- --tries=1 --timeout=3 https://ip.fm 2>/dev/null \
-        | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1 > "$v6_tmp"
-    } &
-    wait
-    v4dq="$(cat "$v4_tmp" 2>/dev/null || true)"
-    v6dq="$(cat "$v6_tmp" 2>/dev/null || true)"
-    rm -f "$v4_tmp" "$v6_tmp"
-
+    v4dq="$(geo_get_ip "$v4_local")"
+    v6dq="$(geo_get_ip "$v6_local")"
     [ -z "$v4dq" ] && v4dq="未知"
     [ -z "$v6dq" ] && v6dq="未知"
 
@@ -2748,7 +2846,8 @@ write2SingboxFolders() {
     echo "${subscribe}" > "$SINGBOX_FOLDER_PATH/subscribe"
 }
 
-#   show status
+# ⚠️ DEPRECATED（已废弃）：此函数保留供参考/兼容，不再被 cip() 与服务管理菜单调用。
+# 状态显示已统一改用 menu_status_block（主菜单顶部同款：●运行中/■已停止/○未安装/○未启用 + 版本 + 端口）
 singbox_status() {
     purple "=========当前内核运行状态========="
 
@@ -3101,8 +3200,14 @@ strip_ip_brackets() {
 # show nodes
 cip() {
     echo
-    # 显示 Singbox 状态
-    singbox_status
+    geo_prefetch
+    if ! is_installed_sb; then
+        red "  ⚠️  尚未安装节点，请先安装节点"
+        echo ""
+        return
+    fi
+    # 显示 Singbox 状态（与主菜单顶部一致）
+    menu_status_block
     echo
 
     # 显示本机 v4/v6 + 地区，并在出口 IP 变更时提示
@@ -3205,7 +3310,8 @@ cip() {
 
         #输出 argo token
         if [ -n "${sbtk}" ]; then
-            green "Argo固定隧道token:\n${sbtk}"
+            green "Argo固定隧道token:"
+            green "${sbtk}"
         fi
 
         green ""
@@ -3355,7 +3461,7 @@ cleandel() {
                         *) rm -rf "$item" 2>/dev/null ;;
                     esac
                 done
-                green "✅ 已清理配置：$folder（二进制已保留）"
+                green "✅ 已清理配置：${folder}（二进制已保留）"
             fi
         fi
     done
@@ -3557,6 +3663,782 @@ check_port_conflicts_or_exit() {
 }
 # ================== 端口冲突检测 END ================
 
+# ================== 交互式菜单模式 ==================
+# 与命令行非交互模式共存：带参数走原逻辑，无参数或 menu 命令进入交互菜单
+
+reading() {
+    read -r -p "$(yellow "$1")" "$2"
+}
+
+is_installed_sb() {
+    pgrep -f "$SINGBOX_FOLDER_PATH/sing-box" > /dev/null 2>&1 \
+        || [ -x "$SINGBOX_FOLDER_PATH/sing-box" ] \
+        || [ -s "$SINGBOX_FOLDER_PATH/sb.json" ]
+}
+
+menu_pause() {
+    reading "按回车返回菜单..." _
+}
+
+# 主菜单状态：sing-box / cloudflared / Argo / nginx（状态 + 具体版本）
+# 绿●运行中 / 红■已停止 / 黄○未安装 / 紫○未启用
+menu_status_block() {
+    local sub_flag argo_needed st_sb st_cf v_sb v_cf v_nginx
+    sub_flag="$(get_subscribe_flag)"
+    argo_needed=false
+    need_argo && argo_needed=true
+
+    # sing-box
+    v_sb=""
+    if [ -x "$SINGBOX_FOLDER_PATH/sing-box" ]; then
+        local _ver
+        _ver=$("$SINGBOX_FOLDER_PATH/sing-box" version 2> /dev/null | head -1 | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')
+        [ -n "$_ver" ] && v_sb="V$_ver"
+    fi
+    if pgrep -f "$SINGBOX_FOLDER_PATH/sing-box" > /dev/null 2>&1; then
+        st_sb="$(green "● 运行中")"
+    elif [ -n "$v_sb" ]; then
+        st_sb="$(red "■ 已停止")"
+    else
+        st_sb="$(yellow "○ 未安装")"
+    fi
+
+    # cloudflared
+    v_cf=""
+    if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ]; then
+        local _ver
+        _ver=$("$SINGBOX_FOLDER_PATH/cloudflared" version 2> /dev/null | sed -n 's/.*version \([0-9]\{4\}\.[0-9]\+\.[0-9]\+\).*/\1/p')
+        [ -n "$_ver" ] && v_cf="V$_ver"
+    elif command -v cloudflared > /dev/null 2>&1; then
+        local _ver
+        _ver=$(cloudflared version 2> /dev/null | sed -n 's/.*version \([0-9]\{4\}\.[0-9]\+\.[0-9]\+\).*/\1/p')
+        [ -n "$_ver" ] && v_cf="V$_ver"
+    fi
+    if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ] || command -v cloudflared > /dev/null 2>&1; then
+        if pgrep -f "$SINGBOX_FOLDER_PATH/cloudflared" > /dev/null 2>&1; then
+            st_cf="$(green "● 运行中")"
+        else
+            st_cf="$(red "■ 已停止")"
+        fi
+    else
+        st_cf="$(yellow "○ 未安装")"
+    fi
+
+    # nginx
+    v_nginx=""
+    if command -v nginx > /dev/null 2>&1; then
+        local _ver
+        _ver=$(nginx -v 2>&1 | sed -n 's/.*nginx\/\([0-9.]*\).*/\1/p')
+        [ -n "$_ver" ] && v_nginx="V$_ver"
+    fi
+    # 订阅细分：订阅开启/未开启 + 端口
+    local sub_desc nginx_port
+    if is_true "$sub_flag"; then
+        sub_desc="✅ $(green "订阅已开启")"
+    else
+        sub_desc="⛔ $(purple "订阅未开启")"
+    fi
+    nginx_port="${nginx_pt:-$NGINX_DEFAULT_PORT}"
+    [ -s "$SINGBOX_FOLDER_PATH/nginx_port" ] && nginx_port="$(cat "$SINGBOX_FOLDER_PATH/nginx_port" 2> /dev/null)"
+
+    green "  Sing-box    : $st_sb   $v_sb"
+    green "  Cloudflared : $st_cf   $v_cf"
+    # Argo 状态行（色值与 Nginx 一致：紫○未启用 / 黄○未安装 / 绿●运行中 / 红■已停止，均带端口）
+    local argo_port
+    argo_port="${argo_pt:-$ARGO_DEFAULT_PORT}"
+    if ! $argo_needed; then
+        green "  Argo        : $(purple "○ 未启用")（当前场景无需 Argo，端口：${argo_port}）"
+    elif [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ] || command -v cloudflared > /dev/null 2>&1; then
+        if pgrep -f "$SINGBOX_FOLDER_PATH/cloudflared" > /dev/null 2>&1; then
+            green "  Argo        : ${st_cf}（端口：${argo_port}）"
+        else
+            green "  Argo        : ${st_cf}（已启用 Argo，端口：${argo_port}）"
+        fi
+    else
+        green "  Argo        : $(yellow "○ 未安装")（已启用 Argo，端口：${argo_port}）"
+    fi
+    if ! $argo_needed && ! is_true "$sub_flag"; then
+        green "  Nginx       : $(purple "○ 未启用（订阅未开启，无需）")"
+    elif ! command -v nginx > /dev/null 2>&1; then
+        green "  Nginx       : $(yellow "○ 未安装")（${sub_desc}，端口：${nginx_port}）"
+    elif ps aux | grep -v grep | grep -q nginx; then
+        green "  Nginx       : $(green "● 运行中")${v_nginx:+ $v_nginx}（${sub_desc}，端口：${nginx_port}）"
+    else
+        green "  Nginx       : $(red "■ 已停止")（${sub_desc}，端口：${nginx_port}）"
+    fi
+}
+
+# 根据 *pt 环境变量重新推导协议开关与端口变量（交互模式设置环境变量后调用）
+menu_reload_proto_flags() {
+    trp=; vmag=; hyp=; vmp=; vlr=; tup=; anyp=; socksp=
+    [ -n "${trpt+x}" ] && { trp=yes; vmag=yes; }
+    [ -n "${hypt+x}" ] && hyp=yes
+    [ -n "${vmpt+x}" ] && { vmp=yes; vmag=yes; }
+    [ -n "${vlrt+x}" ] && vlr=yes
+    [ -n "${tupt+x}" ] && tup=yes
+    [ -n "${anypt+x}" ] && anyp=yes
+    [ -n "${socks5pt+x}" ] && socksp=yes
+    export trp hyp vmp vlr tup anyp socksp vmag
+    # 重新绑定端口变量（与文件顶部一致）
+    export port_vm_ws=${vmpt:-''} port_tr=${trpt:-''} port_hy2=${hypt:-''} \
+           port_vlr=${vlrt:-''} port_tu=${tupt:-''} port_any=${anypt:-''} \
+           port_socks5=${socks5pt:-''}
+}
+
+# 读取端口；空则返回空（表示随机生成）
+menu_ask_port() {
+    local _proto="$1" _def="$2" _in="" _rp=""
+    while true; do
+        reading "  请输入 ${_proto} 监听端口 (回车=${_def:-随机}): " _in
+        if [ -z "$_in" ]; then
+            if [ -n "$_def" ]; then
+                green "  ↳ ${_proto} 端口: ${_def} (默认)" >&2
+                echo "" >&2
+                echo "$_def"
+            else
+                _rp="$(rand_port)"
+                green "  ↳ ${_proto} 端口: ${_rp} (随机)" >&2
+                echo "" >&2
+                echo "$_rp"
+            fi
+            return 0
+        fi
+        if [[ "$_in" =~ ^[0-9]+$ ]] && [ "$_in" -ge 1 ] && [ "$_in" -le 65535 ]; then
+            green "  ↳ ${_proto} 端口: ${_in}" >&2
+            echo "" >&2
+            echo "$_in"
+            return 0
+        fi
+        red "  ❌ 端口无效 (1-65535)，请重新输入" >&2
+        echo "" >&2
+    done
+}
+
+# 交互收集安装参数并设置环境变量
+# 查询 out_ip 的地区（优先本地 .geo_out 缓存，未命中才查 ip-api.com 并写回缓存）
+query_ip_region() {
+    local _ip="$1" _json _region _rn _ci
+    _region="$(awk -F= -v ip="$_ip" '$1==ip{print $2}' "$GEO_OUT_FILE" 2>/dev/null | tail -n1)"
+    [ -n "$_region" ] && { echo "$_region"; return 0; }
+    _json="$(curl -s -m5 "http://ip-api.com/json/${_ip}?fields=status,country,regionName,city" 2>/dev/null)"
+    case "$_json" in
+        *'"status":"success"'*)
+            _region="$(printf '%s' "$_json" | sed -nE 's/.*"country":"([^"]*)".*/\1/p')"
+            [ -z "$_region" ] && return 1
+            _rn="$(printf '%s' "$_json" | sed -nE 's/.*"regionName":"([^"]*)".*/\1/p')"
+            _ci="$(printf '%s' "$_json" | sed -nE 's/.*"city":"([^"]*)".*/\1/p')"
+            [ -n "$_rn" ] && [ "$_rn" != "$_region" ] && _region="$_region $_rn"
+            [ -n "$_ci" ] && [ "$_ci" != "$_rn" ] && _region="$_region $_ci"
+            geo_set_out "$_ip" "$_region"
+            echo "$_region"
+            ;;
+    esac
+    return 0
+}
+
+menu_collect_install() {
+    local _ans _ch _sel _has_all _has_vmess _has_trojan
+
+    echo ""
+    purple "===== 日志调试 ====="
+    yellow "  仅用于安装时日志调试，默认关闭"
+    reading "是否开启日志调试? [y/N]: " _ans
+    if [ "$_ans" = "y" ] || [ "$_ans" = "Y" ]; then
+        export DEBUG_FLAG="1"
+        green "  ↳ 日志调试: 开启"
+    else
+        export DEBUG_FLAG="0"
+        green "  ↳ 日志调试: 关闭 (默认)"
+    fi
+
+    purple "===== 基础设置 ====="
+    reading "IP偏好 [4=仅IPv4 / 6=仅IPv6 / 回车=自动]: " _ans
+    if [ "$_ans" = "4" ] || [ "$_ans" = "6" ]; then
+        export ippz="$_ans"
+        green "  ↳ IP偏好: 仅IPv${_ans}"
+    else
+        green "  ↳ IP偏好: 自动 (默认)"
+    fi
+
+    # 服务器 IP 确认：检测并回显（地区为全局预取缓存），若与预期不符可输入 out_ip
+    echo ""
+    purple "===== 服务器 IP 确认 ====="
+    local _ipres _ipv4 _ipv6 _use_ip _use_label _v4dq _v6dq
+    _ipres="$(check_ip_connectivity "${v46url:-https://icanhazip.com}")"
+    _ipv4="$(printf '%s' "${_ipres%%|*}" | tr -d '\r\n')"
+    _ipv6="$(printf '%s' "${_ipres##*|}" | tr -d '\r\n')"
+    _v4dq="$(geo_get_ip "$_ipv4")"
+    _v6dq="$(geo_get_ip "$_ipv6")"
+    [ -z "$_v4dq" ] && _v4dq="未知"
+    [ -z "$_v6dq" ] && _v6dq="未知"
+    if [ "$ippz" = "6" ]; then
+        green "  ↳ 检测到 IPv4: ${_ipv4:-无} (${_v4dq}) / IPv6: ${_ipv6:-无} (${_v6dq})"
+        _use_ip="$_ipv6"; _use_label="ipv6"
+    elif [ "$ippz" = "4" ]; then
+        green "  ↳ 检测到 IPv4: ${_ipv4:-无} (${_v4dq}) / IPv6: ${_ipv6:-无} (${_v6dq})"
+        _use_ip="$_ipv4"; _use_label="ipv4"
+    else
+        green "  ↳ 检测到 IPv4: ${_ipv4:-无} (${_v4dq}) / IPv6: ${_ipv6:-无} (${_v6dq})"
+        if [ -n "$_ipv4" ]; then
+            _use_ip="$_ipv4"; _use_label="ipv4"
+        elif [ -n "$_ipv6" ]; then
+            _use_ip="$_ipv6"; _use_label="ipv6"
+        else
+            _use_ip=""; _use_label=""
+        fi
+    fi
+    if [ -n "$_use_ip" ]; then
+        green "  ↳ 你将使用 ${_use_label}(${_use_ip}) 作为出口 IP"
+        reading "  请留空回车直接使用当前出口 IP (${_use_ip})；如需特殊 IP 作为出口，请输入 IP: " _ans
+    else
+        yellow "  ↳ 未检测到可用出口 IP"
+        reading "  请手动输入出口 IP (回车=稍后自动检测): " _ans
+    fi
+    if [ -n "$_ans" ]; then
+        export out_ip="$_ans"
+        local _odq
+        _odq="$(query_ip_region "$_ans" 2>/dev/null)"
+        green "  ↳ 使用自定义 IP (out_ip): ${_ans} (${_odq:-未知})"
+    else
+        green "  ↳ 使用检测到的 IP: ${_use_ip}"
+    fi
+
+    reading "UUID (回车自动生成): " _ans
+    if [ -n "$_ans" ]; then
+        export uuid="$_ans"
+        green "  ↳ UUID: ${_ans}"
+    else
+        local _g
+        _g="$(gen_uuid)"
+        export uuid="$_g"
+        green "  ↳ UUID: ${_g} (自动生成)"
+    fi
+
+    echo ""
+    purple "===== 选择要安装的直连协议 (可多选，空格或逗号分隔) ====="
+    green "  b) VLESS-Reality-Vision"
+    green "  c) Hysteria2"
+    green "  d) TUIC"
+    green "  e) AnyTLS"
+    reading "输入选项 (回车默认=全部直连协议 b c d e): " _ch
+    [ -z "$_ch" ] && _ch="b c d e"
+    _ch="$(printf '%s' "$_ch" | tr ',' ' ' | tr '[:upper:]' '[:lower:]')"
+    local _names=""
+    for _sel in $_ch; do
+        case "$_sel" in
+            b) _names="$_names,VLESS" ;;
+            c) _names="$_names,Hysteria2" ;;
+            d) _names="$_names,TUIC" ;;
+            e) _names="$_names,AnyTLS" ;;
+        esac
+    done
+    green "  ↳ 直连协议: ${_ch} (${_names#,})"
+
+    # Argo 隧道协议：二选一或二选零
+    echo ""
+    purple "===== 选择 Argo 隧道协议 (二选一，回车=不选) ====="
+    green "  f) Vmess-WS-TLS"
+    green "  g) Trojan-WS-TLS"
+    reading "输入选项 (回车=不选): " _ans
+    _ans="$(printf '%s' "$_ans" | tr '[:upper:]' '[:lower:]')"
+    case "$_ans" in
+        *g*) _ch="$_ch g"; green "  ↳ Argo 协议: Trojan-WS-TLS" ;;
+        *f*) _ch="$_ch f"; green "  ↳ Argo 协议: Vmess-WS-TLS" ;;
+        *) : ; green "  ↳ Argo 协议: 不选 (默认)" ;;
+    esac
+
+    # Socks5 协议：可要可不要
+    echo ""
+    purple "===== Socks5 协议 (可要可不要) ====="
+    reading "是否安装 Socks5? [y/N] (回车默认=不要): " _ans
+    case "$_ans" in
+        y|Y) _ch="$_ch h"; green "  ↳ Socks5: 安装" ;;
+        *) : ; green "  ↳ Socks5: 不安装 (默认)" ;;
+    esac
+
+    # 标记选中的协议（空值=随机端口，先只做启用标记）
+    for _sel in $_ch; do
+        case "$_sel" in
+            b) export vlrt="" ;;
+            c) export hypt="" ;;
+            d) export tupt="" ;;
+            e) export anypt="" ;;
+            f) export vmpt="" ;;
+            g) export trpt="" ;;
+            h) export socks5pt="" ;;
+            *) yellow "  跳过未知选项: $_sel" ;;
+        esac
+    done
+
+    menu_reload_proto_flags
+
+    # 端口设置：全部随机 或 逐个定制
+    echo ""
+    purple "===== 端口设置 ====="
+    green "  1) 全部随机生成"
+    green "  2) 逐个自定义端口 (推荐)"
+    reading "输入选择 (回车默认=2): " _ans
+    if [ -z "$_ans" ] || [ "$_ans" = "2" ]; then
+        green "  ↳ 端口: 逐个自定义 (默认)"
+        [ -n "$trp" ] && export trpt="$(menu_ask_port "Trojan-WS (Argo)")"
+        [ -n "$vmp" ] && export vmpt="$(menu_ask_port "Vmess-WS (Argo)")"
+        for _sel in vlr hyp tup anyp; do
+            case "$_sel" in
+                vlr)  [ -n "$vlr" ]  && export vlrt="$(menu_ask_port "VLESS-Reality")" ;;
+                hyp)  [ -n "$hyp" ]  && export hypt="$(menu_ask_port "Hysteria2")" ;;
+                tup)  [ -n "$tup" ]  && export tupt="$(menu_ask_port "TUIC")" ;;
+                anyp) [ -n "$anyp" ] && export anypt="$(menu_ask_port "AnyTLS")" ;;
+            esac
+        done
+        [ -n "$trp$vmp" ] && export argo_pt="$(menu_ask_port "Argo" 8001)"
+    else
+        green "  ↳ 端口: 全部随机生成"
+        [ -n "$trp" ] && { trpt="$(rand_port)"; export trpt; green "  ↳ Trojan-WS (Argo) 端口: ${trpt} (随机)"; }
+        [ -n "$vmp" ] && { vmpt="$(rand_port)"; export vmpt; green "  ↳ Vmess-WS (Argo) 端口: ${vmpt} (随机)"; }
+        [ -n "$vlr" ] && { vlrt="$(rand_port)"; export vlrt; green "  ↳ VLESS-Reality 端口: ${vlrt} (随机)"; }
+        [ -n "$hyp" ] && { hypt="$(rand_port)"; export hypt; green "  ↳ Hysteria2 端口: ${hypt} (随机)"; }
+        [ -n "$tup" ] && { tupt="$(rand_port)"; export tupt; green "  ↳ TUIC 端口: ${tupt} (随机)"; }
+        [ -n "$anyp" ] && { anypt="$(rand_port)"; export anypt; green "  ↳ AnyTLS 端口: ${anypt} (随机)"; }
+        [ -n "$trp$vmp" ] && { argo_pt="${argo_pt:-8001}"; export argo_pt; green "  ↳ Argo 端口: ${argo_pt} (默认)"; }
+    fi
+
+    menu_reload_proto_flags
+
+    # Argo 隧道配置（vmess/trojan 已强制二选一，这里最多启用一个）
+    if [ -n "$vmp" ]; then
+        export argo=vmpt
+    elif [ -n "$trp" ]; then
+        export argo=trpt
+    else
+        export argo=""
+    fi
+
+    if [ -n "$argo" ]; then
+        echo ""
+        purple "===== Argo 隧道配置 ====="
+        purple "选择 Argo 隧道类型:"
+        green "  1) 临时隧道 (trycloudflare 免费域名)"
+        green "  2) 固定隧道 (需要自己的域名 + Token/JSON)"
+        reading "输入编号 (回车默认=2): " _ans
+        if [ "$_ans" = "1" ]; then
+            green "  ↳ Argo 隧道: 临时隧道"
+        else
+            green "  ↳ Argo 隧道: 固定隧道 (默认)"
+            reading "  请输入 Argo 域名: " _ans
+            [ -n "$_ans" ] && export ARGO_DOMAIN="$_ans"
+            green "  ↳ Argo 域名: ${ARGO_DOMAIN:-未设置}"
+            reading "  请输入 Argo Token 或粘贴 JSON 凭据: " _ans
+            [ -n "$_ans" ] && export ARGO_AUTH="$_ans"
+            green "  ↳ Argo Token/JSON: 已设置"
+        fi
+    fi
+
+    # 订阅
+    echo ""
+    reading "是否开启节点订阅 [y/N]: " _ans
+    if [ "$_ans" = "y" ] || [ "$_ans" = "Y" ]; then
+        export subscribe=true
+        green "  ↳ 订阅: 开启"
+        reading "订阅服务端口 Nginx (回车默认=8080): " _ans
+        if [ -n "$_ans" ]; then
+            export nginx_pt="$_ans"
+        else
+            export nginx_pt=8080
+        fi
+        green "  ↳ 订阅端口: ${nginx_pt}"
+    else
+        green "  ↳ 订阅: 不开启 (默认)"
+    fi
+
+    # VLESS 才询问 reality_private
+    if [ -n "$vlr" ]; then
+        echo ""
+        reading "reality_private (回车=自动生成): " _ans
+        if [ -n "$_ans" ]; then
+            export reality_private="$_ans"
+            green "  ↳ reality_private: 已输入"
+        else
+            local _rp
+            _rp="$(gen_reality_private)"
+            if [ -n "$_rp" ]; then
+                export reality_private="$_rp"
+                green "  ↳ reality_private: ${_rp} (自动生成)"
+            else
+                green "  ↳ reality_private: 自动生成 (默认)"
+            fi
+        fi
+    fi
+
+    # SNI / CDN 值设定
+    echo ""
+    purple "===== SNI / CDN 设置 ====="
+    green "  1) 全部使用默认值(偷懒就用默认)"
+    green "     默认值：CDN 优选域名=saas.sin.fan, CDN 端口=443(仅限 HTTPS 系端口 ${HTTPS_CDN_PORTS[*]}),"
+    green "             Hysteria2 伪装域名=www.apple.com, VLESS 伪装域名=www.apple.com,"
+    green "             VLESS 伪装端口=443, TUIC 伪装域名=www.apple.com"
+    green "  2) 逐个展开单独设置（可自定义，推荐）"
+    reading "输入选择 (回车默认=1): " _ans
+    if [ "$_ans" = "2" ]; then
+        green "  ↳ SNI/CDN: 逐个设置"
+        reading "  CDN 优选域名 (默认=saas.sin.fan): " _ans
+        [ -n "$_ans" ] && export cdn_host="$_ans"
+        green "  ↳ CDN 优选域名: ${cdn_host:-saas.sin.fan}"
+        yellow "  可选 CDN 优选端口(仅限 HTTPS 系端口)：${HTTPS_CDN_PORTS[*]}"
+        reading "  CDN 端口 (默认=443): " _ans
+        if [ -n "$_ans" ]; then
+            local _p _cdn_ok=false
+            for _p in "${HTTPS_CDN_PORTS[@]}"; do
+                [ "$_ans" = "$_p" ] && { _cdn_ok=true; break; }
+            done
+            if $_cdn_ok; then
+                export cdn_pt="$_ans"
+                green "  ↳ CDN 端口: ${cdn_pt}"
+            else
+                yellow "  ❌ CDN 端口仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS[*]})，已用默认 443"
+                export cdn_pt="443"
+                green "  ↳ CDN 端口: ${cdn_pt} (默认)"
+            fi
+        else
+            green "  ↳ CDN 端口: ${cdn_pt:-443} (默认)"
+        fi
+        reading "  Hysteria2 伪装域名 (默认=www.apple.com): " _ans
+        [ -n "$_ans" ] && export hy_sni="$_ans"
+        green "  ↳ Hysteria2 伪装域名: ${hy_sni:-www.apple.com}"
+        reading "  VLESS 伪装域名 (默认=www.apple.com): " _ans
+        [ -n "$_ans" ] && export vl_sni="$_ans"
+        green "  ↳ VLESS 伪装域名: ${vl_sni:-www.apple.com}"
+        reading "  VLESS 伪装端口 (默认=443): " _ans
+        [ -n "$_ans" ] && export vl_sni_pt="$_ans"
+        green "  ↳ VLESS 伪装端口: ${vl_sni_pt:-443}"
+        reading "  TUIC 伪装域名 (默认=www.apple.com): " _ans
+        [ -n "$_ans" ] && export tu_sni="$_ans"
+        green "  ↳ TUIC 伪装域名: ${tu_sni:-www.apple.com}"
+    else
+        green "  ↳ SNI/CDN: 全部使用默认值"
+        green "  ↳ CDN 优选域名=${cdn_host:-saas.sin.fan}, CDN 端口=${cdn_pt:-443},"
+        green "  ↳ Hysteria2 伪装域名=${hy_sni:-www.apple.com}, VLESS 伪装域名=${vl_sni:-www.apple.com},"
+        green "  ↳ VLESS 伪装端口=${vl_sni_pt:-443}, TUIC 伪装域名=${tu_sni:-www.apple.com}"
+    fi
+
+    # 节点名称前缀（最后询问）
+    echo ""
+    reading "节点名称前缀 (回车跳过): " _ans
+    if [ -n "$_ans" ]; then
+        export name="$_ans"
+        green "  ↳ 节点名称前缀: ${_ans}"
+    else
+        green "  ↳ 节点名称前缀: 跳过 (默认)"
+    fi
+}
+
+menu_show_selection() {
+    green "  ========== 将安装的协议 =========="
+    [ -n "$vlr" ]    && green "    - VLESS-Reality-Vision"
+    [ -n "$hyp" ]    && green "    - Hysteria2"
+    [ -n "$tup" ]    && green "    - TUIC"
+    [ -n "$anyp" ]   && green "    - AnyTLS"
+    [ -n "$socksp" ] && green "    - Socks5"
+    [ -n "$vmp" ]    && green "    - Vmess-WS-TLS (Argo)"
+    [ -n "$trp" ]    && green "    - Trojan-WS-TLS (Argo)"
+    echo ""
+}
+
+interactive_install() {
+    local _ans
+    # 已安装（进程在跑 / 有二进制 / 有配置）时禁止重复安装
+    if pgrep -f "$SINGBOX_FOLDER_PATH/sing-box" > /dev/null 2>&1 \
+       || [ -x "$SINGBOX_FOLDER_PATH/sing-box" ] \
+       || [ -s "$SINGBOX_FOLDER_PATH/sb.json" ]; then
+        red "⚠️ 已检测到 Sing-box 已安装，不能重复安装！"
+        yellow "如需重新部署请使用一级菜单中的「覆盖式安装/重置」"
+        sleep 2
+        return
+    fi
+    while true; do
+        clear
+        green "========== [1] 交互式安装 Sing-box =========="
+        menu_collect_install
+        if ! any_proto_enabled; then
+            red "❌ 未选择任何协议，请重新选择。"
+            sleep 2
+            continue
+        fi
+        menu_show_selection
+        reading "设置完毕，即将生成配置并部署服务，确认继续? [Y/n]: " _ans
+        if [ -z "$_ans" ] || [ "$_ans" = "y" ] || [ "$_ans" = "Y" ]; then
+            break
+        else
+            red "已取消安装。"
+            sleep 1
+            return
+        fi
+    done
+
+    check_port_conflicts_or_exit
+    install_step
+    green "✅ 安装完成！"
+    sleep 2
+}
+
+interactive_reinstall() {
+    local _ans
+    while true; do
+        clear
+        green "========== [2] 覆盖式安装 (重置) =========="
+        yellow "将清理现有配置后重新安装，需要至少启用一个协议。"
+        menu_collect_install
+        if ! any_proto_enabled; then
+            red "❌ 未选择任何协议，请重新选择。"
+            sleep 2
+            continue
+        fi
+        menu_show_selection
+        reading "设置完毕，即将生成配置并部署服务，确认继续? [Y/n]: " _ans
+        if [ -z "$_ans" ] || [ "$_ans" = "y" ] || [ "$_ans" = "Y" ]; then
+            break
+        else
+            red "已取消。"
+            sleep 1
+            return
+        fi
+    done
+
+    check_port_conflicts_or_exit
+    cleandel
+    install_step
+    green "✅ 覆盖式安装完成！"
+    sleep 2
+}
+
+# ========== 服务管理（重启/更新内核/Nginx/状态） ==========
+interactive_nginx_menu() {
+    local _ch
+    while true; do
+        clear
+        green "========= [3][3] Nginx 管理 ========="
+        nginx_status
+        echo ""
+        green "  1) 启动 Nginx"
+        green "  2) 停止 Nginx"
+        green "  3) 重启 Nginx"
+        purple "  0) 返回上级菜单"
+        reading "请输入选择: " _ch
+        case "$_ch" in
+            0) return ;;
+            1) nginx_start; green "✅ Nginx 已启动"; menu_pause ;;
+            2) nginx_stop; green "✅ Nginx 已停止"; menu_pause ;;
+            3) nginx_restart; green "✅ Nginx 已重启"; menu_pause ;;
+            *) yellow "无效选项"; sleep 1 ;;
+        esac
+    done
+}
+
+interactive_service_menu() {
+    local _ch
+    while true; do
+        clear
+        green "========= [3] 服务管理 ========="
+        echo ""
+        green "  1) 重启服务 (sing-box + Argo)"
+        green "  2) 更新内核 (ups)"
+        green "  3) Nginx 管理"
+        purple "  0) 返回主菜单"
+        reading "请输入选择: " _ch
+        case "$_ch" in
+            0) return ;;
+            1) sbrestart; argorestart; sleep 2; green "✅ 重启完成"; menu_pause ;;
+            2) update_singbox && sbrestart; green "✅ 内核更新完成"; menu_pause ;;
+            3) interactive_nginx_menu ;;
+            *) yellow "无效选项"; sleep 1 ;;
+        esac
+    done
+}
+
+interactive_sub_menu() {
+    local _ch
+    while true; do
+        clear
+        green "========= [6] 订阅管理 ========="
+        update_subscription_file
+        echo ""
+        if is_true "$(get_subscribe_flag)"; then
+            green "📌 节点订阅地址: $(show_sub_url)"
+        else
+            yellow "订阅未开启。"
+        fi
+        echo ""
+        green "  1) 重新生成订阅文件"
+        purple "  0) 返回主菜单"
+        reading "请输入选择: " _ch
+        case "$_ch" in
+            0) return ;;
+            1) update_subscription_file; menu_pause ;;
+            *) yellow "无效选项"; sleep 1 ;;
+        esac
+    done
+}
+
+interactive_log_menu() {
+    local _ch _log _log_files _f _lines
+    _lines=100
+    reading "显示最近行数 (默认100): " _lines
+    echo "$_lines" | grep -qE '^[0-9]+$' || _lines=100
+    while true; do
+        clear
+        green "========= [7] 查看日志 ========="
+        echo ""
+        green "  1) Sing-box 日志 (最近 $_lines 行)"
+        green "  2) Argo (cloudflared) 日志 (最近 $_lines 行)"
+        green "  3) Nginx 日志 (最近 $_lines 行)"
+        green "  4) 实时跟踪所有日志"
+        purple "  0) 返回主菜单"
+        reading "请输入选择: " _ch
+        case "$_ch" in
+            0) return ;;
+            1)
+                _log="$SINGBOX_FOLDER_PATH/singbox.log"
+                echo ""
+                green "=== Sing-box 日志 (最近 $_lines 行) ==="
+                if [ -s "$_log" ]; then
+                    tail -n "$_lines" "$_log"
+                else
+                    yellow "暂无日志：$_log"
+                fi
+                echo ""
+                menu_pause ;;
+            2)
+                _log="$SINGBOX_FOLDER_PATH/argo.log"
+                echo ""
+                green "=== Argo (cloudflared) 日志 (最近 $_lines 行) ==="
+                if [ -s "$_log" ]; then
+                    tail -n "$_lines" "$_log"
+                else
+                    yellow "暂无日志：$_log"
+                fi
+                echo ""
+                menu_pause ;;
+            3)
+                _log="/var/log/nginx/error.log"
+                echo ""
+                green "=== Nginx 日志 (最近 $_lines 行) ==="
+                if [ -s "$_log" ]; then
+                    tail -n "$_lines" "$_log"
+                else
+                    yellow "暂无日志：$_log"
+                fi
+                echo ""
+                menu_pause ;;
+            4)
+                echo ""
+                yellow "实时跟踪日志 (按 Ctrl+C 退出)..."
+                _log_files=""
+                for _f in "$SINGBOX_FOLDER_PATH/singbox.log" "$SINGBOX_FOLDER_PATH/argo.log" /var/log/nginx/error.log; do
+                    [ -s "$_f" ] && _log_files="$_log_files $_f"
+                done
+                if [ -z "$_log_files" ]; then
+                    yellow "暂无任何日志文件"
+                    menu_pause
+                else
+                    tail -f $_log_files
+                fi
+                ;;
+            *) yellow "无效选项"; sleep 1 ;;
+        esac
+    done
+}
+
+# ⚠️ DEPRECATED（已废弃）：一级菜单已直接提供「卸载全部并清理 (delall)」，此子菜单不再被调用，保留供参考/兼容。
+interactive_uninstall_menu() {
+    local _ch _ans
+    while true; do
+        clear
+        green "========= [8] 卸载 ========="
+        red "  1) 卸载 (保留 sing-box/cloudflared 二进制)"
+        red "  2) 彻底卸载 (全部删除)"
+        purple "  0) 返回主菜单"
+        reading "请输入选择: " _ch
+        case "$_ch" in
+            0) return ;;
+            1)
+                reading "确认卸载? (y/N): " _ans
+                if [ "$_ans" = "y" ] || [ "$_ans" = "Y" ]; then
+                    cleandel
+                    green "✅ 卸载完成"
+                fi
+                menu_pause ;;
+            2)
+                reading "确认彻底卸载? (y/N): " _ans
+                if [ "$_ans" = "y" ] || [ "$_ans" = "Y" ]; then
+                    cleandel delall
+                    green "✅ 已彻底卸载"
+                fi
+                menu_pause ;;
+            *) yellow "无效选项"; sleep 1 ;;
+        esac
+    done
+}
+
+interactive_main() {
+    local _ch
+    geo_prefetch
+    while true; do
+        clear
+        showmode
+        menu_status_block
+        echo ""
+        yellow "  【安 装】"
+        green "    [1] 安装节点"
+        green "    [2] 覆盖式安装/重置 (rep)"
+        echo ""
+        yellow "  【管 理】"
+        green "    [3] 服务管理"
+        echo ""
+        yellow "  【查 看】"
+        green "    [4] 查看节点信息 (list)"
+        green "    [5] 查看运行状态"
+        green "    [6] 订阅管理 (sub)"
+        echo ""
+        yellow "  【日 志】"
+        green "    [7] 查看日志 (logs)"
+        echo ""
+        red   "  【危险操作】"
+        red   "    [8] 卸载 (del, 保留二进制)"
+        red   "    [9] 卸载全部并清理 (delall)"
+        echo ""
+        purple "    [0] 退出"
+        echo ""
+        reading "  请输入选项: " _ch
+        case "$_ch" in
+            0|q|Q) echo "再见 👋"; exit 0 ;;
+            1) interactive_install; menu_pause ;;
+            2) interactive_reinstall; menu_pause ;;
+            3) interactive_service_menu ;;
+            4) cip; menu_pause ;;
+            5) menu_status_block; show_local_ip_info_with_out_ip_hint; menu_pause ;;
+            6) interactive_sub_menu ;;
+            7) interactive_log_menu ;;
+            8)
+                reading "确认卸载? (y/N): " _ch
+                if [ "$_ch" = "y" ] || [ "$_ch" = "Y" ]; then
+                    cleandel
+                    green "✅ 已卸载 (保留二进制)"
+                fi
+                menu_pause ;;
+            9)
+                reading "确认卸载全部并清理? (y/N): " _ch
+                if [ "$_ch" = "y" ] || [ "$_ch" = "Y" ]; then
+                    cleandel delall
+                    green "✅ 已卸载全部并清理"
+                    echo "再见 👋"
+                    exit 0
+                fi
+                menu_pause ;;
+            *) yellow "无效选项"; sleep 1 ;;
+        esac
+    done
+}
+# ================== 交互式菜单模式 END ==================
+
 main() {
 
     # 命令转小写，支持大小写不敏感
@@ -3627,12 +4509,13 @@ main() {
 
     # 查看可用的节点
     if [ "$_cmd" = "list" ]; then
-
+        geo_prefetch
         cip "$2"
         exit
     fi
     # 更新sing-box内核
     if [ "$_cmd" = "ups" ]; then
+        geo_prefetch
         pkill -15 -f "$SINGBOX_FOLDER_PATH/sing-box" 2> /dev/null
 
         update_singbox && sbrestart && echo "Sing-box内核更新完成" && sleep 2 && cip
@@ -3640,6 +4523,7 @@ main() {
     fi
     # 重启sing-box和cloudflared
     if [ "$_cmd" = "res" ]; then
+        geo_prefetch
         sbrestart
         argorestart
         sleep 5 && echo "重启完成" && sleep 3 && cip
@@ -3665,6 +4549,7 @@ main() {
 
     # 覆盖式安装
     if [ "$_cmd" = "rep" ]; then
+        geo_prefetch
         green "开始覆盖式安装流程..."
         green "1、即将开始清理操作（保留二进制）..."
         cleandel
@@ -3679,21 +4564,22 @@ main() {
 
     # 只在明确 ins 时才安装；无参数只显示菜单
     if [ "$_cmd" = "ins" ]; then
+        geo_prefetch
         yellow "开始安装流程..."
         install_step
         exit
     fi
 
-    # 无参数：只展示帮助/菜单
-    if [ -z "$1" ]; then
-        showmode
+    # 无参数 或 menu 命令：进入交互式菜单
+    if [ -z "$1" ] || [ "$_cmd" = "menu" ]; then
+        interactive_main
         exit
     fi
 
     # 无效命令提示
     echo
     red "❌ 无效命令：$1"
-    yellow "可用命令：ins / rep / del / delall / list / sub / res / ups / autostart / autostart_off / nginx_start / nginx_stop / nginx_restart / nginx_status"
+    yellow "可用命令：menu / ins / rep / del / delall / list / sub / res / ups / autostart / autostart_off / nginx_start / nginx_stop / nginx_restart / nginx_status"
     showmode
     exit 1
 
