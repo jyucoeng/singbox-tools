@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.6.46(2026-08-06)"
+VERSION="1.6.51(2026-08-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -1050,41 +1050,92 @@ case "${1:-}" in
         ;;
 esac
 
-# ================== v4/v6 地区全局预取 ==================
-# 探测入口：安装/覆盖安装/查看节点等需要展示 IP 地区的路径才会触发，见 geo_prefetch 的调用点。
-# 启动后在后台预取 v4/v6 出口 IP 地区，各显示点直接读取，避免现场等待（幂等，只会启动一次）。
-GEO_V4_TMP="/tmp/_geo_v4.$$"
-GEO_V6_TMP="/tmp/_geo_v6.$$"
-GEO_V4_DONE="/tmp/_geo_v4.$$.done"
-GEO_V6_DONE="/tmp/_geo_v6.$$.done"
-GEO_STARTED="/tmp/_geo_started.$$"
+# ================== IP→地区 本地缓存（含后台预取） ==================
+# 探测入口：安装/覆盖安装/查看节点等需要展示 IP 地区的路径才会触发 geo_prefetch（幂等）。
+# 按 IP 类型分文件缓存，每行 "IP=地区"：
+#   .geo4  -> 仅 IPv4；.geo6 -> 仅 IPv6；.geo_out -> 仅 out_ip。
+# 读取点 geo_get_ip 先按 IP 查对应本地文件：命中直接返回（不发网络）；未命中先等后台预取写入，仍无则现场查并写回。
+GEO_V4_FILE="$SINGBOX_FOLDER_PATH/.geo4"
+GEO_V6_FILE="$SINGBOX_FOLDER_PATH/.geo6"
+GEO_OUT_FILE="$SINGBOX_FOLDER_PATH/.geo_out"
+GEO_STARTED="$SINGBOX_FOLDER_PATH/.geo_started"
+
+# 按 IP 类型返回对应缓存文件
+geo_file_of() {
+    if echo "$1" | grep -q ':'; then echo "$GEO_V6_FILE"; else echo "$GEO_V4_FILE"; fi
+}
+# 写入 .geo4/.geo6（按 IP 类型），同一 IP 只保留一行（临时文件 + mv 原子替换）
+geo_set() {
+    local _ip="$1" _region="$2" _f _tmp
+    [ -z "$_ip" ] || [ -z "$_region" ] && return 1
+    _f="$(geo_file_of "$_ip")"
+    _tmp="$(mktemp "${_f}.XXXXXX" 2>/dev/null || echo "${_f}.tmp")"
+    grep -v "^${_ip}=" "$_f" 2>/dev/null > "$_tmp" || true
+    echo "$_ip=$_region" >> "$_tmp"
+    mv -f "$_tmp" "$_f"
+}
+# 写入 .geo_out（out_ip），同一 IP 只保留一行
+geo_set_out() {
+    local _ip="$1" _region="$2" _tmp
+    [ -z "$_ip" ] || [ -z "$_region" ] && return 1
+    _tmp="$(mktemp "${GEO_OUT_FILE}.XXXXXX" 2>/dev/null || echo "${GEO_OUT_FILE}.tmp")"
+    grep -v "^${_ip}=" "$GEO_OUT_FILE" 2>/dev/null > "$_tmp" || true
+    echo "$_ip=$_region" >> "$_tmp"
+    mv -f "$_tmp" "$GEO_OUT_FILE"
+}
+
 geo_prefetch() {
     [ -e "$GEO_STARTED" ] && return 0
     touch "$GEO_STARTED"
-    rm -f "$GEO_V4_TMP" "$GEO_V6_TMP" "$GEO_V4_DONE" "$GEO_V6_DONE"
     {
-        curl -s4 -m8 --connect-timeout 3 -k https://ip.fm 2>/dev/null \
-            | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1 > "$GEO_V4_TMP"
-        [ ! -s "$GEO_V4_TMP" ] && wget -4 -qO- --tries=1 --timeout=8 https://ip.fm 2>/dev/null \
-            | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1 > "$GEO_V4_TMP"
-        touch "$GEO_V4_DONE"
+        local _ip _r
+        _ip="$(curl -s4 -m3 --connect-timeout 3 -k "$v46url" 2>/dev/null | tr -d '\r\n')"
+        [ -z "$_ip" ] && _ip="$(wget -4 -qO- --tries=1 --timeout=3 "$v46url" 2>/dev/null | tr -d '\r\n')"
+        _r="$(awk -F= -v ip="$_ip" '$1==ip{print $2}' "$GEO_V4_FILE" 2>/dev/null | tail -n1)"
+        [ -z "$_r" ] && {
+            _r="$(curl -s4 -m8 --connect-timeout 3 -k https://ip.fm 2>/dev/null \
+                | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1)"
+            [ -z "$_r" ] && _r="$(wget -4 -qO- --tries=1 --timeout=8 https://ip.fm 2>/dev/null \
+                | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1)"
+            geo_set "$_ip" "$_r"
+        }
     } &
     {
-        curl -s6 -m8 --connect-timeout 3 -k https://ip.fm 2>/dev/null \
-            | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1 > "$GEO_V6_TMP"
-        [ ! -s "$GEO_V6_TMP" ] && wget -6 -qO- --tries=1 --timeout=8 https://ip.fm 2>/dev/null \
-            | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1 > "$GEO_V6_TMP"
-        touch "$GEO_V6_DONE"
+        local _ip _r
+        _ip="$(curl -s6 -m3 --connect-timeout 3 -k "$v46url" 2>/dev/null | tr -d '\r\n')"
+        [ -z "$_ip" ] && _ip="$(wget -6 -qO- --tries=1 --timeout=3 "$v46url" 2>/dev/null | tr -d '\r\n')"
+        _r="$(awk -F= -v ip="$_ip" '$1==ip{print $2}' "$GEO_V6_FILE" 2>/dev/null | tail -n1)"
+        [ -z "$_r" ] && {
+            _r="$(curl -s6 -m8 --connect-timeout 3 -k https://ip.fm 2>/dev/null \
+                | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1)"
+            [ -z "$_r" ] && _r="$(wget -6 -qO- --tries=1 --timeout=8 https://ip.fm 2>/dev/null \
+                | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1)"
+            geo_set "$_ip" "$_r"
+        }
     } &
 }
-# 读取预取的地区：$1=4 或 6，等待后台完成并返回地区字符串（失败返回空）
-geo_get() {
-    local _key="$1" _t=0 _f _d
-    if [ "$_key" = "4" ]; then _f="$GEO_V4_TMP"; _d="$GEO_V4_DONE"; else _f="$GEO_V6_TMP"; _d="$GEO_V6_DONE"; fi
-    while [ "$_t" -lt 80 ] && [ ! -e "$_d" ]; do
-        sleep 0.1; _t=$((_t+1))
-    done
-    cat "$_f" 2>/dev/null
+# 读取 IP 的地区：$1=IP。先查对应类型缓存命中即返回；未命中先等预取写入，仍无则现场查并写回缓存。
+geo_get_ip() {
+    local _ip="$1" _region="" _t=0 _proto _f
+    [ -z "$_ip" ] && return 1
+    _f="$(geo_file_of "$_ip")"
+    _region="$(awk -F= -v ip="$_ip" '$1==ip{print $2}' "$_f" 2>/dev/null | tail -n1)"
+    if [ -z "$_region" ] && [ -e "$GEO_STARTED" ]; then
+        while [ "$_t" -lt 20 ]; do
+            _region="$(awk -F= -v ip="$_ip" '$1==ip{print $2}' "$_f" 2>/dev/null | tail -n1)"
+            [ -n "$_region" ] && break
+            sleep 0.1; _t=$((_t+1))
+        done
+    fi
+    if [ -z "$_region" ]; then
+        if echo "$_ip" | grep -q ':'; then _proto="6"; else _proto="4"; fi
+        _region="$(curl -s${_proto} -m8 --connect-timeout 3 -k https://ip.fm 2>/dev/null \
+            | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1)"
+        [ -z "$_region" ] && _region="$(wget -${_proto} -qO- --tries=1 --timeout=8 https://ip.fm 2>/dev/null \
+            | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1)"
+        [ -n "$_region" ] && geo_set "$_ip" "$_region"
+    fi
+    echo "$_region"
 }
 
 hostname=$(uname -a | awk '{print $2}')
@@ -2604,10 +2655,10 @@ EOF
     v4_local="$(strip_ip_brackets_all "$v4_local")"
     v6_local="$(strip_ip_brackets_all "$v6_local")"
 
-    # B) 读取地区（全局预取缓存，启动时已后台探测）
+    # B) 读取地区（本地 IP→地区 缓存，未命中才查网络并写回）
     local v4dq="" v6dq=""
-    v4dq="$(geo_get 4)"
-    v6dq="$(geo_get 6)"
+    v4dq="$(geo_get_ip "$v4_local")"
+    v6dq="$(geo_get_ip "$v6_local")"
     [ -z "$v4dq" ] && v4dq="未知"
     [ -z "$v6dq" ] && v6dq="未知"
 
@@ -3760,9 +3811,11 @@ menu_ask_port() {
 }
 
 # 交互收集安装参数并设置环境变量
-# 查询指定 IP 的地区（ip-api.com，免费版仅 http）
+# 查询 out_ip 的地区（优先本地 .geo_out 缓存，未命中才查 ip-api.com 并写回缓存）
 query_ip_region() {
     local _ip="$1" _json _region _rn _ci
+    _region="$(awk -F= -v ip="$_ip" '$1==ip{print $2}' "$GEO_OUT_FILE" 2>/dev/null | tail -n1)"
+    [ -n "$_region" ] && { echo "$_region"; return 0; }
     _json="$(curl -s -m5 "http://ip-api.com/json/${_ip}?fields=status,country,regionName,city" 2>/dev/null)"
     case "$_json" in
         *'"status":"success"'*)
@@ -3772,6 +3825,7 @@ query_ip_region() {
             _ci="$(printf '%s' "$_json" | sed -nE 's/.*"city":"([^"]*)".*/\1/p')"
             [ -n "$_rn" ] && [ "$_rn" != "$_region" ] && _region="$_region $_rn"
             [ -n "$_ci" ] && [ "$_ci" != "$_rn" ] && _region="$_region $_ci"
+            geo_set_out "$_ip" "$_region"
             echo "$_region"
             ;;
     esac
@@ -3809,8 +3863,8 @@ menu_collect_install() {
     _ipres="$(check_ip_connectivity "${v46url:-https://icanhazip.com}")"
     _ipv4="$(printf '%s' "${_ipres%%|*}" | tr -d '\r\n')"
     _ipv6="$(printf '%s' "${_ipres##*|}" | tr -d '\r\n')"
-    _v4dq="$(geo_get 4)"
-    _v6dq="$(geo_get 6)"
+    _v4dq="$(geo_get_ip "$_ipv4")"
+    _v6dq="$(geo_get_ip "$_ipv6")"
     [ -z "$_v4dq" ] && _v4dq="未知"
     [ -z "$_v6dq" ] && _v6dq="未知"
     if [ "$ippz" = "6" ]; then
