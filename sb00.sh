@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.4.5(2026-08-06)"
+VERSION="1.4.7(2026-08-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -795,31 +795,36 @@ EOF
         echo ""
         green " ✅ 已创建快捷命令：sb（${done_link}）"
         echo ""
-        green " 常用指令："
-        green "    sb                 打开主菜单"
-        green "    sb ins             安装节点"
-        green "    sb rep             覆盖式安装/重置"
-        green "    sb list            查看节点信息"
-        green "    sb list key        查看节点 + vless Reality 私钥"
-        green "    sb res             重启 sing-box 和 cloudflared"
-        green "    sb rt              分流管理"
-        green "    sb sub             订阅管理"
-        green "    sb del             卸载（保留二进制）"
-        green "    sb delall          卸载全部并清理"
-        green "    sb ups             更新 sing-box 内核"
-        green "    sb sc              创建/刷新本快捷命令"
-        green "    sb sc_off          删除本快捷命令"
-        green "    sb autostart       开启开机自启"
-        green "    sb autostart_off   关闭开机自启"
-        green "    sb nginx_start     启动 Nginx"
-        green "    sb nginx_stop      停止 Nginx"
-        green "    sb nginx_restart   重启 Nginx"
-        green "    sb nginx_status    查看 Nginx 状态"
+        print_sb_shortcut_help
     else
         echo ""
         yellow " ⚠️ 已生成 wrapper，但未能写入系统目录，请手动执行："
         green "   ln -sf $sbw /usr/local/bin/sb"
     fi
+}
+
+# 罗列 sb 快捷指令及功能（一条一行）
+print_sb_shortcut_help() {
+    green " 常用指令："
+    green "    sb                 打开主菜单"
+    green "    sb ins             安装节点"
+    green "    sb rep             覆盖式安装/重置"
+    green "    sb list            查看节点信息"
+    green "    sb list key        查看节点 + vless Reality 私钥"
+    green "    sb res             重启 sing-box 和 cloudflared"
+    green "    sb rt              分流管理"
+    green "    sb sub             订阅管理"
+    green "    sb del             卸载（保留二进制）"
+    green "    sb delall          卸载全部并清理"
+    green "    sb ups             更新 sing-box 内核"
+    green "    sb sc              创建/刷新本快捷命令"
+    green "    sb sc_off          删除本快捷命令"
+    green "    sb autostart       开启开机自启"
+    green "    sb autostart_off   关闭开机自启"
+    green "    sb nginx_start     启动 Nginx"
+    green "    sb nginx_stop      停止 Nginx"
+    green "    sb nginx_restart   重启 Nginx"
+    green "    sb nginx_status    查看 Nginx 状态"
 }
 
 # 清理 sb 快捷命令
@@ -839,6 +844,22 @@ cleanup_sb_shortcut() {
     else
         green "✅ 已清理 sb 快捷命令"
     fi
+}
+
+# sb 快捷命令（查看指令说明页面）
+interactive_sb_shortcut_menu() {
+    clear
+    green "========= [5] sb 快捷命令 ========="
+    echo ""
+    if command -v sb > /dev/null 2>&1; then
+        green " 当前状态：✅ 已安装（$(command -v sb)）"
+    else
+        yellow " 当前状态：未安装（安装/重装节点时会自动创建）"
+    fi
+    echo ""
+    print_sb_shortcut_help
+    echo ""
+    menu_pause
 }
 
 # 显示菜单
@@ -4974,7 +4995,7 @@ interactive_main() {
             2) interactive_reinstall; menu_pause ;;
             3) interactive_service_menu ;;
             4) rt_manage ;;
-            5) ensure_sb_shortcut; menu_pause ;;
+            5) interactive_sb_shortcut_menu ;;
             6) cip; menu_pause ;;
             7) menu_status_block; show_local_ip_info_with_out_ip_hint; menu_pause ;;
             8) interactive_sub_menu ;;
