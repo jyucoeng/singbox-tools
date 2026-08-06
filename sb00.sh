@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.4.12(2026-08-06)"
+VERSION="1.4.13(2026-08-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -4851,7 +4851,7 @@ add_socks5_proxy() {
     fi
 
     sbrestart
-    green "\n$_tag 代理出站已添加\n"
+    green "$_tag 代理出站已添加"
     menu_pause
 }
 
@@ -4903,8 +4903,8 @@ set_global_outbound() {
     proxy_tags=($(jq -r '.outbounds[]? | select(.tag != "direct" and .tag != "block" and .tag != "wireguard-out") | .tag' "$sbj" 2>/dev/null))
 
     if [ ${#proxy_tags[@]} -eq 0 ]; then
-        yellow "\n当前没有可用的 socks5/http 代理出站。"
-        yellow "请先返回 → 设置分流服务 → 添加 Socks5/HTTP 出站，再设置全局代理。\n"
+        yellow "当前没有可用的 socks5/http 代理出站。"
+        yellow "请先返回 → 设置分流服务 → 添加 Socks5/HTTP 出站，再设置全局代理。"
         menu_pause; add_rule_menu; return
     fi
 
@@ -4930,7 +4930,7 @@ set_global_outbound() {
         | .route.rules = [{action: "sniff"}, {action: "resolve", strategy: $strat}]
     ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$sbj"
     sbrestart
-    green "\n已设置全局代理出站：$_selected_out"
+    green "已设置全局代理出站：$_selected_out"
     yellow "所有流量将通过 $_selected_out 转发，如需恢复请选择「恢复服务器原IP出站」"
     menu_pause
 }
@@ -4938,7 +4938,7 @@ set_global_outbound() {
 # 恢复服务器原IP出站（final 回 direct，保留/复位默认 sniff+resolve 规则）
 restore_direct_outbound() {
     local sbj="$SINGBOX_FOLDER_PATH/sb.json" _strat _sip
-    yellow "\n正在恢复默认路由配置...\n"
+    yellow "正在恢复默认路由配置..."
 
     # 确保 direct 出站存在（不存在则插入到数组最前面）
     if ! jq -e '.outbounds[]? | select(.tag == "direct")' "$sbj" > /dev/null 2>&1; then
@@ -4955,9 +4955,9 @@ restore_direct_outbound() {
     sbrestart
     _sip=$(cat "$SINGBOX_FOLDER_PATH/server_ip" 2> /dev/null)
     if [ -n "$_sip" ]; then
-        green "\n已恢复服务器原IP出站（${_sip}），所有流量走 direct。"
+        green "已恢复服务器原IP出站（${_sip}），所有流量走 direct。"
     else
-        green "\n已恢复服务器原IP出站，所有流量走 direct。"
+        green "已恢复服务器原IP出站，所有流量走 direct。"
     fi
     menu_pause
 }
