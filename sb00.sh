@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.4.11(2026-08-06)"
+VERSION="1.4.12(2026-08-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -4571,7 +4571,7 @@ rt_get_strategy() {
 # 分流管理入口
 rt_manage() {
     if ! is_installed_sb; then
-        yellow "sing-box 尚未安装！请先安装节点。"; sleep 1; return
+        yellow "sing-box 尚未安装！请先安装节点。"; menu_pause; return
     fi
     local sbj="$SINGBOX_FOLDER_PATH/sb.json"
     local _ch _rules _outs
@@ -4609,7 +4609,7 @@ rt_manage() {
             3) add_socks5_proxy ;;
             4) delete_socks5_proxy ;;
             0) return ;;
-            *) yellow "无效选项"; sleep 1 ;;
+            *) yellow "无效选项"; menu_pause ;;
         esac
     done
 }
@@ -4647,7 +4647,7 @@ add_rule_menu() {
         10) set_global_outbound; return ;;
         11) restore_direct_outbound; return ;;
         0)  return ;;
-        *)  red "无效选项"; sleep 1; add_rule_menu; return ;;
+        *)  red "无效选项"; menu_pause; add_rule_menu; return ;;
     esac
 
     local sbj="$SINGBOX_FOLDER_PATH/sb.json"
@@ -4656,7 +4656,7 @@ add_rule_menu() {
     if jq -e --arg tag "$rule_tag" \
         '.route.rules[]? | select(.rule_set != null) | .rule_set[]? | select(. == $tag)' \
         "$sbj" > /dev/null 2>&1; then
-        yellow "规则集 '${rule_tag}' 已启用。"; sleep 1; return
+        yellow "规则集 '${rule_tag}' 已启用。"; menu_pause; return
     fi
 
     # 选择分流流量要走的出站（排除 direct/block，参照 lwsb 排除 direct）
@@ -4676,7 +4676,7 @@ add_rule_menu() {
         if [[ ! "$_out_choice" =~ ^[0-9]+$ ]] || \
            [ "$_out_choice" -lt 1 ] || \
            [ "$_out_choice" -gt "${#out_tags[@]}" ]; then
-            red "无效选择"; sleep 1; return
+            red "无效选择"; menu_pause; return
         fi
         selected_out="${out_tags[$((_out_choice-1))]}"
     fi
@@ -4702,7 +4702,7 @@ add_rule_menu() {
 
     sbrestart
     green "'${rule_tag}' 已分流至出站 '${selected_out}'"
-    sleep 1
+    menu_pause
 }
 
 # 删除分流规则集
@@ -4713,7 +4713,7 @@ delete_rule_menu() {
     _count=$(jq -r '[.route.rules[]? | select(.rule_set != null) | .rule_set[]?] | length' "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null)
     if [ "$_count" -eq 0 ] 2>/dev/null || [ -z "$_count" ]; then
         yellow "  无"
-        sleep 1; return
+        menu_pause; return
     fi
     jq -r '.route.rules[]? | select(.rule_set != null) | .rule_set[]?' "$SINGBOX_FOLDER_PATH/sb.json" | nl -w2 -s'. '
     reading "输入要删除的规则名称或序号: " _del_input
@@ -4723,7 +4723,7 @@ delete_rule_menu() {
         _tag="$_del_input"
     fi
     if [ -z "$_tag" ] || [ "$_tag" = "null" ]; then
-        red "无效的选择"; sleep 1; return
+        red "无效的选择"; menu_pause; return
     fi
     jq --arg tag "$_tag" '
         . as $doc
@@ -4737,7 +4737,7 @@ delete_rule_menu() {
     rt_remove_unused_rule_sets
     sbrestart
     green "规则集 '${_tag}' 已禁用。"
-    sleep 1
+    menu_pause
 }
 
 # 添加 Socks5/HTTP 代理出站
@@ -4747,14 +4747,14 @@ add_socks5_proxy() {
     local _tag _force_add _test_result
     clear
     reading "请输入代理URL (支持socks://,socks5://,http:// 支持v2rayN导出的节点链接): " _proxy_url
-    [ -z "$_proxy_url" ] && { red "输入为空！"; sleep 1; return; }
+    [ -z "$_proxy_url" ] && { red "输入为空！"; menu_pause; return; }
 
     if [[ "$_proxy_url" =~ ^([a-zA-Z0-9]+):// ]]; then
         _proto="${BASH_REMATCH[1]}"
     else
-        red "URL格式错误"; sleep 1; return
+        red "URL格式错误"; menu_pause; return
     fi
-    [[ ! "$_proto" =~ ^(socks5|socks|http)$ ]] && { red "不支持的协议"; sleep 2; return; }
+    [[ ! "$_proto" =~ ^(socks5|socks|http)$ ]] && { red "不支持的协议"; menu_pause; return; }
     case "$_proto" in
         socks|socks5) _outbound_type="socks" ;;
         http)         _outbound_type="http" ;;
@@ -4786,7 +4786,7 @@ add_socks5_proxy() {
     fi
 
     _server="${_host_port%%:*}"; _port="${_host_port##*:}"
-    [ -z "$_server" ] || [ -z "$_port" ] && { red "格式错误：缺少ip或端口"; sleep 2; return; }
+    [ -z "$_server" ] || [ -z "$_port" ] && { red "格式错误：缺少ip或端口"; menu_pause; return; }
 
     [[ "$_proto" == "socks" || "$_proto" == "socks5" ]] && _check_proto="socks5" || _check_proto="$_proto"
 
@@ -4806,7 +4806,7 @@ add_socks5_proxy() {
         if [ -z "$_test_result" ]; then
             yellow "警告：通过本地代理访问外网失败，请确认代理服务正在运行。"
             reading "是否仍然添加此代理？(y/n): " _force_add
-            [[ ! "$_force_add" =~ ^[yY]$ ]] && { yellow "已取消"; sleep 1; return; }
+            [[ ! "$_force_add" =~ ^[yY]$ ]] && { yellow "已取消"; menu_pause; return; }
         else
             green "本地代理可用，出口IP: $_test_result"
         fi
@@ -4816,11 +4816,11 @@ add_socks5_proxy() {
         _api_response=$(curl -s --max-time 8 -G \
             --data-urlencode "proxy=${_check_proto}://${_proxy_auth}${_server}:${_port}" \
             "https://check.socks5.cmliussss.net/check" 2>/dev/null)
-        [ -z "$_api_response" ] && { red "API 请求失败"; sleep 2; return; }
+        [ -z "$_api_response" ] && { red "API 请求失败"; menu_pause; return; }
         _success=$(echo "$_api_response" | jq -r '.success')
         if [ "$_success" != "true" ]; then
             _error_msg=$(echo "$_api_response" | jq -r '.error // "未知错误"')
-            red "代理不可用: $_error_msg"; sleep 2; return
+            red "代理不可用: $_error_msg"; menu_pause; return
         fi
         _exit_ip=$(echo "$_api_response" | jq -r '.exit.ip // empty')
         green "代理可用"
@@ -4831,10 +4831,10 @@ add_socks5_proxy() {
     case "$_tag" in
         direct|block|wireguard-out|socks5-sb)
             red "标签 '$_tag' 为系统保留，请换一个名称"
-            sleep 2; return ;;
+            menu_pause; return ;;
     esac
     if jq -e --arg tag "$_tag" '[.outbounds[]?.tag, .inbounds[]?.tag, .endpoints[]?.tag, .route.rule_set[]?.tag] | index($tag)' "$SINGBOX_FOLDER_PATH/sb.json" >/dev/null 2>&1; then
-        red "标签 '$_tag' 已存在"; sleep 2; return
+        red "标签 '$_tag' 已存在"; menu_pause; return
     fi
 
     # 根据是否有账号密码，决定写入字段，避免空字符串导致 sing-box 报错
@@ -4852,7 +4852,7 @@ add_socks5_proxy() {
 
     sbrestart
     green "\n$_tag 代理出站已添加\n"
-    sleep 2
+    menu_pause
 }
 
 # 删除 Socks5/HTTP 代理出站
@@ -4861,23 +4861,23 @@ delete_socks5_proxy() {
     clear
     green "当前 socks/http 代理出站（可删除）:"
     _out_list=$(jq -r '[.outbounds[]? | select(.type == "socks" or .type == "http")] | to_entries | .[] | "\(.key+1). \(.value.tag) [\(.value.type)]"' "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null)
-    [ -z "$_out_list" ] && { yellow "没有可删除的 socks/http 代理出站。"; sleep 2; return; }
+    [ -z "$_out_list" ] && { yellow "没有可删除的 socks/http 代理出站。"; menu_pause; return; }
     echo "$_out_list"
 
     reading "输入要删除的代理编号或标签: " _del_input
     if [[ "$_del_input" =~ ^[0-9]+$ ]]; then
         _tag=$(jq -r --arg idx "$_del_input" '.outbounds | map(select(.type == "socks" or .type == "http")) | .[($idx | tonumber)-1].tag // empty' "$SINGBOX_FOLDER_PATH/sb.json")
-        [ -z "$_tag" ] && { red "编号无效！"; sleep 1; return; }
+        [ -z "$_tag" ] && { red "编号无效！"; menu_pause; return; }
     else
         _tag="$_del_input"
         _del_type=$(jq -r --arg tag "$_tag" '.outbounds[]? | select(.tag == $tag) | .type' "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null)
-        [ -z "$_del_type" ] && { red "标签 '$_tag' 不存在！"; sleep 1; return; }
+        [ -z "$_del_type" ] && { red "标签 '$_tag' 不存在！"; menu_pause; return; }
         if [ "$_del_type" != "socks" ] && [ "$_del_type" != "http" ]; then
             red "'$_tag' 不是 socks/http 代理出站，不可删除！"
-            sleep 2; return
+            menu_pause; return
         fi
     fi
-    [ "$_tag" = "wireguard-out" ] && { red "wireguard-out 为系统内置，不可删除！"; sleep 2; return; }
+    [ "$_tag" = "wireguard-out" ] && { red "wireguard-out 为系统内置，不可删除！"; menu_pause; return; }
 
     jq --arg tag "$_tag" 'del(.outbounds[] | select(.tag == $tag))' "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
     # 同步删除引用该出站的分流规则
@@ -4893,7 +4893,7 @@ delete_socks5_proxy() {
     rt_remove_unused_rule_sets
     sbrestart
     green "$_tag 代理出站已删除。"
-    sleep 1
+    menu_pause
 }
 
 # 设置全局代理出站（所有流量走指定 socks/http 代理）
@@ -4918,7 +4918,7 @@ set_global_outbound() {
     if [[ ! "$_out_choice" =~ ^[0-9]+$ ]] || \
        [ "$_out_choice" -lt 1 ] || \
        [ "$_out_choice" -gt "${#proxy_tags[@]}" ]; then
-        red "无效选择"; sleep 1; add_rule_menu; return
+        red "无效选择"; menu_pause; add_rule_menu; return
     fi
     _selected_out="${proxy_tags[$((_out_choice-1))]}"
 
