@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.6.19(2026-08-06)"
+VERSION="1.6.28(2026-08-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -3779,6 +3779,8 @@ menu_collect_install() {
         esac
     done
 
+    menu_reload_proto_flags
+
     # 端口设置：全部随机 或 逐个定制
     echo ""
     purple "===== 端口设置 ====="
@@ -3786,20 +3788,18 @@ menu_collect_install() {
     green "  2) 逐个自定义端口 (推荐)"
     reading "输入选择 (回车默认=1): " _ans
     if [ "$_ans" = "2" ]; then
-        for _sel in trpt vlrt hypt tupt anypt nginx_pt argo_pt; do
+        [ -n "$trp" ] && export trpt="$(menu_ask_port "Trojan-WS (Argo)")"
+        [ -n "$vmp" ] && export vmpt="$(menu_ask_port "Vmess-WS (Argo)")"
+        for _sel in vlr hyp tup anyp; do
             case "$_sel" in
-                trpt)     [ -n "$trp" ]      && export trpt="$(menu_ask_port "Trojan-WS")" ;;
-                vlrt)     [ -n "$vlr" ]      && export vlrt="$(menu_ask_port "VLESS-Reality")" ;;
-                hypt)     [ -n "$hyp" ]      && export hypt="$(menu_ask_port "Hysteria2")" ;;
-                tupt)     [ -n "$tup" ]      && export tupt="$(menu_ask_port "TUIC")" ;;
-                anypt)    [ -n "$anyp" ]     && export anypt="$(menu_ask_port "AnyTLS")" ;;
-                nginx_pt) [ -n "$subscribe" ] && export nginx_pt="$(menu_ask_port "Nginx")" ;;
-                argo_pt)  [ -n "$argo" ]     && export argo_pt="$(menu_ask_port "Argo")" ;;
+                vlr)  [ -n "$vlr" ]  && export vlrt="$(menu_ask_port "VLESS-Reality")" ;;
+                hyp)  [ -n "$hyp" ]  && export hypt="$(menu_ask_port "Hysteria2")" ;;
+                tup)  [ -n "$tup" ]  && export tupt="$(menu_ask_port "TUIC")" ;;
+                anyp) [ -n "$anyp" ] && export anypt="$(menu_ask_port "AnyTLS")" ;;
             esac
         done
+        [ -n "$trp$vmp" ] && export argo_pt="$(menu_ask_port "Argo")"
     fi
-
-    menu_reload_proto_flags
 
     # Argo 隧道配置（vmess/trojan 已强制二选一，这里最多启用一个）
     if [ -n "$vmp" ]; then
@@ -3838,6 +3838,38 @@ menu_collect_install() {
         fi
     fi
 
+    # VLESS 才询问 reality_private
+    if [ -n "$vlr" ]; then
+        echo ""
+        reading "reality_private (回车=自动生成): " _ans
+        [ -n "$_ans" ] && export reality_private="$_ans"
+    fi
+
+    # SNI / CDN 值设定
+    echo ""
+    purple "===== SNI / CDN 设置 ====="
+    green "  1) 全部使用默认值(偷懒就用默认)"
+    green "     默认值：CDN 优选域名=saas.sin.fan, CDN 端口=443,"
+    green "             Hysteria2 伪装域名=www.apple.com, VLESS 伪装域名=www.apple.com,"
+    green "             VLESS 伪装端口=443, TUIC 伪装域名=www.apple.com"
+    green "  2) 逐个展开单独设置（可自定义，推荐）"
+    reading "输入选择 (回车默认=1): " _ans
+    if [ "$_ans" = "2" ]; then
+        reading "  CDN 优选域名 (默认=saas.sin.fan): " _ans
+        [ -n "$_ans" ] && export cdn_host="$_ans"
+        reading "  CDN 端口 (默认=443): " _ans
+        [ -n "$_ans" ] && export cdn_pt="$_ans"
+        reading "  Hysteria2 伪装域名 (默认=www.apple.com): " _ans
+        [ -n "$_ans" ] && export hy_sni="$_ans"
+        reading "  VLESS 伪装域名 (默认=www.apple.com): " _ans
+        [ -n "$_ans" ] && export vl_sni="$_ans"
+        reading "  VLESS 伪装端口 (默认=443): " _ans
+        [ -n "$_ans" ] && export vl_sni_pt="$_ans"
+        reading "  TUIC 伪装域名 (默认=www.apple.com): " _ans
+        [ -n "$_ans" ] && export tu_sni="$_ans"
+    fi
+
+    # 节点名称前缀（最后询问）
     echo ""
     reading "节点名称前缀 (回车跳过): " _ans
     if [ -n "$_ans" ]; then
