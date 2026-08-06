@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.2.0(2026-08-06)"
+VERSION="1.4.2(2026-08-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -742,6 +742,82 @@ cleanup_singbox_shortcut() {
         yellow "👉 若你之前把某个路径手动加进 PATH，或 shell 有缓存，重新开一个终端/SSH 会话即可"
     else
         green "✅ 已清理快捷命令（wrapper/软链接）"
+    fi
+}
+
+# 创建 sb 快捷命令（参照 lwsb.sh 的 /usr/bin/sb：本地脚本优先，否则在线拉取）
+ensure_sb_shortcut() {
+    local sbw="$SINGBOX_FOLDER_PATH/sb-cmd"
+
+    mkdir -p "$SINGBOX_FOLDER_PATH" 2> /dev/null || true
+    cat > "$sbw" << EOF
+#!/usr/bin/env bash
+set -e
+SB_FOLDER="$SINGBOX_FOLDER_PATH"
+LOCAL_SCRIPT="\$SB_FOLDER/sb.sh"
+
+if [ -s "\$LOCAL_SCRIPT" ]; then
+  exec bash "\$LOCAL_SCRIPT" "\$@"
+else
+  if command -v curl >/dev/null 2>&1; then
+    exec bash <(curl -Ls "$SCRIPT_URL") "\$@"
+  elif command -v wget >/dev/null 2>&1; then
+    exec bash <(wget -qO- "$SCRIPT_URL") "\$@"
+  else
+    echo "ERROR: need curl or wget to fetch script." >&2
+    echo "Debian/Ubuntu: apt update && apt install -y curl" >&2
+    echo "Alpine: apk add --no-cache curl" >&2
+    exit 1
+  fi
+fi
+EOF
+    chmod +x "$sbw" 2> /dev/null || true
+
+    local done_link=""
+    if [ "$(id -u)" -eq 0 ]; then
+        [ -d "/usr/local/bin" ] || mkdir -p /usr/local/bin 2> /dev/null || true
+        if [ -d "/usr/local/bin" ] && [ -w "/usr/local/bin" ]; then
+            ln -sf "$sbw" /usr/local/bin/sb 2> /dev/null || true
+            chmod +x /usr/local/bin/sb 2> /dev/null || true
+            done_link="/usr/local/bin/sb"
+        elif [ -d "/usr/bin" ] && [ -w "/usr/bin" ]; then
+            ln -sf "$sbw" /usr/bin/sb 2> /dev/null || true
+            chmod +x /usr/bin/sb 2> /dev/null || true
+            done_link="/usr/bin/sb"
+        fi
+    fi
+
+    # 尽力让“当前 shell”立刻识别
+    hash -r 2> /dev/null || true
+    command -v rehash > /dev/null 2>&1 && rehash 2> /dev/null || true
+
+    if [ -n "$done_link" ] && [ -e "$done_link" ]; then
+        echo ""
+        green " ✅ 已创建快捷命令：sb（${done_link}）"
+        yellow " 用法：sb（主菜单）/ sb ins / sb list / sb rt / sb res ..."
+    else
+        echo ""
+        yellow " ⚠️ 已生成 wrapper，但未能写入系统目录，请手动执行："
+        green "   ln -sf $sbw /usr/local/bin/sb"
+    fi
+}
+
+# 清理 sb 快捷命令
+cleanup_sb_shortcut() {
+    if [ "$(id -u)" -eq 0 ]; then
+        rm -f /usr/local/bin/sb 2> /dev/null || true
+        rm -f /usr/bin/sb 2> /dev/null || true
+    fi
+    rm -f "$SINGBOX_FOLDER_PATH/sb-cmd" 2> /dev/null || true
+
+    hash -r 2> /dev/null || true
+    command -v rehash > /dev/null 2>&1 && rehash 2> /dev/null || true
+
+    if command -v sb > /dev/null 2>&1; then
+        yellow "❗ cleanup 已执行，但当前会话仍能找到 sb：$(command -v sb)"
+        yellow "👉 重新开一个终端/SSH 会话即可"
+    else
+        green "✅ 已清理 sb 快捷命令"
     fi
 }
 
@@ -2821,8 +2897,9 @@ ins() {
     post_install_finalize_legacy
     debug_log "【调试】post_install_finalize_legacy 已执行完成"
 
-    # ensure_singbox_shortcut
-    # debug_log "【调试】ensure_singbox_shortcut 已执行完成（快捷命令/链接）"
+    # 创建 sb 快捷命令
+    ensure_sb_shortcut
+    debug_log "【调试】ensure_sb_shortcut 已执行完成（sb 快捷命令）"
 }
 
 # Write environment variables to files for persistence
@@ -3467,7 +3544,8 @@ cleandel() {
     done
 
     # yellow "开始卸载或者清理快捷方式流程...";
-    # cleanup_singbox_shortcut
+    cleanup_sb_shortcut
+    cleanup_singbox_shortcut
 
     green "✅ 卸载完成"
 
@@ -4378,6 +4456,466 @@ interactive_uninstall_menu() {
     done
 }
 
+# ================== 分流管理 (rt) ==================
+# 参照 lwsb.sh 的 WARP 分流管理实现，适配 sb00 单文件配置 (sb.json)
+# 分流规则插入在 sniff 之后、resolve 之前，保留 sing-box 默认行为
+
+# 分流服务 tag -> 远程规则集 URL
+rt_rule_set_url() {
+    local tag="$1"
+    case "$tag" in
+        openai)   echo "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo-lite/geosite/openai.srs" ;;
+        claude)   echo "https://main.ssss.nyc.mn/claude.srs" ;;
+        gemini)   echo "https://main.ssss.nyc.mn/gemini.srs" ;;
+        google)   echo "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo-lite/geosite/google.srs" ;;
+        tiktok)   echo "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo-lite/geosite/tiktok.srs" ;;
+        twitter)  echo "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo-lite/geosite/twitter.srs" ;;
+        youtube)  echo "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo-lite/geosite/youtube.srs" ;;
+        netflix)  echo "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo-lite/geosite/netflix.srs" ;;
+        telegram) echo "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo-lite/geosite/telegram.srs" ;;
+    esac
+}
+
+# 确保 wireguard-out (WARP) endpoint 存在（默认分流出口，参照 lwsb endpoints.json）
+rt_ensure_wireguard() {
+    local sbj="$SINGBOX_FOLDER_PATH/sb.json"
+    jq -e '.endpoints[]? | select(.tag == "wireguard-out")' "$sbj" > /dev/null 2>&1 && return 0
+    jq '.endpoints = (.endpoints // []) + [{
+            type: "wireguard",
+            tag: "wireguard-out",
+            mtu: 1280,
+            address: ["172.16.0.2/32", "2606:4700:110:8dfe:d141:69bb:6b80:925/128"],
+            private_key: "YFYOAdbw1bKTHlNNi+aEjBM3BO7unuFC5rOkMRAz9XY=",
+            peers: [{
+                address: "engage.cloudflareclient.com",
+                port: 2408,
+                public_key: "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
+                allowed_ips: ["0.0.0.0/0", "::/0"],
+                reserved: [78, 135, 76]
+            }]
+        }]' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$sbj"
+}
+
+# 确保 route.rule_set 中已定义该 tag 的远程规则集
+rt_ensure_rule_set() {
+    local tag="$1" url
+    url="$(rt_rule_set_url "$tag")"
+    local sbj="$SINGBOX_FOLDER_PATH/sb.json"
+    jq --arg tag "$tag" --arg url "$url" '
+        .route.rule_set = (.route.rule_set // [])
+        | if ([.route.rule_set[] | .tag] | index($tag)) == null then
+            .route.rule_set += [{tag: $tag, type: "remote", format: "binary", url: $url, download_detour: "direct"}]
+          else . end
+    ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$sbj"
+}
+
+# 清理 route.rule_set 中已无规则引用的定义
+rt_remove_unused_rule_sets() {
+    local sbj="$SINGBOX_FOLDER_PATH/sb.json"
+    jq '(
+        . as $doc
+        | ($doc.route.rules // []) as $R
+        | ([ $R[] | .rule_set[]? ] | unique) as $used
+        | $doc
+        | .route.rule_set = [.route.rule_set[]? | select((.tag // "") as $t | $used | index($t))]
+    )' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$sbj"
+}
+
+# 读取现有 resolve 规则的 DNS 策略（无则用 prefer_ipv6）
+rt_get_strategy() {
+    jq -r '.route.rules[]? | select(.action == "resolve") | .strategy // empty' \
+        "$SINGBOX_FOLDER_PATH/sb.json" | head -1
+}
+
+# 分流管理入口
+rt_manage() {
+    if ! is_installed_sb; then
+        yellow "sing-box 尚未安装！请先安装节点。"; sleep 1; return
+    fi
+    local sbj="$SINGBOX_FOLDER_PATH/sb.json"
+    local _ch _rules _outs
+    while true; do
+        clear
+        green "========= 分流管理 (rt) ========="
+        echo ""
+        green "当前已启用的分流规则集:"
+        _rules=$(jq -r '.route.rules[]? | select(.rule_set != null) | .rule_set[]?' "$sbj" 2>/dev/null | sort -u)
+        if [ -n "$_rules" ]; then
+            echo "$_rules" | while read -r _tag; do
+                green "  - $_tag"
+            done
+        else
+            yellow "  无"
+        fi
+        echo ""
+        green "已添加的 socks/http 代理出站:"
+        _outs=$(jq -r '.outbounds[]? | select(.tag != "direct" and .tag != "block" and .tag != "wireguard-out") | "  - \(.tag) [\(.type)]"' "$sbj" 2>/dev/null)
+        if [ -n "$_outs" ]; then
+            echo "$_outs"
+        else
+            yellow "  无"
+        fi
+        echo ""
+        green "  1) 设置分流服务 (未添加socks/http直接设置则使用WARP)"
+        red   "  2) 删除分流服务"
+        green "  3) 添加 Socks5/HTTP 出站"
+        red   "  4) 删除 Socks5/HTTP 出站"
+        purple "  0) 返回主菜单"
+        reading "请输入选择: " _ch
+        case "$_ch" in
+            1) add_rule_menu ;;
+            2) delete_rule_menu ;;
+            3) add_socks5_proxy ;;
+            4) delete_socks5_proxy ;;
+            0) return ;;
+            *) yellow "无效选项"; sleep 1 ;;
+        esac
+    done
+}
+
+# 选择要分流的服务并设置出站
+add_rule_menu() {
+    local _add_choice rule_tag
+    clear
+    green "========= 设置分流服务 ========="
+    echo ""
+    green "  1)  OpenAI"
+    green "  2)  Claude"
+    green "  3)  Gemini"
+    green "  4)  Google"
+    green "  5)  Tiktok"
+    green "  6)  Twitter"
+    green "  7)  YouTube"
+    green "  8)  Netflix"
+    green "  9)  Telegram"
+    echo ""
+    green "  10) 设置全局代理出站 (所有流量走指定代理)"
+    green "  11) 恢复服务器原IP出站 (所有流量走服务器ip)"
+    purple "  0)  返回上级菜单"
+    reading "请输入选择: " _add_choice
+    case "$_add_choice" in
+        1)  rule_tag="openai"   ;;
+        2)  rule_tag="claude"   ;;
+        3)  rule_tag="gemini"   ;;
+        4)  rule_tag="google"   ;;
+        5)  rule_tag="tiktok"   ;;
+        6)  rule_tag="twitter"  ;;
+        7)  rule_tag="youtube"  ;;
+        8)  rule_tag="netflix"  ;;
+        9)  rule_tag="telegram" ;;
+        10) set_global_outbound; return ;;
+        11) restore_direct_outbound; return ;;
+        0)  return ;;
+        *)  red "无效选项"; sleep 1; add_rule_menu; return ;;
+    esac
+
+    local sbj="$SINGBOX_FOLDER_PATH/sb.json"
+    local tmpj="$SINGBOX_FOLDER_PATH/.sb.tmp"
+
+    if jq -e --arg tag "$rule_tag" \
+        '.route.rules[]? | select(.rule_set != null) | .rule_set[]? | select(. == $tag)' \
+        "$sbj" > /dev/null 2>&1; then
+        yellow "规则集 '${rule_tag}' 已启用。"; sleep 1; return
+    fi
+
+    # 选择分流流量要走的出站（排除 direct/block，参照 lwsb 排除 direct）
+    local out_tags=($(jq -r '.outbounds[]? | select(.tag != "direct" and .tag != "block") | .tag' "$sbj" 2>/dev/null))
+    local selected_out _out_choice
+    if [ ${#out_tags[@]} -eq 0 ]; then
+        selected_out="wireguard-out"
+        rt_ensure_wireguard
+        yellow "未找到其他出站，将自动使用 wireguard-out (WARP)。"
+    else
+        echo ""
+        green "请选择分流流量要走的出站:"
+        for i in "${!out_tags[@]}"; do
+            green "  $((i+1)). ${out_tags[$i]}"
+        done
+        reading "请输入编号: " _out_choice
+        if [[ ! "$_out_choice" =~ ^[0-9]+$ ]] || \
+           [ "$_out_choice" -lt 1 ] || \
+           [ "$_out_choice" -gt "${#out_tags[@]}" ]; then
+            red "无效选择"; sleep 1; return
+        fi
+        selected_out="${out_tags[$((_out_choice-1))]}"
+    fi
+
+    # 注入 rule_set 定义（sb00 默认不预置，需按需添加）
+    rt_ensure_rule_set "$rule_tag"
+
+    jq --arg tag "$rule_tag" --arg out "$selected_out" '
+        . as $doc
+        | ($doc.route.rules // []) as $R
+        | ($R | map(select(.action == "sniff"))) as $sniff
+        | ($R | map(select(.action == "resolve"))) as $resolve
+        | ($R | map(select(.action != "sniff" and .action != "resolve"))) as $splits
+        | ($splits | map(.outbound == $out) | any) as $has_out
+        | $doc
+        | if $has_out then
+            .route.rules = $sniff + ([$splits[] | if .outbound == $out then .rule_set += [$tag] else . end]) + $resolve
+          else
+            .route.rules = $sniff + $splits + [{rule_set: [$tag], outbound: $out}] + $resolve
+          end
+    ' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
+    rm -f "$tmpj" 2> /dev/null || true
+
+    sbrestart
+    green "'${rule_tag}' 已分流至出站 '${selected_out}'"
+    sleep 1
+}
+
+# 删除分流规则集
+delete_rule_menu() {
+    local _del_input _tag _count
+    clear
+    green "当前已启用的分流规则集:"
+    _count=$(jq -r '[.route.rules[]? | select(.rule_set != null) | .rule_set[]?] | length' "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null)
+    if [ "$_count" -eq 0 ] 2>/dev/null || [ -z "$_count" ]; then
+        yellow "  无"
+        sleep 1; return
+    fi
+    jq -r '.route.rules[]? | select(.rule_set != null) | .rule_set[]?' "$SINGBOX_FOLDER_PATH/sb.json" | nl -w2 -s'. '
+    reading "输入要删除的规则名称或序号: " _del_input
+    if [[ "$_del_input" =~ ^[0-9]+$ ]]; then
+        _tag=$(jq -r --arg idx "$_del_input" '[.route.rules[]? | select(.rule_set != null) | .rule_set[]] | .[(($idx | tonumber) - 1)]' "$SINGBOX_FOLDER_PATH/sb.json")
+    else
+        _tag="$_del_input"
+    fi
+    if [ -z "$_tag" ] || [ "$_tag" = "null" ]; then
+        red "无效的选择"; sleep 1; return
+    fi
+    jq --arg tag "$_tag" '
+        . as $doc
+        | ($doc.route.rules // []) as $R
+        | ($R | map(select(.action == "sniff"))) as $sniff
+        | ($R | map(select(.action == "resolve"))) as $resolve
+        | ($R | map(select(.action != "sniff" and .action != "resolve"))) as $splits
+        | $doc
+        | .route.rules = $sniff + [$splits[] | select(.rule_set != null) | .rule_set -= [$tag] | select((.rule_set | length) > 0)] + $resolve
+    ' "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
+    rt_remove_unused_rule_sets
+    sbrestart
+    green "规则集 '${_tag}' 已禁用。"
+    sleep 1
+}
+
+# 添加 Socks5/HTTP 代理出站
+add_socks5_proxy() {
+    local _proxy_url _proto _outbound_type _after_proto _tag_from_url _user_pass _host_port
+    local _user _password _decoded _server _port _check_proto _is_local _proxy_auth
+    local _tag _force_add _test_result
+    clear
+    reading "请输入代理URL (支持socks://,socks5://,http:// 支持v2rayN导出的节点链接): " _proxy_url
+    [ -z "$_proxy_url" ] && { red "输入为空！"; sleep 1; return; }
+
+    if [[ "$_proxy_url" =~ ^([a-zA-Z0-9]+):// ]]; then
+        _proto="${BASH_REMATCH[1]}"
+    else
+        red "URL格式错误"; sleep 1; return
+    fi
+    [[ ! "$_proto" =~ ^(socks5|socks|http)$ ]] && { red "不支持的协议"; sleep 2; return; }
+    case "$_proto" in
+        socks|socks5) _outbound_type="socks" ;;
+        http)         _outbound_type="http" ;;
+    esac
+
+    _after_proto="${_proxy_url#*://}"
+    if [[ "$_after_proto" == *"#"* ]]; then
+        _tag_from_url="${_after_proto##*#}"; _after_proto="${_after_proto%%#*}"
+    else
+        _tag_from_url=""
+    fi
+
+    if [[ "$_after_proto" == *"@"* ]]; then
+        _user_pass="${_after_proto%%@*}"; _host_port="${_after_proto##*@}"
+    else
+        _user_pass=""; _host_port="$_after_proto"
+    fi
+
+    _user=""; _password=""
+    if [ -n "$_user_pass" ]; then
+        _decoded=$(echo "$_user_pass" | base64 -d 2>/dev/null)
+        if [ -n "$_decoded" ] && [[ "$_decoded" != "$_user_pass" ]] && [[ "$_decoded" == *":"* ]]; then
+            _user="${_decoded%%:*}"; _password="${_decoded#*:}"
+        elif [[ "$_user_pass" == *":"* ]]; then
+            _user="${_user_pass%%:*}"; _password="${_user_pass#*:}"
+        else
+            _user="$_user_pass"
+        fi
+    fi
+
+    _server="${_host_port%%:*}"; _port="${_host_port##*:}"
+    [ -z "$_server" ] || [ -z "$_port" ] && { red "格式错误：缺少ip或端口"; sleep 2; return; }
+
+    [[ "$_proto" == "socks" || "$_proto" == "socks5" ]] && _check_proto="socks5" || _check_proto="$_proto"
+
+    # 本地地址跳过外部 API 检测，直接用 curl 测试
+    _is_local=false
+    if [[ "$_server" == "127.0.0.1" || "$_server" == "::1" || "$_server" == "localhost" ]]; then
+        _is_local=true
+    fi
+
+    _proxy_auth=""
+    [ -n "$_user" ] && [ -n "$_password" ] && _proxy_auth="${_user}:${_password}@" || \
+        { [ -n "$_user" ] && _proxy_auth="${_user}@"; }
+
+    if [ "$_is_local" = true ]; then
+        yellow "检测到本地代理 ${_check_proto}://${_server}:${_port}，跳过外部API检测，正在用curl测试连通性..."
+        _test_result=$(curl -s --max-time 8 --proxy "${_check_proto}://${_proxy_auth}${_server}:${_port}" "https://api.ip.sb/ip" 2>/dev/null)
+        if [ -z "$_test_result" ]; then
+            yellow "警告：通过本地代理访问外网失败，请确认代理服务正在运行。"
+            reading "是否仍然添加此代理？(y/n): " _force_add
+            [[ ! "$_force_add" =~ ^[yY]$ ]] && { yellow "已取消"; sleep 1; return; }
+        else
+            green "本地代理可用，出口IP: $_test_result"
+        fi
+    else
+        yellow "正在测试代理 ${_check_proto}://${_server}:${_port} ..."
+        local _api_response _success _error_msg _exit_ip
+        _api_response=$(curl -s --max-time 8 -G \
+            --data-urlencode "proxy=${_check_proto}://${_proxy_auth}${_server}:${_port}" \
+            "https://check.socks5.cmliussss.net/check" 2>/dev/null)
+        [ -z "$_api_response" ] && { red "API 请求失败"; sleep 2; return; }
+        _success=$(echo "$_api_response" | jq -r '.success')
+        if [ "$_success" != "true" ]; then
+            _error_msg=$(echo "$_api_response" | jq -r '.error // "未知错误"')
+            red "代理不可用: $_error_msg"; sleep 2; return
+        fi
+        _exit_ip=$(echo "$_api_response" | jq -r '.exit.ip // empty')
+        green "代理可用"
+        [ -n "$_exit_ip" ] && green "出口 IP: $_exit_ip"
+    fi
+
+    [ -n "$_tag_from_url" ] && _tag="$_tag_from_url" || _tag="${_outbound_type}-${_server}-${_port}"
+    case "$_tag" in
+        direct|block|wireguard-out|socks5-sb)
+            red "标签 '$_tag' 为系统保留，请换一个名称"
+            sleep 2; return ;;
+    esac
+    if jq -e --arg tag "$_tag" '[.outbounds[]?.tag, .inbounds[]?.tag, .endpoints[]?.tag, .route.rule_set[]?.tag] | index($tag)' "$SINGBOX_FOLDER_PATH/sb.json" >/dev/null 2>&1; then
+        red "标签 '$_tag' 已存在"; sleep 2; return
+    fi
+
+    # 根据是否有账号密码，决定写入字段，避免空字符串导致 sing-box 报错
+    if [ -n "$_user" ] && [ -n "$_password" ]; then
+        jq --arg type "$_outbound_type" --arg tag "$_tag" --arg server "$_server" \
+           --arg port "$_port" --arg user "$_user" --arg password "$_password" \
+           '.outbounds = (.outbounds // []) + [{"type":$type,"tag":$tag,"server":$server,"server_port":($port|tonumber),"username":$user,"password":$password}]' \
+           "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
+    else
+        jq --arg type "$_outbound_type" --arg tag "$_tag" --arg server "$_server" \
+           --arg port "$_port" \
+           '.outbounds = (.outbounds // []) + [{"type":$type,"tag":$tag,"server":$server,"server_port":($port|tonumber)}]' \
+           "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
+    fi
+
+    sbrestart
+    green "\n$_tag 代理出站已添加\n"
+    sleep 2
+}
+
+# 删除 Socks5/HTTP 代理出站
+delete_socks5_proxy() {
+    local _out_list _del_input _tag _del_type
+    clear
+    green "当前 socks/http 代理出站（可删除）:"
+    _out_list=$(jq -r '[.outbounds[]? | select(.type == "socks" or .type == "http")] | to_entries | .[] | "\(.key+1). \(.value.tag) [\(.value.type)]"' "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null)
+    [ -z "$_out_list" ] && { yellow "没有可删除的 socks/http 代理出站。"; sleep 2; return; }
+    echo "$_out_list"
+
+    reading "输入要删除的代理编号或标签: " _del_input
+    if [[ "$_del_input" =~ ^[0-9]+$ ]]; then
+        _tag=$(jq -r --arg idx "$_del_input" '.outbounds | map(select(.type == "socks" or .type == "http")) | .[($idx | tonumber)-1].tag // empty' "$SINGBOX_FOLDER_PATH/sb.json")
+        [ -z "$_tag" ] && { red "编号无效！"; sleep 1; return; }
+    else
+        _tag="$_del_input"
+        _del_type=$(jq -r --arg tag "$_tag" '.outbounds[]? | select(.tag == $tag) | .type' "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null)
+        [ -z "$_del_type" ] && { red "标签 '$_tag' 不存在！"; sleep 1; return; }
+        if [ "$_del_type" != "socks" ] && [ "$_del_type" != "http" ]; then
+            red "'$_tag' 不是 socks/http 代理出站，不可删除！"
+            sleep 2; return
+        fi
+    fi
+    [ "$_tag" = "wireguard-out" ] && { red "wireguard-out 为系统内置，不可删除！"; sleep 2; return; }
+
+    jq --arg tag "$_tag" 'del(.outbounds[] | select(.tag == $tag))' "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
+    # 同步删除引用该出站的分流规则
+    jq --arg tag "$_tag" '
+        . as $doc
+        | ($doc.route.rules // []) as $R
+        | ($R | map(select(.action == "sniff"))) as $sniff
+        | ($R | map(select(.action == "resolve"))) as $resolve
+        | ($R | map(select(.action != "sniff" and .action != "resolve"))) as $splits
+        | $doc
+        | .route.rules = $sniff + [$splits[] | select(.outbound != $tag)] + $resolve
+    ' "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp2" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp2" "$SINGBOX_FOLDER_PATH/sb.json"
+    rt_remove_unused_rule_sets
+    sbrestart
+    green "$_tag 代理出站已删除。"
+    sleep 1
+}
+
+# 设置全局代理出站（所有流量走指定 socks/http 代理）
+set_global_outbound() {
+    local sbj="$SINGBOX_FOLDER_PATH/sb.json"
+    local proxy_tags _out_choice _selected_out _strat
+    proxy_tags=($(jq -r '.outbounds[]? | select(.tag != "direct" and .tag != "block" and .tag != "wireguard-out") | .tag' "$sbj" 2>/dev/null))
+
+    if [ ${#proxy_tags[@]} -eq 0 ]; then
+        yellow "\n当前没有可用的 socks5/http 代理出站。"
+        yellow "请先返回 → 设置分流服务 → 添加 Socks5/HTTP 出站，再设置全局代理。\n"
+        sleep 3; add_rule_menu; return
+    fi
+
+    echo ""
+    green "请选择全局代理出站:"
+    for i in "${!proxy_tags[@]}"; do
+        green "  $((i+1)). ${proxy_tags[$i]}"
+    done
+    echo ""
+    reading "请输入编号: " _out_choice
+    if [[ ! "$_out_choice" =~ ^[0-9]+$ ]] || \
+       [ "$_out_choice" -lt 1 ] || \
+       [ "$_out_choice" -gt "${#proxy_tags[@]}" ]; then
+        red "无效选择"; sleep 1; add_rule_menu; return
+    fi
+    _selected_out="${proxy_tags[$((_out_choice-1))]}"
+
+    # 清空分流规则并让 final 指向代理，实现"所有流量走代理"
+    _strat="$(rt_get_strategy)"
+    [ -z "$_strat" ] && _strat="prefer_ipv6"
+    jq --arg out "$_selected_out" --arg strat "$_strat" '
+        .route.final = $out
+        | .route.rules = [{action: "sniff"}, {action: "resolve", strategy: $strat}]
+    ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$sbj"
+    sbrestart
+    green "\n已设置全局代理出站：$_selected_out"
+    yellow "所有流量将通过 $_selected_out 转发，如需恢复请选择「恢复服务器原IP出站」\n"
+    sleep 2
+}
+
+# 恢复服务器原IP出站（final 回 direct，保留/复位默认 sniff+resolve 规则）
+restore_direct_outbound() {
+    local sbj="$SINGBOX_FOLDER_PATH/sb.json" _strat
+    yellow "\n正在恢复默认路由配置...\n"
+
+    # 确保 direct 出站存在（不存在则插入到数组最前面）
+    if ! jq -e '.outbounds[]? | select(.tag == "direct")' "$sbj" > /dev/null 2>&1; then
+        jq '.outbounds = [{"type": "direct", "tag": "direct"}] + .outbounds' \
+            "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$sbj"
+    fi
+
+    _strat="$(rt_get_strategy)"
+    [ -z "$_strat" ] && _strat="prefer_ipv6"
+    jq --arg strat "$_strat" '
+        .route.final = "direct"
+        | .route.rules = [{action: "sniff"}, {action: "resolve", strategy: $strat}]
+    ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$sbj"
+    sbrestart
+    green "\n已恢复服务器原IP出站，所有流量走 direct。\n"
+    sleep 2
+}
+
 interactive_main() {
     local _ch
     geo_prefetch
@@ -4392,18 +4930,20 @@ interactive_main() {
         echo ""
         yellow "  【管 理】"
         green "    [3] 服务管理"
+        green "    [4] 分流管理 (rt)"
+        green "    [5] sb 快捷命令 (sc)"
         echo ""
         yellow "  【查 看】"
-        green "    [4] 查看节点信息 (list)"
-        green "    [5] 查看运行状态"
-        green "    [6] 订阅管理 (sub)"
+        green "    [6] 查看节点信息 (list)"
+        green "    [7] 查看运行状态"
+        green "    [8] 订阅管理 (sub)"
         echo ""
         yellow "  【日 志】"
-        green "    [7] 查看日志 (logs)"
+        green "    [9] 查看日志 (logs)"
         echo ""
         red   "  【危险操作】"
-        red   "    [8] 卸载 (del, 保留二进制)"
-        red   "    [9] 卸载全部并清理 (delall)"
+        red   "    [10] 卸载 (del, 保留二进制)"
+        red   "    [11] 卸载全部并清理 (delall)"
         echo ""
         purple "    [0] 退出"
         echo ""
@@ -4413,18 +4953,20 @@ interactive_main() {
             1) interactive_install; menu_pause ;;
             2) interactive_reinstall; menu_pause ;;
             3) interactive_service_menu ;;
-            4) cip; menu_pause ;;
-            5) menu_status_block; show_local_ip_info_with_out_ip_hint; menu_pause ;;
-            6) interactive_sub_menu ;;
-            7) interactive_log_menu ;;
-            8)
+            4) rt_manage ;;
+            5) ensure_sb_shortcut; menu_pause ;;
+            6) cip; menu_pause ;;
+            7) menu_status_block; show_local_ip_info_with_out_ip_hint; menu_pause ;;
+            8) interactive_sub_menu ;;
+            9) interactive_log_menu ;;
+            10)
                 reading "确认卸载? (y/N): " _ch
                 if [ "$_ch" = "y" ] || [ "$_ch" = "Y" ]; then
                     cleandel
                     green "✅ 已卸载 (保留二进制)"
                 fi
                 menu_pause ;;
-            9)
+            11)
                 reading "确认卸载全部并清理? (y/N): " _ch
                 if [ "$_ch" = "y" ] || [ "$_ch" = "Y" ]; then
                     cleandel delall
@@ -4576,10 +5118,28 @@ main() {
         exit
     fi
 
+    # 分流管理
+    if [ "$_cmd" = "rt" ] || [ "$_cmd" = "rule" ]; then
+        rt_manage
+        exit
+    fi
+
+    # 创建/刷新 sb 快捷命令
+    if [ "$_cmd" = "sc" ] || [ "$_cmd" = "shortcut" ]; then
+        ensure_sb_shortcut
+        exit
+    fi
+
+    # 清理 sb 快捷命令
+    if [ "$_cmd" = "sc_off" ] || [ "$_cmd" = "shortcut_off" ]; then
+        cleanup_sb_shortcut
+        exit
+    fi
+
     # 无效命令提示
     echo
     red "❌ 无效命令：$1"
-    yellow "可用命令：menu / ins / rep / del / delall / list / sub / res / ups / autostart / autostart_off / nginx_start / nginx_stop / nginx_restart / nginx_status"
+    yellow "可用命令：menu / ins / rep / del / delall / list / sub / res / ups / rt / sc / sc_off / autostart / autostart_off / nginx_start / nginx_stop / nginx_restart / nginx_status"
     showmode
     exit 1
 
