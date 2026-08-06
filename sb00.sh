@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.6.59(2026-08-06)"
+VERSION="1.6.63(2026-08-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -3202,7 +3202,8 @@ cip() {
     echo
     geo_prefetch
     if ! is_installed_sb; then
-        yellow "  ⚠️  尚未安装节点，请先安装节点"
+        red "  ⚠️  尚未安装节点，请先安装节点"
+        echo ""
         return
     fi
     # 显示 Singbox 状态（与主菜单顶部一致）
@@ -3787,31 +3788,27 @@ menu_reload_proto_flags() {
 # 读取端口；空则返回空（表示随机生成）
 menu_ask_port() {
     local _proto="$1" _def="$2" _in="" _rp=""
-    reading "  请输入 ${_proto} 监听端口 (回车=${_def:-随机}): " _in
-    if [ -z "$_in" ]; then
-        if [ -n "$_def" ]; then
-            green "  ↳ ${_proto} 端口: ${_def} (默认)" >&2
-            echo "$_def"
-        else
-            _rp="$(rand_port)"
-            green "  ↳ ${_proto} 端口: ${_rp} (随机)" >&2
-            echo "$_rp"
+    while true; do
+        reading "  请输入 ${_proto} 监听端口 (回车=${_def:-随机}): " _in
+        if [ -z "$_in" ]; then
+            if [ -n "$_def" ]; then
+                green "  ↳ ${_proto} 端口: ${_def} (默认)" >&2
+                echo "$_def"
+            else
+                _rp="$(rand_port)"
+                green "  ↳ ${_proto} 端口: ${_rp} (随机)" >&2
+                echo "$_rp"
+            fi
+            return 0
         fi
-        return 0
-    fi
-    if [[ ! "$_in" =~ ^[0-9]+$ ]] || [ "$_in" -lt 1 ] || [ "$_in" -gt 65535 ]; then
-        if [ -n "$_def" ]; then
-            yellow "  ❌ 端口无效 (1-65535)，已用默认端口: ${_def}" >&2
-            echo "$_def"
-        else
-            _rp="$(rand_port)"
-            yellow "  ❌ 端口无效 (1-65535)，已改随机端口: ${_rp}" >&2
-            echo "$_rp"
+        if [[ "$_in" =~ ^[0-9]+$ ]] && [ "$_in" -ge 1 ] && [ "$_in" -le 65535 ]; then
+            green "  ↳ ${_proto} 端口: ${_in}" >&2
+            echo "$_in"
+            return 0
         fi
-        return 0
-    fi
-    green "  ↳ ${_proto} 端口: ${_in}" >&2
-    echo "$_in"
+        red "  ❌ 端口无效 (1-65535)，请重新输入" >&2
+        echo "" >&2
+    done
 }
 
 # 交互收集安装参数并设置环境变量
@@ -3900,7 +3897,7 @@ menu_collect_install() {
         _odq="$(query_ip_region "$_ans" 2>/dev/null)"
         green "  ↳ 使用自定义 IP (out_ip): ${_ans} (${_odq:-未知})"
     else
-        green "  ↳ 使用检测到的 IP"
+        green "  ↳ 使用检测到的 IP: ${_use_ip}"
     fi
 
     reading "UUID (回车自动生成): " _ans
