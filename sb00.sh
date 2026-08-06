@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.6.52(2026-08-06)"
+VERSION="1.6.55(2026-08-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -3786,11 +3786,11 @@ menu_ask_port() {
     reading "  请输入 ${_proto} 监听端口 (回车=${_def:-随机}): " _in
     if [ -z "$_in" ]; then
         if [ -n "$_def" ]; then
-            yellow "  ↳ ${_proto} 端口: ${_def} (默认)" >&2
+            green "  ↳ ${_proto} 端口: ${_def} (默认)" >&2
             echo "$_def"
         else
             _rp="$(rand_port)"
-            yellow "  ↳ ${_proto} 端口: ${_rp} (随机)" >&2
+            green "  ↳ ${_proto} 端口: ${_rp} (随机)" >&2
             echo "$_rp"
         fi
         return 0
@@ -3806,7 +3806,7 @@ menu_ask_port() {
         fi
         return 0
     fi
-    yellow "  ↳ ${_proto} 端口: ${_in}" >&2
+    green "  ↳ ${_proto} 端口: ${_in}" >&2
     echo "$_in"
 }
 
@@ -3885,7 +3885,7 @@ menu_collect_install() {
     fi
     if [ -n "$_use_ip" ]; then
         green "  ↳ 你将使用 ${_use_label}(${_use_ip}) 作为出口 IP"
-        reading "  请留空回车直接使用以上 IP；如需特殊 IP 作为出口，请输入 IP: " _ans
+        reading "  请留空回车直接使用当前出口 IP (${_use_ip})；如需特殊 IP 作为出口，请输入 IP: " _ans
     else
         yellow "  ↳ 未检测到可用出口 IP"
         reading "  请手动输入出口 IP (回车=稍后自动检测): " _ans
@@ -3973,9 +3973,9 @@ menu_collect_install() {
     purple "===== 端口设置 ====="
     green "  1) 全部随机生成"
     green "  2) 逐个自定义端口 (推荐)"
-    reading "输入选择 (回车默认=1): " _ans
-    if [ "$_ans" = "2" ]; then
-        green "  ↳ 端口: 逐个自定义"
+    reading "输入选择 (回车默认=2): " _ans
+    if [ -z "$_ans" ] || [ "$_ans" = "2" ]; then
+        green "  ↳ 端口: 逐个自定义 (默认)"
         [ -n "$trp" ] && export trpt="$(menu_ask_port "Trojan-WS (Argo)")"
         [ -n "$vmp" ] && export vmpt="$(menu_ask_port "Vmess-WS (Argo)")"
         for _sel in vlr hyp tup anyp; do
@@ -3988,7 +3988,7 @@ menu_collect_install() {
         done
         [ -n "$trp$vmp" ] && export argo_pt="$(menu_ask_port "Argo" 8001)"
     else
-        green "  ↳ 端口: 全部随机生成 (默认)"
+        green "  ↳ 端口: 全部随机生成"
         [ -n "$trp" ] && { trpt="$(rand_port)"; export trpt; green "  ↳ Trojan-WS (Argo) 端口: ${trpt} (随机)"; }
         [ -n "$vmp" ] && { vmpt="$(rand_port)"; export vmpt; green "  ↳ Vmess-WS (Argo) 端口: ${vmpt} (随机)"; }
         [ -n "$vlr" ] && { vlrt="$(rand_port)"; export vlrt; green "  ↳ VLESS-Reality 端口: ${vlrt} (随机)"; }
