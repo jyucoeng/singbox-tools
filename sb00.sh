@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.6.16(2026-08-06)"
+VERSION="1.6.19(2026-08-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -3782,19 +3782,19 @@ menu_collect_install() {
     # 端口设置：全部随机 或 逐个定制
     echo ""
     purple "===== 端口设置 ====="
-    green "  1) 全部随机生成 (推荐)"
-    green "  2) 逐个自定义端口"
+    green "  1) 全部随机生成"
+    green "  2) 逐个自定义端口 (推荐)"
     reading "输入选择 (回车默认=1): " _ans
     if [ "$_ans" = "2" ]; then
-        for _sel in $_ch; do
+        for _sel in trpt vlrt hypt tupt anypt nginx_pt argo_pt; do
             case "$_sel" in
-                b) export vlrt="$(menu_ask_port "VLESS-Reality")" ;;
-                c) export hypt="$(menu_ask_port "Hysteria2")" ;;
-                d) export tupt="$(menu_ask_port "TUIC")" ;;
-                e) export anypt="$(menu_ask_port "AnyTLS")" ;;
-                f) export vmpt="$(menu_ask_port "Vmess-WS")" ;;
-                g) export trpt="$(menu_ask_port "Trojan-WS")" ;;
-                h) export socks5pt="$(menu_ask_port "Socks5")" ;;
+                trpt)     [ -n "$trp" ]      && export trpt="$(menu_ask_port "Trojan-WS")" ;;
+                vlrt)     [ -n "$vlr" ]      && export vlrt="$(menu_ask_port "VLESS-Reality")" ;;
+                hypt)     [ -n "$hyp" ]      && export hypt="$(menu_ask_port "Hysteria2")" ;;
+                tupt)     [ -n "$tup" ]      && export tupt="$(menu_ask_port "TUIC")" ;;
+                anypt)    [ -n "$anyp" ]     && export anypt="$(menu_ask_port "AnyTLS")" ;;
+                nginx_pt) [ -n "$subscribe" ] && export nginx_pt="$(menu_ask_port "Nginx")" ;;
+                argo_pt)  [ -n "$argo" ]     && export argo_pt="$(menu_ask_port "Argo")" ;;
             esac
         done
     fi
