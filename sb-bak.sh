@@ -1,4 +1,18 @@
-#!/usr/bin/env bash
+#!/bin/sh
+# 若没有 bash 则自动安装
+if [ -z "${BASH_VERSION}" ]; then
+  if command -v apk >/dev/null 2>&1; then
+    echo "正在安装 bash..."
+    apk add --no-cache bash >/dev/null 2>&1
+  fi
+  if command -v bash >/dev/null 2>&1; then
+    exec bash "$0" "$@"
+  else
+    echo "错误：需要 bash 运行此脚本，请先安装 bash。" >&2
+    exit 1
+  fi
+fi
+
 export LANG=en_US.UTF-8
 
 # ================== 文件夹路径配置 ==================
@@ -8,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.0.11(2026-07-20)"
+VERSION="1.0.13(2026-08-02)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -64,7 +78,7 @@ cdn_pt="${cdn_pt:-443}"
 vl_sni_pt="${vl_sni_pt:-443}"
 
 v46url="https://icanhazip.com"
-SCRIPT_URL="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh"
+SCRIPT_URL="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb-bak.sh"
 
 CN_BING="www.bing.com"
 
@@ -102,6 +116,10 @@ is_true() {
 
 debug_log() {
     [ "${DEBUG_FLAG:-0}" = "1" ] && echo -e "$*" >&2
+}
+
+debug_print() {
+    [ "${DEBUG_FLAG:-0}" = "1" ] && "$@"
 }
 
 get_subscribe_flag() {
@@ -184,9 +202,12 @@ need_argo() {
 }
 
 # 已安装/未安装的参数规则检查
+# 命令参数转小写，供顶层 guard 大小写不敏感比对
+_cmd0="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+
 if pgrep -f 'sing-box' > /dev/null 2>&1; then
     # 已安装
-    if [ "${1:-}" = "rep" ]; then
+    if [ "$_cmd0" = "rep" ]; then
         any_proto_enabled || {
             echo "提示：rep重置协议时，请在脚本前至少设置一个协议变量哦，再见！💣"
             exit 1
@@ -194,7 +215,7 @@ if pgrep -f 'sing-box' > /dev/null 2>&1; then
     fi
 else
     # 未安装
-    if [ "${1:-}" != "del" ]; then
+    if [ "$_cmd0" != "del" ]; then
         any_proto_enabled || {
             echo "提示：未安装脚本，请在脚本前至少设置一个协议变量哦，再见！💣"
             exit 1
@@ -251,7 +272,7 @@ install_deps() {
 
     # 都齐了就直接返回
     if [ "${#missing[@]}" -eq 0 ]; then
-        green "✅ 依赖已齐全，跳过安装"
+        debug_print green "✅ 依赖已齐全，跳过安装"
         return 0
     fi
 
@@ -1040,7 +1061,7 @@ set_sbyx() {
         echo
         yellow "所有节点名称前缀：$name"
     fi
-    echo "IP版本获取中……请稍候"
+    debug_print echo "IP版本获取中……请稍候"
     v4v6 # This now sets both v4_ok and v6_ok
 
     # Determine which connection to prefer based on the availability of IPv4 and IPv6
@@ -1068,49 +1089,63 @@ set_sbyx() {
 }
 
 # download Sing-box
-upsingbox() {
+# 检测已安装版本，需要更新时下载并安装 sing-box 二进制
+update_singbox() {
     local sb_ver="1.13.14"
+
+    # 版本检测：已安装且版本匹配则跳过下载
+    if [ -x "$SINGBOX_FOLDER_PATH/sing-box" ]; then
+        local current_ver
+        current_ver=$("$SINGBOX_FOLDER_PATH/sing-box" version 2> /dev/null | head -1 | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')
+        if [ "$current_ver" = "$sb_ver" ]; then
+            green "✅ Sing-box 已安装最新版 (v${sb_ver})，跳过下载"
+            return 0
+        fi
+        yellow "Sing-box 版本不匹配 (当前: ${current_ver:-unknown}，期望: ${sb_ver})，开始下载新版..."
+    fi
 
     # # 自定义库（旧源），如需切回取消注释下面这行，注释掉官方下载部分
     # local url="https://github.com/jyucoeng/singbox-tools/releases/download/singbox/sing-box-$cpu"
 
-    local archive_base="sing-box-${sb_ver}-linux-${cpu}"
+    # Alpine (musl) 需使用 musl 编译的二进制
+    local sb_lib_suffix=""
     if [ -f /etc/alpine-release ]; then
-        archive_base="${archive_base}-musl"
-        debug_log "【调试】upsingbox：检测到 Alpine 系统，使用 musl 版本"
+        sb_lib_suffix="-musl"
     fi
-    local archive="${archive_base}.tar.gz"
-    local url="https://github.com/SagerNet/sing-box/releases/download/v${sb_ver}/${archive}"
+
+    local archive="sing-box-${sb_ver}-linux-${cpu}${sb_lib_suffix}.tar.gz"
+    # 本仓库自持源（由 sync-singbox.yml 从上游镜像），如需切回官方源，取消下行注释并注释上行
+    local url="https://github.com/jyucoeng/singbox-tools/releases/download/v${sb_ver}/${archive}"
+    # local url="https://github.com/SagerNet/sing-box/releases/download/v${sb_ver}/${archive}"
     local tmp_archive="/tmp/${archive}"
-    debug_log "【调试】upsingbox：CPU架构=$cpu，下载文件名=$archive"
 
     (curl -Lo "$tmp_archive" -# --connect-timeout 5 --max-time 120 --retry 2 --retry-delay 2 --retry-all-errors "$url") \
         || (wget -O "$tmp_archive" --tries=2 --timeout=120 --dns-timeout=5 --read-timeout=60 "$url")
 
     if [ ! -s "$tmp_archive" ]; then
-        debug_log "【调试】upsingbox：下载失败：文件为空，URL=$url"
+        debug_log "【调试】update_singbox：下载失败：文件为空"
         red "❌ 下载失败：${url}"
         exit 1
     fi
-    debug_log "【调试】upsingbox：下载完成，解压中…"
+    debug_log "【调试】update_singbox：下载完成，解压中…"
 
     tar -xzf "$tmp_archive" -C /tmp/ 2> /dev/null || {
         red "❌ 解压失败"
         exit 1
     }
-    mv "/tmp/${archive_base}/sing-box" "$SINGBOX_FOLDER_PATH/sing-box"
+    mv "/tmp/sing-box-${sb_ver}-linux-${cpu}${sb_lib_suffix}/sing-box" "$SINGBOX_FOLDER_PATH/sing-box"
     rm -f "$tmp_archive"
-    rm -rf "/tmp/${archive_base}" 2> /dev/null || true
+    rm -rf "/tmp/sing-box-${sb_ver}-linux-${cpu}" 2> /dev/null || true
 
     chmod +x "$SINGBOX_FOLDER_PATH/sing-box"
     sbcore=$("$SINGBOX_FOLDER_PATH/sing-box" version 2> /dev/null | head -1 | awk '/version/{print $NF}')
-    debug_log "【调试】upsingbox：Sing-box 版本为 $sbcore"
+    debug_log "【调试】update_singbox：Sing-box 版本为 $sbcore"
     green "✅  已安装 Sing-box 正式版内核：${sbcore}"
 }
 # Generate UUID and save to file
 insuuid() {
     if [ ! -e "$SINGBOX_FOLDER_PATH/sing-box" ]; then
-        upsingbox
+        update_singbox
     fi
 
     if [ -z "$uuid" ] && [ ! -e "$SINGBOX_FOLDER_PATH/uuid" ]; then
@@ -1481,8 +1516,18 @@ installsb() {
     echo
     echo "=========开始下载/安装Sing-box内核========="
 
-    if [ ! -e "$SINGBOX_FOLDER_PATH/sing-box" ]; then
-        upsingbox
+    # 版本检测：已安装且版本匹配则提示跳过
+    if [ -x "$SINGBOX_FOLDER_PATH/sing-box" ]; then
+        local current_ver sb_ver
+        sb_ver="1.13.14"
+        current_ver=$("$SINGBOX_FOLDER_PATH/sing-box" version 2> /dev/null | head -1 | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')
+        if [ "$current_ver" = "$sb_ver" ]; then
+            green "✅ Sing-box 已安装 (v${current_ver})，跳过下载"
+        else
+            update_singbox
+        fi
+    else
+        update_singbox
     fi
 
     insuuid
@@ -1784,7 +1829,7 @@ EOF
             systemctl enable sb
             systemctl start sb
             echo ""
-            green "✅ sb 服务已启动,并开启开机自启服务（systemd）"
+            debug_print green "✅ sb 服务已启动,并开启开机自启服务（systemd）"
         elif command -v rc-service > /dev/null 2>&1 && [ "$EUID" -eq 0 ]; then
             debug_log "【调试】sbbout：使用 openrc 管理/启动 sb 服务"
             cat > /etc/init.d/sing-box << EOF
@@ -1797,15 +1842,20 @@ pidfile="/run/sing-box.pid"
 depend() { need net; }
 EOF
             chmod +x /etc/init.d/sing-box
-            rc-update add sing-box default
-            rc-service sing-box start
+            if [ "${DEBUG_FLAG:-0}" = "1" ]; then
+                rc-update add sing-box default
+                rc-service sing-box start
+            else
+                rc-update add sing-box default > /dev/null 2>&1
+                rc-service sing-box start > /dev/null 2>&1
+            fi
             echo ""
-            green "✅ sb 服务已启动,并开启开机自启服务（openrc）"
+            debug_print green "✅ sb 服务已启动,并开启开机自启服务（openrc）"
         else
             debug_log "【调试】sbbout：使用 nohup 模式运行 sb 服务"
             nohup "$SINGBOX_FOLDER_PATH/sing-box" run -c "$SINGBOX_FOLDER_PATH/sb.json" > /dev/null 2>&1 &
             echo ""
-            green "✅  sb 服务已启动, 使用 nohup 模式运行"
+            debug_print green "✅  sb 服务已启动, 使用 nohup 模式运行"
         fi
     fi
 }
@@ -1923,7 +1973,7 @@ start_nginx_service() {
         systemctl enable nginx > /dev/null 2>&1
         systemctl restart nginx > /dev/null 2>&1 || systemctl start nginx > /dev/null 2>&1
         echo ""
-        green "✅ Nginx 服务已启动,并开启开机自启服务（systemd）"
+        debug_print green "✅ Nginx 服务已启动,并开启开机自启服务（systemd）"
         return 0
     fi
 
@@ -1933,7 +1983,7 @@ start_nginx_service() {
         rc-update add nginx default > /dev/null 2>&1
         rc-service nginx restart > /dev/null 2>&1 || rc-service nginx start > /dev/null 2>&1
         echo ""
-        green "✅ Nginx 服务已启动,并开启开机自启服务（openrc）"
+        debug_print green "✅ Nginx 服务已启动,并开启开机自启服务（openrc）"
         return 0
     fi
 
@@ -1942,7 +1992,7 @@ start_nginx_service() {
     pkill -15 nginx > /dev/null 2>&1
     nohup nginx > /dev/null 2>&1 &
     echo ""
-    green "✅ Nginx 服务已启动, 使用 nohup 模式运行"
+    debug_print green "✅ Nginx 服务已启动, 使用 nohup 模式运行"
     return 0
 }
 
@@ -2033,9 +2083,22 @@ ensure_cloudflared_if_needed() {
 # 确保 cloudflared
 ensure_cloudflared() {
     debug_log "【调试】ensure_cloudflared：开始下载/安装 cloudflared"
-    # 已存在就不重复下载
+
+    # 已存在 → 版本比对
     if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ]; then
-        return 0
+        local local_ver latest_ver
+        local_ver=$("$SINGBOX_FOLDER_PATH/cloudflared" --version 2>/dev/null | grep -oE '[0-9]{4}\.[0-9]+\.[0-9]+' | head -1)
+        latest_ver=$(curl -sI --max-time 10 "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$cpu" 2>/dev/null | grep -i 'location:' | grep -oE '[0-9]{4}\.[0-9]+\.[0-9]+')
+        if [ -n "$local_ver" ] && [ -n "$latest_ver" ] && [ "$local_ver" = "$latest_ver" ]; then
+            green "✅ Cloudflared 已安装最新版 (v${local_ver})，跳过下载"
+            return 0
+        fi
+        if [ -n "$latest_ver" ]; then
+            yellow "Cloudflared 版本不匹配 (当前: ${local_ver:-unknown}，最新: ${latest_ver})，开始下载新版…"
+        else
+            yellow "Cloudflared 版本检查失败（网络问题），保留现有版本"
+            return 0
+        fi
     fi
 
     debug_log "【调试】ensure_cloudflared：检查 cloudflared 是否已存在"
@@ -2121,7 +2184,7 @@ EOF
     systemctl enable argo
     systemctl start argo
     echo ""
-    green "✅ Argo 服务已启动并成功设置开机自启动（systemd）"
+    debug_print green "✅ Argo 服务已启动并成功设置开机自启动（systemd）"
 }
 
 # 安装 Argo 服务（openrc）
@@ -2157,9 +2220,14 @@ depend() { need net; }
 EOF
 
     chmod +x /etc/init.d/argo
-    rc-update add argo default
-    rc-service argo start
-    green "✅ Argo 服务已成功安装并启动（openrc）"
+    if [ "${DEBUG_FLAG:-0}" = "1" ]; then
+        rc-update add argo default
+        rc-service argo start
+    else
+        rc-update add argo default > /dev/null 2>&1
+        rc-service argo start > /dev/null 2>&1
+    fi
+    debug_print green "✅ Argo 服务已成功安装并启动（openrc）"
 }
 
 # 无守护进程启动 Argo
@@ -2432,7 +2500,21 @@ EOF
     fi
 
     debug_log "【调试】pick_server_ip_for_install：最终选择的服务器IP，server_ip=$server_ip"
-    # 9) 最终写入：IPv6 加 []，写入 $SINGBOX_FOLDER_PATH/server_ip
+
+    # 9) 网络 / out_ip 都拿不到合法 IP 时，复用已有 server_ip 文件（无网络兜底）
+    if [ -z "$server_ip" ] || ! is_valid_ip_simple "$server_ip"; then
+        if [ -s "$SINGBOX_FOLDER_PATH/server_ip" ]; then
+            local file_ip
+            file_ip="$(cat "$SINGBOX_FOLDER_PATH/server_ip" 2>/dev/null || true)"
+            file_ip="$(strip_ip_brackets_all "$file_ip")"
+            if is_valid_ip_simple "$file_ip" && [ -n "$file_ip" ]; then
+                yellow "⚠️ 网络获取 IP 失败，复用已有 server_ip 文件：${file_ip}"
+                server_ip="$file_ip"
+            fi
+        fi
+    fi
+
+    # 10) 最终写入：IPv6 加 []，写入 $SINGBOX_FOLDER_PATH/server_ip
     mkdir -p "$SINGBOX_FOLDER_PATH" 2> /dev/null || true
 
     local ip_final
@@ -2457,20 +2539,27 @@ EOF
     v4_local="$(strip_ip_brackets_all "$v4_local")"
     v6_local="$(strip_ip_brackets_all "$v6_local")"
 
-    # B) 获取地区（按 v4/v6 分开探测）
+    # B) 获取地区（v4/v6 并发探测，缩短超时）
     local v4dq="" v6dq=""
-    v4dq="$(
-        (curl -s4 -m5 --connect-timeout 5 -k https://ip.fm 2> /dev/null \
-            | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1) \
-            || (wget -4 -qO- --tries=2 --timeout=5 https://ip.fm 2> /dev/null \
-                | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1)
-    )"
-    v6dq="$(
-        (curl -s6 -m5 --connect-timeout 5 -k https://ip.fm 2> /dev/null \
-            | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1) \
-            || (wget -6 -qO- --tries=2 --timeout=5 https://ip.fm 2> /dev/null \
-                | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1)
-    )"
+    local v4_tmp v6_tmp
+    v4_tmp="$(mktemp /tmp/_geo_v4.XXXXXX 2>/dev/null || echo "/tmp/_geo_v4")"
+    v6_tmp="$(mktemp /tmp/_geo_v6.XXXXXX 2>/dev/null || echo "/tmp/_geo_v6")"
+    {
+      curl -s4 -m3 --connect-timeout 3 -k https://ip.fm 2>/dev/null \
+        | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1 > "$v4_tmp"
+      [ ! -s "$v4_tmp" ] && wget -4 -qO- --tries=1 --timeout=3 https://ip.fm 2>/dev/null \
+        | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1 > "$v4_tmp"
+    } &
+    {
+      curl -s6 -m3 --connect-timeout 3 -k https://ip.fm 2>/dev/null \
+        | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1 > "$v6_tmp"
+      [ ! -s "$v6_tmp" ] && wget -6 -qO- --tries=1 --timeout=3 https://ip.fm 2>/dev/null \
+        | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1 > "$v6_tmp"
+    } &
+    wait
+    v4dq="$(cat "$v4_tmp" 2>/dev/null || true)"
+    v6dq="$(cat "$v6_tmp" 2>/dev/null || true)"
+    rm -f "$v4_tmp" "$v6_tmp"
 
     [ -z "$v4dq" ] && v4dq="未知"
     [ -z "$v6dq" ] && v6dq="未知"
@@ -3031,7 +3120,8 @@ cip() {
     if grep -q "hy2-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
         port_hy2=$(cat "$SINGBOX_FOLDER_PATH/port_hy2")
         hy_sni=$(cat "$SINGBOX_FOLDER_PATH/hy_sni")
-        hy2_link="hysteria2://$uuid@$server_ip:$port_hy2?security=tls&alpn=h3&insecure=1&allowInsecure=1&sni=${hy_sni}#${sxname}hy2-$hostname"
+        SHA256_hy2=$(openssl x509 -in "$SINGBOX_FOLDER_PATH/cert.pem" -outform DER 2>/dev/null | sha256sum | awk '{print $1}')
+        hy2_link="hysteria2://$uuid@$server_ip:$port_hy2/?sni=${hy_sni}&insecure=1&pinSHA256=${SHA256_hy2}&alpn=h3&obfs=none#${sxname}hy2-$hostname"
         yellow "💣【 Hysteria2 】(直连协议)"
         green "$hy2_link"
         append_jh "$hy2_link"
@@ -3177,10 +3267,10 @@ cleanup_nginx() {
 
 # Remove singbox folder
 cleandel() {
-    # Change to /root to avoid issues when deleting directories
+    local mode="${1:-del}"  # del（保留二进制）/ delall（全部删除）
     cd /root 2> /dev/null || cd "$HOME" 2> /dev/null || exit 1
 
-    yellow "开始卸载sing-box/cloudflared流程..."
+    debug_print yellow "开始卸载sing-box/cloudflared流程..."
 
     # 定义要清理的文件夹列表（兼容旧路径和新路径）
     local folders_to_clean=(
@@ -3208,15 +3298,7 @@ cleandel() {
     pkill -15 -f "$OLD_SINGBOX_FOLDER/sing-box" 2> /dev/null
     pkill -15 -f "$OLD_SINGBOX_FOLDER/cloudflared" 2> /dev/null
 
-    # 从配置文件中删除包含 'singbox' 的行
-    # sed -i '/.*singbox.*/d' ~/.bashrc
-    # sed -i '/.*export PATH="\$HOME\/bin:\$PATH".*/d' ~/.bashrc
-
-    # 立即应用 .bashrc 的修改
-    #. ~/.bashrc 2>/dev/null
-
     # 处理 crontab，兼容 Debian 和 Alpine
-    # Debian/Ubuntu 和 Alpine 都支持 crontab，但需要检查 crontab 是否存在
     crontab -l > /tmp/crontab.tmp 2> /dev/null || touch /tmp/crontab.tmp
     sed -i '/.*singbox.*/d' /tmp/crontab.tmp
     sed -i '/.*agsb.*/d' /tmp/crontab.tmp
@@ -3255,18 +3337,26 @@ cleandel() {
     fi
 
     # 清理 nginx
-    #  pkill -15 nginx >/dev/null 2>&1
-    #  rm -f "$(nginx_conf_path)" 2>/dev/null
-
-    yellow "开始卸载或者清理nginx流程..."
+    debug_print yellow "开始卸载或者清理nginx流程..."
     cleanup_nginx
 
-    # 清理文件夹（兼容两个路径）
-    yellow "开始删除文件夹..."
+    # 清理文件夹
     for folder in "${folders_to_clean[@]}"; do
         if [ -d "$folder" ]; then
-            yellow "正在删除：$folder"
-            rm -rf "$folder" 2> /dev/null && green "✅ 已删除：$folder" || red "❌ 删除失败：$folder"
+            if [ "$mode" = "delall" ]; then
+                debug_print yellow "正在删除（全部）：$folder"
+                rm -rf "$folder" 2> /dev/null && green "✅ 已删除：$folder" || red "❌ 删除失败：$folder"
+            else
+                debug_print yellow "正在清理配置（保留 sing-box/cloudflared 二进制）：$folder"
+                for item in "$folder"/*; do
+                    [ -e "$item" ] || continue
+                    case "$(basename "$item")" in
+                        sing-box|cloudflared) continue ;;
+                        *) rm -rf "$item" 2>/dev/null ;;
+                    esac
+                done
+                green "✅ 已清理配置：$folder（二进制已保留）"
+            fi
         fi
     done
 
@@ -3371,12 +3461,12 @@ install_step() {
         command -v netfilter-persistent > /dev/null 2>&1 && netfilter-persistent save > /dev/null 2>&1
         mkdir -p /etc/iptables 2> /dev/null
         command -v iptables-save > /dev/null 2>&1 && iptables-save > /etc/iptables/rules.v4 2> /dev/null
-        echo "iptables执行开放所有端口 (Debian/Ubuntu)"
+        debug_print echo "iptables执行开放所有端口 (Debian/Ubuntu)"
     elif [[ "$os_name" == *"Alpine"* ]]; then
         # Alpine没有netfilter-persistent，可以直接保存iptables规则
         mkdir -p /etc/iptables 2> /dev/null
         command -v iptables-save > /dev/null 2>&1 && iptables-save > /etc/iptables/rules.v4 2> /dev/null
-        echo "iptables执行开放所有端口 (Alpine)"
+        debug_print echo "iptables执行开放所有端口 (Alpine)"
     else
         echo "不支持此操作系统"
     fi
@@ -3469,22 +3559,29 @@ check_port_conflicts_or_exit() {
 
 main() {
 
-    check_port_conflicts_or_exit
+    # 命令转小写，支持大小写不敏感
+    local _cmd
+    _cmd="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+
+    # 端口冲突检查仅在安装/覆盖安装时进行（维护命令如 del/list/sub 不受端口参数影响）
+    if [ "$_cmd" = "ins" ] || [ "$_cmd" = "rep" ]; then
+        check_port_conflicts_or_exit
+    fi
 
     # 启动自定义端口
-    if [ "$1" = "autostart" ]; then
+    if [ "$_cmd" = "autostart" ]; then
         enable_autostart
         exit
     fi
 
     # 启动自定义端口
-    if [ "$1" = "autostart_off" ]; then
+    if [ "$_cmd" = "autostart_off" ]; then
         disable_autostart
         exit
     fi
 
     # 启动 nginx
-    if [ "$1" = "nginx_start" ]; then
+    if [ "$_cmd" = "nginx_start" ]; then
         nginx_start
         green "Nginx 已完成启动操作！"
         nginx_status
@@ -3492,7 +3589,7 @@ main() {
     fi
 
     # 停止 nginx
-    if [ "$1" = "nginx_stop" ]; then
+    if [ "$_cmd" = "nginx_stop" ]; then
         nginx_stop
         green "Nginx 已完成停止操作！"
         nginx_status
@@ -3500,7 +3597,7 @@ main() {
     fi
 
     # 重启 nginx
-    if [ "$1" = "nginx_restart" ]; then
+    if [ "$_cmd" = "nginx_restart" ]; then
         nginx_restart
         green "Nginx 已完成重启操作！"
         nginx_status
@@ -3508,35 +3605,41 @@ main() {
     fi
 
     # 查看 nginx 状态
-    if [ "$1" = "nginx_status" ]; then
+    if [ "$_cmd" = "nginx_status" ]; then
         nginx_status
         exit
     fi
 
     # 卸载服务
-    if [ "$1" = "del" ]; then
+    if [ "$_cmd" = "delall" ]; then
+        cleandel "delall"
+        echo "卸载完成（全部删除）"
+        showmode
+        exit
+    fi
+
+    if [ "$_cmd" = "del" ]; then
         cleandel
-        rm -rf "$SINGBOX_FOLDER_PATH"
-        echo "卸载完成"
+        echo "卸载完成（二进制已保留）"
         showmode
         exit
     fi
 
     # 查看可用的节点
-    if [ "$1" = "list" ]; then
+    if [ "$_cmd" = "list" ]; then
 
         cip "$2"
         exit
     fi
     # 更新sing-box内核
-    if [ "$1" = "ups" ]; then
+    if [ "$_cmd" = "ups" ]; then
         pkill -15 -f "$SINGBOX_FOLDER_PATH/sing-box" 2> /dev/null
 
-        upsingbox && sbrestart && echo "Sing-box内核更新完成" && sleep 2 && cip
+        update_singbox && sbrestart && echo "Sing-box内核更新完成" && sleep 2 && cip
         exit
     fi
     # 重启sing-box和cloudflared
-    if [ "$1" = "res" ]; then
+    if [ "$_cmd" = "res" ]; then
         sbrestart
         argorestart
         sleep 5 && echo "重启完成" && sleep 3 && cip
@@ -3544,7 +3647,7 @@ main() {
     fi
 
     # 生成/更新/查看订阅文件
-    if [ "$1" = "sub" ]; then
+    if [ "$_cmd" = "sub" ]; then
         # 生成/更新订阅文件 sub.txt（函数内部会打印 subscribe 状态 + 生成结果）
         update_subscription_file
 
@@ -3561,11 +3664,10 @@ main() {
     fi
 
     # 覆盖式安装
-    if [ "$1" = "rep" ]; then
+    if [ "$_cmd" = "rep" ]; then
         green "开始覆盖式安装流程..."
-        green "1、即将开始清理操作..."
+        green "1、即将开始清理操作（保留二进制）..."
         cleandel
-        rm -rf "$SINGBOX_FOLDER_PATH"/{sb.json,argo_domain,sbargotoken,argo.log,argoport,name,short_id,cdn_host,hy_sni,vl_sni,tu_sni,any_sni,vl_sni_pt,cdn_pt}
         green "1.1、清理操作完成..."
         sleep 2
 
@@ -3576,7 +3678,7 @@ main() {
     fi
 
     # 只在明确 ins 时才安装；无参数只显示菜单
-    if [ "$1" = "ins" ]; then
+    if [ "$_cmd" = "ins" ]; then
         yellow "开始安装流程..."
         install_step
         exit
@@ -3587,6 +3689,13 @@ main() {
         showmode
         exit
     fi
+
+    # 无效命令提示
+    echo
+    red "❌ 无效命令：$1"
+    yellow "可用命令：ins / rep / del / delall / list / sub / res / ups / autostart / autostart_off / nginx_start / nginx_stop / nginx_restart / nginx_status"
+    showmode
+    exit 1
 
 }
 
