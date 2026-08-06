@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.6.39(2026-08-06)"
+VERSION="1.6.46(2026-08-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -1049,6 +1049,43 @@ case "${1:-}" in
         echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
         ;;
 esac
+
+# ================== v4/v6 地区全局预取 ==================
+# 探测入口：安装/覆盖安装/查看节点等需要展示 IP 地区的路径才会触发，见 geo_prefetch 的调用点。
+# 启动后在后台预取 v4/v6 出口 IP 地区，各显示点直接读取，避免现场等待（幂等，只会启动一次）。
+GEO_V4_TMP="/tmp/_geo_v4.$$"
+GEO_V6_TMP="/tmp/_geo_v6.$$"
+GEO_V4_DONE="/tmp/_geo_v4.$$.done"
+GEO_V6_DONE="/tmp/_geo_v6.$$.done"
+GEO_STARTED="/tmp/_geo_started.$$"
+geo_prefetch() {
+    [ -e "$GEO_STARTED" ] && return 0
+    touch "$GEO_STARTED"
+    rm -f "$GEO_V4_TMP" "$GEO_V6_TMP" "$GEO_V4_DONE" "$GEO_V6_DONE"
+    {
+        curl -s4 -m8 --connect-timeout 3 -k https://ip.fm 2>/dev/null \
+            | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1 > "$GEO_V4_TMP"
+        [ ! -s "$GEO_V4_TMP" ] && wget -4 -qO- --tries=1 --timeout=8 https://ip.fm 2>/dev/null \
+            | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1 > "$GEO_V4_TMP"
+        touch "$GEO_V4_DONE"
+    } &
+    {
+        curl -s6 -m8 --connect-timeout 3 -k https://ip.fm 2>/dev/null \
+            | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1 > "$GEO_V6_TMP"
+        [ ! -s "$GEO_V6_TMP" ] && wget -6 -qO- --tries=1 --timeout=8 https://ip.fm 2>/dev/null \
+            | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1 > "$GEO_V6_TMP"
+        touch "$GEO_V6_DONE"
+    } &
+}
+# 读取预取的地区：$1=4 或 6，等待后台完成并返回地区字符串（失败返回空）
+geo_get() {
+    local _key="$1" _t=0 _f _d
+    if [ "$_key" = "4" ]; then _f="$GEO_V4_TMP"; _d="$GEO_V4_DONE"; else _f="$GEO_V6_TMP"; _d="$GEO_V6_DONE"; fi
+    while [ "$_t" -lt 80 ] && [ ! -e "$_d" ]; do
+        sleep 0.1; _t=$((_t+1))
+    done
+    cat "$_f" 2>/dev/null
+}
 
 hostname=$(uname -a | awk '{print $2}')
 op=$(cat /etc/redhat-release 2> /dev/null || cat /etc/os-release 2> /dev/null | grep -i pretty_name | cut -d \" -f2)
@@ -2567,28 +2604,10 @@ EOF
     v4_local="$(strip_ip_brackets_all "$v4_local")"
     v6_local="$(strip_ip_brackets_all "$v6_local")"
 
-    # B) 获取地区（v4/v6 并发探测，缩短超时）
+    # B) 读取地区（全局预取缓存，启动时已后台探测）
     local v4dq="" v6dq=""
-    local v4_tmp v6_tmp
-    v4_tmp="$(mktemp /tmp/_geo_v4.XXXXXX 2>/dev/null || echo "/tmp/_geo_v4")"
-    v6_tmp="$(mktemp /tmp/_geo_v6.XXXXXX 2>/dev/null || echo "/tmp/_geo_v6")"
-    {
-      curl -s4 -m3 --connect-timeout 3 -k https://ip.fm 2>/dev/null \
-        | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1 > "$v4_tmp"
-      [ ! -s "$v4_tmp" ] && wget -4 -qO- --tries=1 --timeout=3 https://ip.fm 2>/dev/null \
-        | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1 > "$v4_tmp"
-    } &
-    {
-      curl -s6 -m3 --connect-timeout 3 -k https://ip.fm 2>/dev/null \
-        | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1 > "$v6_tmp"
-      [ ! -s "$v6_tmp" ] && wget -6 -qO- --tries=1 --timeout=3 https://ip.fm 2>/dev/null \
-        | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1 > "$v6_tmp"
-    } &
-    wait
-    v4dq="$(cat "$v4_tmp" 2>/dev/null || true)"
-    v6dq="$(cat "$v6_tmp" 2>/dev/null || true)"
-    rm -f "$v4_tmp" "$v6_tmp"
-
+    v4dq="$(geo_get 4)"
+    v6dq="$(geo_get 6)"
     [ -z "$v4dq" ] && v4dq="未知"
     [ -z "$v6dq" ] && v6dq="未知"
 
@@ -3130,6 +3149,7 @@ strip_ip_brackets() {
 # show nodes
 cip() {
     echo
+    geo_prefetch
     # 显示 Singbox 状态（与主菜单顶部一致）
     menu_status_block
     echo
@@ -3711,18 +3731,28 @@ menu_reload_proto_flags() {
 
 # 读取端口；空则返回空（表示随机生成）
 menu_ask_port() {
-    local _proto="$1" _in="" _rp=""
-    reading "  请输入 ${_proto} 监听端口 (回车=随机): " _in
+    local _proto="$1" _def="$2" _in="" _rp=""
+    reading "  请输入 ${_proto} 监听端口 (回车=${_def:-随机}): " _in
     if [ -z "$_in" ]; then
-        _rp="$(rand_port)"
-        yellow "  ↳ ${_proto} 端口: ${_rp} (随机)" >&2
-        echo "$_rp"
+        if [ -n "$_def" ]; then
+            yellow "  ↳ ${_proto} 端口: ${_def} (默认)" >&2
+            echo "$_def"
+        else
+            _rp="$(rand_port)"
+            yellow "  ↳ ${_proto} 端口: ${_rp} (随机)" >&2
+            echo "$_rp"
+        fi
         return 0
     fi
     if [[ ! "$_in" =~ ^[0-9]+$ ]] || [ "$_in" -lt 1 ] || [ "$_in" -gt 65535 ]; then
-        _rp="$(rand_port)"
-        yellow "  ❌ 端口无效 (1-65535)，已改随机端口: ${_rp}" >&2
-        echo "$_rp"
+        if [ -n "$_def" ]; then
+            yellow "  ❌ 端口无效 (1-65535)，已用默认端口: ${_def}" >&2
+            echo "$_def"
+        else
+            _rp="$(rand_port)"
+            yellow "  ❌ 端口无效 (1-65535)，已改随机端口: ${_rp}" >&2
+            echo "$_rp"
+        fi
         return 0
     fi
     yellow "  ↳ ${_proto} 端口: ${_in}" >&2
@@ -3730,6 +3760,24 @@ menu_ask_port() {
 }
 
 # 交互收集安装参数并设置环境变量
+# 查询指定 IP 的地区（ip-api.com，免费版仅 http）
+query_ip_region() {
+    local _ip="$1" _json _region _rn _ci
+    _json="$(curl -s -m5 "http://ip-api.com/json/${_ip}?fields=status,country,regionName,city" 2>/dev/null)"
+    case "$_json" in
+        *'"status":"success"'*)
+            _region="$(printf '%s' "$_json" | sed -nE 's/.*"country":"([^"]*)".*/\1/p')"
+            [ -z "$_region" ] && return 1
+            _rn="$(printf '%s' "$_json" | sed -nE 's/.*"regionName":"([^"]*)".*/\1/p')"
+            _ci="$(printf '%s' "$_json" | sed -nE 's/.*"city":"([^"]*)".*/\1/p')"
+            [ -n "$_rn" ] && [ "$_rn" != "$_region" ] && _region="$_region $_rn"
+            [ -n "$_ci" ] && [ "$_ci" != "$_rn" ] && _region="$_region $_ci"
+            echo "$_region"
+            ;;
+    esac
+    return 0
+}
+
 menu_collect_install() {
     local _ans _ch _sel _has_all _has_vmess _has_trojan
 
@@ -3752,6 +3800,49 @@ menu_collect_install() {
         green "  ↳ IP偏好: 仅IPv${_ans}"
     else
         green "  ↳ IP偏好: 自动 (默认)"
+    fi
+
+    # 服务器 IP 确认：检测并回显（地区为全局预取缓存），若与预期不符可输入 out_ip
+    echo ""
+    purple "===== 服务器 IP 确认 ====="
+    local _ipres _ipv4 _ipv6 _use_ip _use_label _v4dq _v6dq
+    _ipres="$(check_ip_connectivity "${v46url:-https://icanhazip.com}")"
+    _ipv4="$(printf '%s' "${_ipres%%|*}" | tr -d '\r\n')"
+    _ipv6="$(printf '%s' "${_ipres##*|}" | tr -d '\r\n')"
+    _v4dq="$(geo_get 4)"
+    _v6dq="$(geo_get 6)"
+    [ -z "$_v4dq" ] && _v4dq="未知"
+    [ -z "$_v6dq" ] && _v6dq="未知"
+    if [ "$ippz" = "6" ]; then
+        green "  ↳ 检测到 IPv4: ${_ipv4:-无} (${_v4dq}) / IPv6: ${_ipv6:-无} (${_v6dq})"
+        _use_ip="$_ipv6"; _use_label="ipv6"
+    elif [ "$ippz" = "4" ]; then
+        green "  ↳ 检测到 IPv4: ${_ipv4:-无} (${_v4dq}) / IPv6: ${_ipv6:-无} (${_v6dq})"
+        _use_ip="$_ipv4"; _use_label="ipv4"
+    else
+        green "  ↳ 检测到 IPv4: ${_ipv4:-无} (${_v4dq}) / IPv6: ${_ipv6:-无} (${_v6dq})"
+        if [ -n "$_ipv4" ]; then
+            _use_ip="$_ipv4"; _use_label="ipv4"
+        elif [ -n "$_ipv6" ]; then
+            _use_ip="$_ipv6"; _use_label="ipv6"
+        else
+            _use_ip=""; _use_label=""
+        fi
+    fi
+    if [ -n "$_use_ip" ]; then
+        green "  ↳ 你将使用 ${_use_label}(${_use_ip}) 作为出口 IP"
+        reading "  如果你要用其他 IP 作为出口 IP，请输入；回车=使用以上 IP: " _ans
+    else
+        yellow "  ↳ 未检测到可用出口 IP"
+        reading "  请手动输入出口 IP (回车=稍后自动检测): " _ans
+    fi
+    if [ -n "$_ans" ]; then
+        export out_ip="$_ans"
+        local _odq
+        _odq="$(query_ip_region "$_ans" 2>/dev/null)"
+        green "  ↳ 使用自定义 IP (out_ip): ${_ans} (${_odq:-未知})"
+    else
+        green "  ↳ 使用检测到的 IP"
     fi
 
     reading "UUID (回车自动生成): " _ans
@@ -3841,7 +3932,7 @@ menu_collect_install() {
                 anyp) [ -n "$anyp" ] && export anypt="$(menu_ask_port "AnyTLS")" ;;
             esac
         done
-        [ -n "$trp$vmp" ] && export argo_pt="$(menu_ask_port "Argo")"
+        [ -n "$trp$vmp" ] && export argo_pt="$(menu_ask_port "Argo" 8001)"
     else
         green "  ↳ 端口: 全部随机生成 (默认)"
         [ -n "$trp" ] && { trpt="$(rand_port)"; export trpt; green "  ↳ Trojan-WS (Argo) 端口: ${trpt} (随机)"; }
@@ -3850,7 +3941,7 @@ menu_collect_install() {
         [ -n "$hyp" ] && { hypt="$(rand_port)"; export hypt; green "  ↳ Hysteria2 端口: ${hypt} (随机)"; }
         [ -n "$tup" ] && { tupt="$(rand_port)"; export tupt; green "  ↳ TUIC 端口: ${tupt} (随机)"; }
         [ -n "$anyp" ] && { anypt="$(rand_port)"; export anypt; green "  ↳ AnyTLS 端口: ${anypt} (随机)"; }
-        [ -n "$trp$vmp" ] && { argo_pt="$(rand_port)"; export argo_pt; green "  ↳ Argo 端口: ${argo_pt} (随机)"; }
+        [ -n "$trp$vmp" ] && { argo_pt="${argo_pt:-8001}"; export argo_pt; green "  ↳ Argo 端口: ${argo_pt} (默认)"; }
     fi
 
     menu_reload_proto_flags
@@ -3870,17 +3961,17 @@ menu_collect_install() {
         purple "选择 Argo 隧道类型:"
         green "  1) 临时隧道 (trycloudflare 免费域名)"
         green "  2) 固定隧道 (需要自己的域名 + Token/JSON)"
-        reading "输入编号 (回车默认=1): " _ans
-        if [ "$_ans" = "2" ]; then
-            green "  ↳ Argo 隧道: 固定隧道"
+        reading "输入编号 (回车默认=2): " _ans
+        if [ "$_ans" = "1" ]; then
+            green "  ↳ Argo 隧道: 临时隧道"
+        else
+            green "  ↳ Argo 隧道: 固定隧道 (默认)"
             reading "  请输入 Argo 域名: " _ans
             [ -n "$_ans" ] && export ARGO_DOMAIN="$_ans"
             green "  ↳ Argo 域名: ${ARGO_DOMAIN:-未设置}"
             reading "  请输入 Argo Token 或粘贴 JSON 凭据: " _ans
             [ -n "$_ans" ] && export ARGO_AUTH="$_ans"
             green "  ↳ Argo Token/JSON: 已设置"
-        else
-            green "  ↳ Argo 隧道: 临时隧道 (默认)"
         fi
     fi
 
@@ -4216,6 +4307,7 @@ interactive_uninstall_menu() {
 
 interactive_main() {
     local _ch
+    geo_prefetch
     while true; do
         clear
         showmode
@@ -4344,12 +4436,13 @@ main() {
 
     # 查看可用的节点
     if [ "$_cmd" = "list" ]; then
-
+        geo_prefetch
         cip "$2"
         exit
     fi
     # 更新sing-box内核
     if [ "$_cmd" = "ups" ]; then
+        geo_prefetch
         pkill -15 -f "$SINGBOX_FOLDER_PATH/sing-box" 2> /dev/null
 
         update_singbox && sbrestart && echo "Sing-box内核更新完成" && sleep 2 && cip
@@ -4357,6 +4450,7 @@ main() {
     fi
     # 重启sing-box和cloudflared
     if [ "$_cmd" = "res" ]; then
+        geo_prefetch
         sbrestart
         argorestart
         sleep 5 && echo "重启完成" && sleep 3 && cip
@@ -4382,6 +4476,7 @@ main() {
 
     # 覆盖式安装
     if [ "$_cmd" = "rep" ]; then
+        geo_prefetch
         green "开始覆盖式安装流程..."
         green "1、即将开始清理操作（保留二进制）..."
         cleandel
@@ -4396,6 +4491,7 @@ main() {
 
     # 只在明确 ins 时才安装；无参数只显示菜单
     if [ "$_cmd" = "ins" ]; then
+        geo_prefetch
         yellow "开始安装流程..."
         install_step
         exit
