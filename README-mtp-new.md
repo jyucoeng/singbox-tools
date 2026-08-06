@@ -15,13 +15,16 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 | 1 | 安装 Go 版 (mtg) |
 | 2 | 安装 Telemt 高性能版（多用户/配额/到期/限速） |
 | 3 | 查看连接信息 |
-| 4 | 修改配置（端口/域名/监听模式） |
+| 4 | 修改配置（端口/域名；Go 版含监听模式） |
 | 5 | 删除配置 |
 | 6 | Telemt 多用户管理 |
-| 7 | 查看运行状态 |
-| 8 | 查看日志 |
-| 9/10/11 | 启动/停止/重启服务 |
-| 12 | 卸载全部并清理 |
+| 7 | TG 推送配置 |
+| 8 | 流量统计 |
+| 9 | TG 通知细分 |
+| 10 | 查看运行状态 |
+| 11 | 查看日志 |
+| 12/13/14 | 启动/停止/重启服务 |
+| 15 | 卸载全部并清理 |
 
 ### 2、无交互安装（环境变量方式）
 
@@ -89,7 +92,7 @@ TELEMT_EXPIRE='2026-12-31 23:59:59' TELEMT_SPEED_UP=1.5 TELEMT_SPEED_DOWN=5.0 \
 bash <(curl -Ls $URL) rep
 ```
 
-> 安装完成后，脚本会直接输出 `tg://proxy?...` 分享链接；后续也可用 `list` / `adduser` 命令或交互菜单的「Telemt 多用户管理」查看/添加更多用户。
+> 安装完成后，脚本会直接输出 `tg://proxy?...` 分享链接；后续也可用 `users` / `adduser` 命令或交互菜单 [6]「Telemt 多用户管理」查看/添加更多用户。
 
 ### 3、管理命令
 
@@ -140,7 +143,8 @@ bash <(curl -Ls .../mtp-new.sh) usage_total       # 总流量使用统计（历�
 **⑥ Telegram 推送**（统计日报）
 
 ```
-bash <(curl -Ls .../mtp-new.sh) tg_config     # 配置 Telegram 统计推送（交互，或 TELEMT_TG_TOKEN/TELEMT_TG_CHAT 环境变量）
+bash <(curl -Ls .../mtp-new.sh) tg_config     # 配置 Telegram 统计推送（非交互，需 TELEMT_TG_TOKEN/TELEMT_TG_CHAT 或沿用已有配置；交互走主菜单 [7]）
+bash <(curl -Ls .../mtp-new.sh) tg_userconf   # 推送用户配置清单到 TG（不带参数=全部用户，或指定用户名 / TELEMT_USER）
 bash <(curl -Ls .../mtp-new.sh) tg_report     # 立即手动发送本月统计到 Telegram
 bash <(curl -Ls .../mtp-new.sh) tg_autopush   # 定时判断命令（Cron 每小时调用，北京时间到点才推送）
 ```
@@ -200,12 +204,11 @@ TELEMT_USER=vip01 TELEMT_QUOTA=0 TELEMT_EXPIRE=0 TELEMT_SPEED_UP=0 TELEMT_DEDICA
 1. 查看所有用户及专属分享链接    2. 查询指定用户配置 (模糊匹配)
 3. 添加新用户                    4. 踢出(删除)指定用户
 5. 管理配额/到期/限速/密钥/端口   6. 自动重置配置 (Cron 月度轮转)
-7. 本月流量使用统计              8. Telegram 推送配置
-9. 立即发送本月统计到 Telegram   10. 总流量使用统计 (历史累计)
+7. TG 分享链接反查用户
 0. 返回主菜单
 ```
 
-> 「查询指定用户」支持输入关键词模糊匹配，多结果时列出序号供选择；「管理配额/到期/限速/密钥/端口」内可改配额、到期、上下行限速、通信密钥与专属端口；「8」配置 Telegram 日报推送，「9」立即发送一次，「10」查看历史累计总流量排名。
+> 「查询指定用户」支持输入关键词模糊匹配，多结果时列出序号供选择；「管理配额/到期/限速/密钥/端口」内可改配额、到期、上下行限速、通信密钥与专属端口；「7」可通过 TG 分享链接反查用户。流量统计与 TG 推送已移至主菜单 [8]「流量统计」（本月月报 / 用户清单 / 用户详情 / 总流量排名）与 [9]「TG 通知细分」（消息发送开关、立即推送清单/详情/月报/全部）。
 
 ### 4、流量统计与耗尽时间记录
 
@@ -217,7 +220,7 @@ TELEMT_USER=vip01 TELEMT_QUOTA=0 TELEMT_EXPIRE=0 TELEMT_SPEED_UP=0 TELEMT_DEDICA
 | `/var/log/telemt_traffic.log` | 按用户维度追加的流水日志，行尾为时间戳（含 `用尽流量` 事件与每小时用量快照） |
 | `/opt/mtproxy/exhausteddata/telemt_total.json` | 历史累计总流量缓存（每月每用户最大快照 + 日志偏移，增量更新） |
 
-运行 `mtp usage` 或交互菜单「本月流量使用统计」可查看：
+运行 `mtp usage` 或主菜单 [8]「流量统计」→「查看本月统计月报」可查看：
 
 ```
 ==================================================
@@ -240,7 +243,7 @@ alice | 已用 2.00GB / 限额 2.00GB | 2026-08-03 10:00:12
 
 **总流量使用统计（历史累计）**
 
-运行 `mtp usage_total` 或交互菜单「10」可查看跨月累计用量排名：
+运行 `mtp usage_total` 或主菜单 [8]「流量统计」→「查看总流量统计 (历史累计)」可查看跨月累计用量排名：
 
 ```
 ==================================================
@@ -265,8 +268,8 @@ alice | 已用 2.00GB / 限额 2.00GB | 2026-08-03 10:00:12
 
 **Telegram 日报推送**
 
-- 配置：`mtp tg_config`（交互式）或环境变量 `TELEMT_TG_TOKEN` / `TELEMT_TG_CHAT`（`tg_config` 非交互 / 安装时自动启用）。
-- **可随时更换**：重复运行 `tg_config` 可修改 Token / Chat ID / 推送时间，直接回车保留当前值，支持只改其中一个（也支持 `TELEMT_TG_TOKEN=` 或 `TELEMT_TG_CHAT=` 单独传入）。
+- 配置：主菜单 [7]「TG 推送配置」（交互式）或环境变量 `TELEMT_TG_TOKEN` / `TELEMT_TG_CHAT`（`tg_config` 非交互 / 安装时自动启用）。
+- **可随时更换**：交互菜单可修改 Token / Chat ID / 推送时间，直接回车保留当前值；非交互 `tg_config` 支持只传 `TELEMT_TG_TOKEN=` 或 `TELEMT_TG_CHAT=` 之一（未提供项沿用已有配置）。
 - 推送时间：默认**每天北京时间 09:00**（由全局变量 `TG_PUSH_TIME` 控制，`TELEMT_TG_TIME` 可覆盖），通过 UTC+8 换算判断，不依赖服务器时区。
 - 手动发送：`mtp tg_report` 随时推送一次当前统计。
 - **未配置 `TELEMT_TG_TOKEN` / `TELEMT_TG_CHAT` 时，不会发送任何统计**（定时任务静默跳过）。
@@ -286,8 +289,8 @@ alice | 已用 2.00GB / 限额 2.00GB | 2026-08-03 10:00:12
 | `TELEMT_SPEED_UP` | 初始用户上行限速（MB/s，支持小数） | 不限 | `1.5` |
 | `TELEMT_SPEED_DOWN` | 初始用户下行限速（MB/s，不填默认同上行） | 同上行 | `5.0` |
 | `TELEMT_RESET_DAY` | 配额月度自动重置日（仅在设置了 `TELEMT_QUOTA` 时生效） | 不启用 | `1` |
-| `TELEMT_SECRET` | 指定用户通信密钥（必须为 32 位 hex，仅 `adduser` 使用） | 自动生成 | `aabbccdd00112233aabbccdd00112233` |
-| `TELEMT_DEDICATED_PORT` | 为用户分配专属独立端口（仅 `adduser` 使用） | 共享端口 | `20443` |
+| `TELEMT_SECRET` | 指定用户通信密钥（必须为 32 位 hex，`adduser`/`moduser` 使用） | 自动生成 | `aabbccdd00112233aabbccdd00112233` |
+| `TELEMT_DEDICATED_PORT` | 为用户分配专属独立端口（`adduser`/`moduser` 使用） | 共享端口 | `20443` |
 | `TELEMT_TG_TOKEN` | Telegram Bot Token（安装或 `tg_config` 时启用推送） | 不推送 | `123456:ABC...` |
 | `TELEMT_TG_CHAT` | 接收统计消息的 Telegram Chat ID | 不推送 | `123456789` |
 | `TELEMT_TG_TIME` | 日报推送时间（北京时间 HH:MM，覆盖全局变量 `TG_PUSH_TIME`） | `09:00` | `08:30` |
@@ -300,7 +303,7 @@ alice | 已用 2.00GB / 限额 2.00GB | 2026-08-03 10:00:12
 ### 6、注意事项
 
 - 需要 **root** 权限运行
-- 安装流程：优先使用本地同目录下的预编译二进制（`mtg-go-<arch>` / `telemt-linux-<arch>` / `telemt`），未找到则从 [0xdabiaoge/MTProxy](https://github.com/0xdabiaoge/MTProxy) 下载
+- 安装流程：优先使用本地同目录下的预编译二进制（`mtg-go-<arch>` / `telemt-linux-<arch>` / `telemt`），未找到则从本项目 [singbox-tools](https://github.com/jyucoeng/singbox-tools) 的 `Go-Rust` Release 下载（二进制镜像自上游 [0xdabiaoge/MTProxy](https://github.com/0xdabiaoge/MTProxy)）
 - 支持系统：Debian/Ubuntu（systemd）、CentOS/RHEL（systemd）、Alpine（OpenRC）
 - Telemt 多用户功能：专属端口、流量配额、到期日、独立限速、月度自动重置（Cron）
 - 流量统计：每小时自动快照 + 本月用量报表 + 各用户流量耗尽时间记录

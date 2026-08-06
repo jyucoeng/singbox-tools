@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.2.53(2026-08-02)"
+SCRIPT_VERSION="2.0.1(2026-08-06)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
