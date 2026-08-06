@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.6.36(2026-08-06)"
+VERSION="1.6.38(2026-08-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -3774,7 +3774,16 @@ menu_collect_install() {
     reading "输入选项 (回车默认=全部直连协议 b c d e): " _ch
     [ -z "$_ch" ] && _ch="b c d e"
     _ch="$(printf '%s' "$_ch" | tr ',' ' ' | tr '[:upper:]' '[:lower:]')"
-    green "  ↳ 直连协议: ${_ch}"
+    local _names=""
+    for _sel in $_ch; do
+        case "$_sel" in
+            b) _names="$_names,VLESS" ;;
+            c) _names="$_names,Hysteria2" ;;
+            d) _names="$_names,TUIC" ;;
+            e) _names="$_names,AnyTLS" ;;
+        esac
+    done
+    green "  ↳ 直连协议: ${_ch} (${_names#,})"
 
     # Argo 隧道协议：二选一或二选零
     echo ""
@@ -3991,8 +4000,8 @@ interactive_install() {
             continue
         fi
         menu_show_selection
-        reading "确认开始安装? [y/N]: " _ans
-        if [ "$_ans" = "y" ] || [ "$_ans" = "Y" ]; then
+        reading "设置完毕，即将生成配置并部署服务，确认继续? [Y/n]: " _ans
+        if [ -z "$_ans" ] || [ "$_ans" = "y" ] || [ "$_ans" = "Y" ]; then
             break
         else
             red "已取消安装。"
@@ -4020,8 +4029,8 @@ interactive_reinstall() {
             continue
         fi
         menu_show_selection
-        reading "确认开始覆盖式安装? [y/N]: " _ans
-        if [ "$_ans" = "y" ] || [ "$_ans" = "Y" ]; then
+        reading "设置完毕，即将生成配置并部署服务，确认继续? [Y/n]: " _ans
+        if [ -z "$_ans" ] || [ "$_ans" = "y" ] || [ "$_ans" = "Y" ]; then
             break
         else
             red "已取消。"
