@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.6.57(2026-08-06)"
+VERSION="1.6.59(2026-08-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -3201,6 +3201,10 @@ strip_ip_brackets() {
 cip() {
     echo
     geo_prefetch
+    if ! is_installed_sb; then
+        yellow "  ⚠️  尚未安装节点，请先安装节点"
+        return
+    fi
     # 显示 Singbox 状态（与主菜单顶部一致）
     menu_status_block
     echo
