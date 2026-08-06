@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.6.51(2026-08-06)"
+VERSION="1.6.52(2026-08-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -3885,7 +3885,7 @@ menu_collect_install() {
     fi
     if [ -n "$_use_ip" ]; then
         green "  ↳ 你将使用 ${_use_label}(${_use_ip}) 作为出口 IP"
-        reading "  如果你要用其他 IP 作为出口 IP，请输入；回车=使用以上 IP: " _ans
+        reading "  请留空回车直接使用以上 IP；如需特殊 IP 作为出口，请输入 IP: " _ans
     else
         yellow "  ↳ 未检测到可用出口 IP"
         reading "  请手动输入出口 IP (回车=稍后自动检测): " _ans
