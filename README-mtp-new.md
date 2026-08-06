@@ -140,6 +140,8 @@ bash <(curl -Ls .../mtp-new.sh) traffic_snapshot  # 立即记录一次流量快�
 bash <(curl -Ls .../mtp-new.sh) usage_total       # 总流量使用统计（历史累计，按已用从高到低排序）
 ```
 
+> 别名：`usage` 亦可写作 `traffic` / `stats`，`usage_total` 亦可写作 `traffic_total` / `total`，行为完全一致。
+
 **⑥ Telegram 推送**（统计日报）
 
 ```
@@ -149,7 +151,7 @@ bash <(curl -Ls .../mtp-new.sh) tg_report     # 立即手动发送本月统计�
 bash <(curl -Ls .../mtp-new.sh) tg_autopush   # 定时判断命令（Cron 每小时调用，北京时间到点才推送）
 ```
 
-> **实现说明**：流量统计 / Telegram 推送 / 用户用量展示（`usage`、`usage_total`、`traffic_snapshot`、`tg_*`、`users`、`getuser`）由内嵌的 Python 模块实现（安装时写入 `/opt/mtproxy/mtp_stats.py`，每次调用自动同步）。需要 **python3**，`ins`/`rep` 安装时已自动安装（Alpine 为 `apk add python3`）；所有命令入口与 Cron 行为保持不变。
+> **实现说明**：流量统计 / Telegram 推送 / 用户用量展示（`usage`、`usage_total`、`traffic_snapshot`、`tg_*`、`users`、`getuser`）由内嵌的 Python 模块实现（每次调用自动写入并同步 `/opt/mtproxy/mtp_stats.py`）。需要 **python3**，`ins`/`rep` 安装时已自动安装（Alpine 为 `apk add python3`）；所有命令入口与 Cron 行为保持不变。
 
 **非交互添加用户示例：**
 
@@ -165,7 +167,7 @@ TELEMT_USER=vip01 TELEMT_DEDICATED_PORT=20443 TELEMT_QUOTA=50 TELEMT_EXPIRE="202
   TELEMT_SPEED_UP=1.5 TELEMT_SPEED_DOWN=5.0 bash mtp-new.sh adduser
 ```
 
-> 添加成功会自动重启 Telemt 服务热生效，并在终端回显该用户通信密钥（如未自定义 `TELEMT_SECRET`）。
+> 添加成功会自动重启 Telemt 服务热生效，并在终端回显该用户通信密钥。
 
 **非交互修改用户示例（`moduser`，以 `TELEMT_USER` 指定目标，提供哪项改哪项）：**
 
