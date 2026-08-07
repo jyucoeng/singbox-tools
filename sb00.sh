@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.4.15(2026-08-07)"
+VERSION="1.4.16(2026-08-07)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -3332,6 +3332,31 @@ cip() {
     # 显示本机 v4/v6 + 地区，并在出口 IP 变更时提示
     show_local_ip_info_with_out_ip_hint
 
+    regenerate_links_and_sub "$1"
+
+    echo
+    yellow "📌 节点订阅地址："
+    if ! is_true "$(get_subscribe_flag)"; then
+        purple "⛔ 未开启订阅"
+    else
+        green "$(show_sub_url)"
+    fi
+
+    echo
+    yellow "聚合节点: cat $SINGBOX_FOLDER_PATH/jh.txt"
+    yellow "========================================================="
+    showmode
+
+}
+
+# 根据当前配置文件重新生成 jh.txt 并刷新订阅（SNI/端口/Argo 等变更后调用）
+regenerate_links_and_sub() {
+    local _cip_arg="${1:-}"
+    local uuid server_ip sxname port_hy2 hy_sni SHA256_hy2 port_tu tu_sni password
+    local port_vlr public_key short_id vl_sni port_any any_sni
+    local argodomain cdn_host cdn_pt vlvm vmatls_link1 tratls_link1 sbtk
+    local port_socks5 socks5_username socks5_password socks5_user_enc socks5_pass_enc socks5_link
+
     rm -rf "$SINGBOX_FOLDER_PATH/jh.txt"
     uuid=$(cat "$SINGBOX_FOLDER_PATH/uuid")
     server_ip=$(cat "$SINGBOX_FOLDER_PATH/server_ip" 2> /dev/null)
@@ -3371,9 +3396,7 @@ cip() {
         short_id=$(cat "$SINGBOX_FOLDER_PATH/short_id")
         vl_sni=$(cat "$SINGBOX_FOLDER_PATH/vl_sni")
 
-        debug_log "【调试】cip函数中的short_id,值为:$short_id"
-
-        # vless_link="vless://${uuid}@${server_ip}:${port_vlr}?encryption=none&security=reality&sni=www.yahoo.com&fp=chrome&flow=xtls-rprx-vision&publicKey=${public_key}&shortId=${short_id}#${sxname}vless-reality-$hostname"
+        debug_log "【调试】regenerate_links_and_sub函数中的short_id,值为:$short_id"
 
         vless_link="vless://${uuid}@${server_ip}:${port_vlr}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${vl_sni}&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#${sxname}vless-reality-$hostname"
         yellow "💣【 VLESS-Reality-Vision 】(直连协议)"
@@ -3382,7 +3405,7 @@ cip() {
         echo
 
         # 查看节点时提示用户保存私钥（方便下次保持节点一致）,一般这里的$1值为"key"
-        print_reality_key "$1"
+        print_reality_key "$_cip_arg"
     fi
     # AnyTLS protocol output
     if grep -q "anytls-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
@@ -3395,8 +3418,6 @@ cip() {
         append_jh "$anytls_link"
         echo
     fi
-
-    #argodomain=$(cat "$SINGBOX_FOLDER_PATH/argo_domain" 2>/dev/null); [ -z "$argodomain" ] && argodomain=$(grep -a trycloudflare.com "$SINGBOX_FOLDER_PATH/argo.log" 2>/dev/null | awk 'NR==2{print}' | awk -F// '{print $2}' | awk '{print $1}')
 
     argodomain=$(cat "$SINGBOX_FOLDER_PATH/argo_domain" 2> /dev/null)
 
@@ -3458,19 +3479,12 @@ cip() {
     fi
 
     update_subscription_file
-    echo
-    yellow "📌 节点订阅地址："
-    if ! is_true "$(get_subscribe_flag)"; then
-        purple "⛔ 未开启订阅"
-    else
-        green "$(show_sub_url)"
-    fi
+}
 
-    echo
-    yellow "聚合节点: cat $SINGBOX_FOLDER_PATH/jh.txt"
-    yellow "========================================================="
-    showmode
-
+# SNI/端口等配置修改后统一调用：先刷新订阅，最后重启 sing-box 使新配置生效
+refresh_sb_and_sub() {
+    regenerate_links_and_sub
+    sbrestart
 }
 
 cleanup_nginx() {
@@ -4392,7 +4406,7 @@ interactive_sub_menu() {
         reading "请输入选择: " _ch
         case "$_ch" in
             0) return ;;
-            1) update_subscription_file; menu_pause ;;
+            1) regenerate_links_and_sub; menu_pause ;;
             *) yellow "无效选项"; sleep 1 ;;
         esac
     done
@@ -4501,8 +4515,7 @@ edit_ports_menu() {
 
         update_inbound_port "$_tag" "$_port"
         [ -n "$_need_nginx" ] && regen_nginx_and_restart
-        sbrestart
-        update_subscription_file
+        refresh_sb_and_sub
         green "✅ ${_desc} 端口修改操作已完成！新端口: ${_port}"
         menu_pause
     done
@@ -4583,7 +4596,7 @@ edit_snis_menu() {
                 reading "请输入新的 CDN 优选域名 (留空=取消): " _val
                 [ -z "$_val" ] && { yellow "已取消"; menu_pause; continue; }
                 echo "$_val" > "$SINGBOX_FOLDER_PATH/cdn_host"
-                update_subscription_file
+                refresh_sb_and_sub
                 green "✅ CDN 优选域名修改操作已完成！新值: ${_val}"
                 menu_pause
                 ;;
@@ -4594,7 +4607,7 @@ edit_snis_menu() {
                     red "❌ CDN 端口仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS[*]})"; menu_pause; continue
                 fi
                 echo "$_val" > "$SINGBOX_FOLDER_PATH/cdn_pt"
-                update_subscription_file
+                refresh_sb_and_sub
                 green "✅ CDN 端口修改操作已完成！新值: ${_val}"
                 menu_pause
                 ;;
@@ -4602,7 +4615,7 @@ edit_snis_menu() {
                 reading "请输入新的 Hysteria2 伪装域名 (留空=取消): " _val
                 [ -z "$_val" ] && { yellow "已取消"; menu_pause; continue; }
                 echo "$_val" > "$SINGBOX_FOLDER_PATH/hy_sni"
-                update_subscription_file
+                refresh_sb_and_sub
                 green "✅ Hysteria2 伪装域名修改操作已完成！新值: ${_val}"
                 menu_pause
                 ;;
@@ -4613,8 +4626,7 @@ edit_snis_menu() {
                 [ -s "$SINGBOX_FOLDER_PATH/sb.json" ] && \
                     jq --arg v "$_val" '(.inbounds[]? | select(.tag == "vless-reality-vision-sb")) .tls.server_name = $v | (.inbounds[]? | select(.tag == "vless-reality-vision-sb")) .tls.reality.handshake.server = $v' \
                     "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
-                sbrestart
-                update_subscription_file
+                refresh_sb_and_sub
                 green "✅ VLESS 伪装域名修改操作已完成！新值: ${_val}"
                 menu_pause
                 ;;
@@ -4625,8 +4637,7 @@ edit_snis_menu() {
                 echo "$_val" > "$SINGBOX_FOLDER_PATH/vl_sni_pt"
                 jq --argjson p "$_val" '(.inbounds[]? | select(.tag == "vless-reality-vision-sb")) .tls.reality.handshake.server_port = $p' \
                     "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
-                sbrestart
-                update_subscription_file
+                refresh_sb_and_sub
                 green "✅ VLESS 伪装端口修改操作已完成！新值: ${_val}"
                 menu_pause
                 ;;
@@ -4634,7 +4645,7 @@ edit_snis_menu() {
                 reading "请输入新的 TUIC 伪装域名 (留空=取消): " _val
                 [ -z "$_val" ] && { yellow "已取消"; menu_pause; continue; }
                 echo "$_val" > "$SINGBOX_FOLDER_PATH/tu_sni"
-                update_subscription_file
+                refresh_sb_and_sub
                 green "✅ TUIC 伪装域名修改操作已完成！新值: ${_val}"
                 menu_pause
                 ;;
@@ -4645,8 +4656,7 @@ edit_snis_menu() {
                 [ -s "$SINGBOX_FOLDER_PATH/sb.json" ] && \
                     jq --arg v "$_val" '(.inbounds[]? | select(.tag == "anytls-sb")) .tls.server_name = $v' \
                     "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
-                sbrestart
-                update_subscription_file
+                refresh_sb_and_sub
                 green "✅ AnyTLS 伪装域名修改操作已完成！新值: ${_val}"
                 menu_pause
                 ;;
@@ -4739,7 +4749,7 @@ edit_argo_menu() {
                         ;;
                     *) yellow "无效选项" ;;
                 esac
-                update_subscription_file
+                regenerate_links_and_sub
                 menu_pause
                 ;;
             *) yellow "无效选项"; menu_pause ;;
@@ -5633,8 +5643,8 @@ main() {
 
     # 生成/更新/查看订阅文件
     if [ "$_cmd" = "sub" ]; then
-        # 生成/更新订阅文件 sub.txt（函数内部会打印 subscribe 状态 + 生成结果）
-        update_subscription_file
+        # 重新生成 jh.txt 节点链接 + sub.txt 订阅（函数内部会打印 subscribe 状态 + 生成结果）
+        regenerate_links_and_sub
 
         echo -e "📌 节点订阅地址："
         if ! is_true "$(get_subscribe_flag)"; then
