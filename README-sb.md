@@ -3,6 +3,37 @@
 > 本脚本支持两种安装方式：
 > - **交互式菜单安装**：直接运行 `bash sb.sh`（不带参数），通过菜单引导完成安装/卸载/查看等操作。
 > - **非交互式安装**：以环境变量 + 参数命令的方式一行完成（见下方示例）。
+>
+> 安装后支持 **`sb` 快捷指令**：直接执行 `sb` 打开主菜单，或用 `sb ins` / `sb rep` / `sb list` / `sb rt` / `sb node` / `sb sub` / `sb del` 等一步直达对应功能（完整清单见「[sb 快捷指令](#sb-快捷指令)」）。
+
+# 0、sb 快捷指令
+
+安装后会在系统创建 `sb` 快捷命令，常用指令如下：
+
+```
+sb                 打开主菜单
+sb ins             安装节点
+sb rep             覆盖式安装/重置
+sb list            查看节点信息
+sb list key        查看节点 + vless Reality 私钥
+sb res             重启 sing-box 和 cloudflared
+sb rt              分流管理
+sb node            节点配置修改 (端口/订阅/SNI/Argo)
+sb sub             订阅管理
+sb del             卸载（保留二进制）
+sb delall          卸载全部并清理
+sb ups             更新 sing-box 内核
+sb sc              创建/刷新本快捷命令
+sb sc_off          删除本快捷命令
+sb autostart       开启开机自启
+sb autostart_off   关闭开机自启
+sb nginx_start     启动 Nginx
+sb nginx_stop      停止 Nginx
+sb nginx_restart   重启 Nginx
+sb nginx_status    查看 Nginx 状态
+```
+
+在服务器上执行 `sb sc` 创建快捷命令后即可使用以上指令。
 
 # 1、 singbox 安装以及卸载
 ## singbox 一键安装脚本（vmess argo/trojan argo 选1 + hy2+vless-Reality+tuic+anytls+socks5，这些协议可自由组合）
@@ -421,6 +452,7 @@ tail -200 /root/doraemon/argo.log
 
 v1.0.14 (2026-08-07)
  - 支持交互式菜单操作
+ - 支持 `sb` 快捷指令：安装后直接 `sb` 打开主菜单，或 `sb ins`/`sb rep`/`sb list`/`sb rt`/`sb node`/`sb sub`/`sb del` 等一步直达对应功能
  - 支持内置代理 / 分流管理
  - 方便对接代理 [jyucoeng/aimili-vpngate](https://github.com/jyucoeng/aimili-vpngate)，该项目的代理出口为家宽 IP，可让节点使用家宽出口
 
