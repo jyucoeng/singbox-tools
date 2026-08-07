@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.4.17(2026-08-07)"
+VERSION="1.4.18(2026-08-07)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -5002,21 +5002,25 @@ rt_manage() {
             yellow "  无"
         fi
         echo ""
+        yellow "  匹配优先级: 网站分流 > 协议附着代理 > 原IP直连（先命中分流，分流不中再走协议附着的代理）"
+        echo ""
         green "  1) 设置分流服务 (未添加socks/http直接设置则使用WARP)"
         red   "  2) 删除分流服务"
         green "  3) 添加 Socks5/HTTP 出站"
-        green "  4) 修改 Socks5/HTTP 出站关联的协议"
+        green "  4) 查看代理下附着了哪些协议"
         red   "  5) 删除 Socks5/HTTP 出站"
         green "  6) 查看各协议对应的代理出口"
+        green "  7) 修改各协议使用的代理"
         purple "  0) 返回主菜单"
         reading "请输入选择: " _ch
         case "$_ch" in
             1) add_rule_menu ;;
             2) delete_rule_menu ;;
             3) add_socks5_proxy ;;
-            4) edit_socks5_proxy ;;
+            4) view_proxy_protocols ;;
             5) delete_socks5_proxy ;;
             6) rt_proxy_map ;;
+            7) edit_protocol_proxy ;;
             0) return ;;
             *) yellow "无效选项"; menu_pause ;;
         esac
@@ -5046,6 +5050,137 @@ rt_proxy_map() {
         yellow "  未检测到已安装的协议入站"
     fi
     echo ""
+    yellow "  提示: 网站分流 > 协议附着代理 > 原IP直连"
+    echo ""
+    menu_pause
+}
+
+# 查看每个 socks/http 代理下附着了哪些协议
+view_proxy_protocols() {
+    local sbj="$SINGBOX_FOLDER_PATH/sb.json" _tags _t _attached
+    clear
+    green "========= [5][4] 分流管理 → 查看代理下附着的协议 ========="
+    echo ""
+    _tags=$(jq -r '[.outbounds[]? | select(.type == "socks" or .type == "http") | .tag] | .[]' "$sbj" 2>/dev/null)
+    if [ -z "$_tags" ]; then
+        yellow "当前没有 socks/http 代理出站。"
+        menu_pause; return
+    fi
+    while read -r _t; do
+        [ -z "$_t" ] && continue
+        _attached=$(jq -r --arg tag "$_t" '[.route.rules[]? | select(.inbound != null and .outbound == $tag) | .inbound[]?] | join(", ")' "$sbj" 2>/dev/null)
+        if [ -n "$_attached" ]; then
+            green "  $_t → $_attached"
+        else
+            yellow "  $_t → 未附着任何协议"
+        fi
+    done <<< "$_tags"
+    echo ""
+    yellow "  提示: 网站分流 > 协议附着代理 > 原IP直连"
+    echo ""
+    menu_pause
+}
+
+# 修改某协议使用的代理（选已添加的 socks/http 代理，0=直连原IP出口，回车=取消）
+edit_protocol_proxy() {
+    local sbj="$SINGBOX_FOLDER_PATH/sb.json"
+    local _letters=(b c d e f g) _ptags=(vless-reality-vision-sb hy2-sb tuic-sb anytls-sb vmess-sb trojan-ws-sb)
+    local _protos=() _n _p _tag _cur _plist _choice
+    clear
+    green "========= [5][7] 分流管理 → 修改各协议使用的代理 ========="
+    echo ""
+    for _n in "${!_letters[@]}"; do
+        if jq -e --arg t "${_ptags[$_n]}" '.inbounds[]? | select(.tag == $t)' "$sbj" >/dev/null 2>&1; then
+            _protos+=("${_letters[$_n]}:${_ptags[$_n]}")
+        fi
+    done
+    if [ ${#_protos[@]} -eq 0 ]; then
+        yellow "未检测到已安装的协议入站（tuic/hy2/vmess/vless 等）。"; menu_pause; return
+    fi
+
+    green "已安装协议:"
+    for _n in "${!_protos[@]}"; do
+        green "  ${_protos[$_n]%%:*}) ${_protos[$_n]#*:}"
+    done
+    echo ""
+    yellow "  提示: 网站分流 > 协议附着代理 > 原IP直连"
+    echo ""
+    reading "输入要修改的协议编号: " _choice
+    _choice=$(echo "$_choice" | tr '[:upper:]' '[:lower:]' | xargs)
+    _tag=""
+    for _entry in "${_protos[@]}"; do
+        [ "${_entry%%:*}" = "$_choice" ] && { _tag="${_entry#*:}"; break; }
+    done
+    if [ -z "$_tag" ]; then
+        red "无效的协议编号！"; menu_pause; return
+    fi
+
+    _cur=$(jq -r --arg p "$_tag" '[.route.rules[]? | select(.inbound != null) | select(.inbound | index($p)) | .outbound // empty] | .[0] // empty' "$sbj" 2>/dev/null)
+    if [ -n "$_cur" ]; then
+        green "$_tag 当前使用的代理: $_cur"
+    else
+        yellow "$_tag 当前未使用任何代理（直连原IP出口）"
+    fi
+
+    echo ""
+    green "可选代理（已添加的 socks/http 出站）:"
+    _plist=$(jq -r '[.outbounds[]? | select(.type == "socks" or .type == "http") | .tag] | to_entries | .[] | "  \(.key+1)) \(.value)"' "$sbj" 2>/dev/null)
+    if [ -n "$_plist" ]; then
+        echo "$_plist"
+    else
+        yellow "  无已添加的 socks/http 代理"
+    fi
+    echo ""
+    yellow "选择要使用的代理编号（0=直连原IP出口，直接回车=取消）:"
+    reading "请输入: " _choice
+    [ -z "$_choice" ] && { yellow "已取消，未做任何修改。"; menu_pause; return; }
+
+    if [ "$_choice" = "0" ]; then
+        # 直连：从所有 inbound 规则中移除该协议
+        if jq --arg p "$_tag" '
+            . as $doc
+            | ($doc.route.rules // []) as $R
+            | ($R | map(select(.action == "sniff"))) as $sniff
+            | ($R | map(select(.action == "resolve"))) as $resolve
+            | ($R | map(select(.action != "sniff" and .action != "resolve" and (.inbound == null or ((.inbound | index($p)) | not))))) as $splits
+            | $doc
+            | .route.rules = $sniff + $splits + $resolve
+        ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$sbj"; then
+            sbrestart
+            green "✅ $_tag 已改为直连（原IP出口）"
+        else
+            red "❌ 写入 sb.json 失败，配置未更新，请检查磁盘空间或权限。"
+        fi
+        menu_pause; return
+    fi
+
+    # 选择某个代理：把该协议移动到目标代理的 inbound 规则
+    _p=$(jq -r --arg idx "$_choice" '[.outbounds[]? | select(.type == "socks" or .type == "http") | .tag] | .[($idx | tonumber) - 1] // empty' "$sbj" 2>/dev/null)
+    if [ -z "$_p" ]; then
+        red "无效的代理编号！"; menu_pause; return
+    fi
+    if jq --arg p "$_p" --arg proto "$_tag" '
+        . as $doc
+        | ($doc.route.rules // []) as $R
+        | ($R | map(select(.action == "sniff"))) as $sniff
+        | ($R | map(select(.action == "resolve"))) as $resolve
+        | ($R | map(select(.action != "sniff" and .action != "resolve" and .inbound == null))) as $others
+        | ($R | map(select(.action != "sniff" and .action != "resolve" and .inbound != null and .outbound == $p))) as $target
+        | ($R | map(select(.action != "sniff" and .action != "resolve" and .inbound != null and .outbound != $p and ((.inbound | index($proto)) | not)))) as $inb_others
+        | $doc
+        | .route.rules = $sniff + ($others + $inb_others + [
+            if ($target | length) > 0 then
+                (if ($target[0].inbound | index($proto)) then $target[0] else ($target[0] | .inbound += [$proto]) end)
+            else
+                {inbound: [$proto], outbound: $p}
+            end
+          ] | sort_by(if .rule_set != null then 0 elif .inbound != null then 1 else 2 end)) + $resolve
+    ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$sbj"; then
+        sbrestart
+        green "✅ $_tag 已改用代理: $_p"
+    else
+        red "❌ 写入 sb.json 失败，配置未更新，请检查磁盘空间或权限。"
+    fi
     menu_pause
 }
 
@@ -5125,12 +5260,14 @@ add_rule_menu() {
         | ($R | map(select(.action == "sniff"))) as $sniff
         | ($R | map(select(.action == "resolve"))) as $resolve
         | ($R | map(select(.action != "sniff" and .action != "resolve"))) as $splits
-        | ($splits | map(.outbound == $out) | any) as $has_out
+        | ($splits | map(select(.rule_set != null and .outbound == $out)) | length > 0) as $has_out
         | $doc
         | if $has_out then
-            .route.rules = $sniff + ([$splits[] | if .outbound == $out then .rule_set += [$tag] else . end]) + $resolve
+            .route.rules = $sniff + ([$splits[] | if (.rule_set != null and .outbound == $out) then .rule_set += [$tag] else . end]
+                | sort_by(if .rule_set != null then 0 elif .inbound != null then 1 else 2 end)) + $resolve
           else
-            .route.rules = $sniff + $splits + [{rule_set: [$tag], outbound: $out}] + $resolve
+            .route.rules = $sniff + ($splits + [{rule_set: [$tag], outbound: $out}]
+                | sort_by(if .rule_set != null then 0 elif .inbound != null then 1 else 2 end)) + $resolve
           end
     ' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
     rm -f "$tmpj" 2> /dev/null || true
@@ -5169,7 +5306,8 @@ delete_rule_menu() {
         | ($R | map(select(.action == "resolve"))) as $resolve
         | ($R | map(select(.action != "sniff" and .action != "resolve"))) as $splits
         | $doc
-        | .route.rules = $sniff + [$splits[] | select(.rule_set != null) | .rule_set -= [$tag] | select((.rule_set | length) > 0)] + $resolve
+        | .route.rules = $sniff + ([$splits[] | if .rule_set != null then .rule_set -= [$tag] | select((.rule_set | length) > 0) else . end]
+            | sort_by(if .rule_set != null then 0 elif .inbound != null then 1 else 2 end)) + $resolve
     ' "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
     rt_remove_unused_rule_sets
     sbrestart
@@ -5353,7 +5491,8 @@ delete_socks5_proxy() {
         | ($R | map(select(.action == "resolve"))) as $resolve
         | ($R | map(select(.action != "sniff" and .action != "resolve"))) as $splits
         | $doc
-        | .route.rules = $sniff + [$splits[] | select(.outbound != $tag)] + $resolve
+        | .route.rules = $sniff + ([$splits[] | select(.outbound != $tag)]
+            | sort_by(if .rule_set != null then 0 elif .inbound != null then 1 else 2 end)) + $resolve
     ' "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp2" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp2" "$SINGBOX_FOLDER_PATH/sb.json"
     rt_remove_unused_rule_sets
     sbrestart
@@ -5361,7 +5500,7 @@ delete_socks5_proxy() {
     menu_pause
 }
 
-# 设置 socks/http 出站附着的协议（生成 inbound 路由规则，多选，可留空清除关联）
+# 设置 socks/http 出站附着的协议（生成 inbound 路由规则，多选，0=清除全部关联，回车=取消）
 # 编号与安装时一致且按字母升序：a=全选 b=VLESS c=Hysteria2 d=TUIC e=AnyTLS f=Vmess-WS g=Trojan-WS
 attach_socks5_proxy() {
      local sbj="$SINGBOX_FOLDER_PATH/sb.json"
@@ -5370,6 +5509,8 @@ attach_socks5_proxy() {
      local _protos=() _letters_all _attached _attach_input _selected=() _failed=() _n _p _conflict _inbs
      clear
      green "========= [5][${_parent}] 分流管理 → 附着协议到代理 ========="
+     echo ""
+     yellow "  提示: 网站分流 > 协议附着代理 > 原IP直连（分流优先，分流不中才走此处附着）"
      echo ""
      for _n in "${!_letters[@]}"; do
          if jq -e --arg t "${_ptags[$_n]}" '.inbounds[]? | select(.tag == $t)' "$sbj" >/dev/null 2>&1; then
@@ -5395,46 +5536,45 @@ attach_socks5_proxy() {
          green "  ${_protos[$_n]%%:*}) ${_protos[$_n]#*:}"
      done
      echo ""
-     yellow "输入要附着的协议编号（多选用空格分隔，a=全选，直接回车=清除关联）:"
+     yellow "输入要附着的协议编号（多选用空格分隔，a=全选，0=清除全部关联，直接回车=取消）:"
      reading "请输入: " _attach_input
+     [ -z "$_attach_input" ] && { yellow "已取消，未做任何修改。"; menu_pause; return; }
      _attach_input=$(echo "$_attach_input" | tr ',' ' ' | tr '[:upper:]' '[:lower:]')
-     _letters_all=""
-     for _entry in "${_protos[@]}"; do _letters_all="$_letters_all ${_entry%%:*}"; done
-     for _n in $_attach_input; do
-         [ "$_n" = "a" ] && { _attach_input="$_attach_input $_letters_all"; break; }
-     done
-     _failed=()
-     for _n in $_attach_input; do
-         _p=""
-         for _entry in "${_protos[@]}"; do
-             [ "${_entry%%:*}" = "$_n" ] && { _p="${_entry#*:}"; break; }
+     if [ "$_attach_input" = "0" ]; then
+         _inbs="[]"
+     else
+         _letters_all=""
+         for _entry in "${_protos[@]}"; do _letters_all="$_letters_all ${_entry%%:*}"; done
+         for _n in $_attach_input; do
+             [ "$_n" = "a" ] && { _attach_input="$_attach_input $_letters_all"; break; }
          done
-         if [ -z "$_p" ]; then
-             _failed+=("$_n")
-             continue
+         _failed=()
+         for _n in $_attach_input; do
+             _p=""
+             for _entry in "${_protos[@]}"; do
+                 [ "${_entry%%:*}" = "$_n" ] && { _p="${_entry#*:}"; break; }
+             done
+             if [ -z "$_p" ]; then
+                 _failed+=("$_n")
+                 continue
+             fi
+             _conflict=$(jq -r --arg p "$_p" --arg tag "$_tag" '
+                 [.route.rules[]? | select(.inbound != null and .outbound != $tag and (.inbound | index($p))) | .outbound]
+                 | .[0] // empty' "$sbj" 2>/dev/null)
+             if [ -n "$_conflict" ]; then
+                 red "❌ ${_p} 附着失败：已被代理 '${_conflict}' 占用（一个协议只能附着到一个代理）"
+                 _failed+=("$_p")
+             else
+                 _selected+=("$_p")
+             fi
+         done
+         if [ ${#_selected[@]} -eq 0 ]; then
+             red "❌ 附着失败，未做任何修改。"
+             [ ${#_failed[@]} -gt 0 ] && yellow "  未附着: ${_failed[*]}"
+             menu_pause; return
          fi
-         _conflict=$(jq -r --arg p "$_p" --arg tag "$_tag" '
-             [.route.rules[]? | select(.inbound != null and .outbound != $tag and (.inbound | index($p))) | .outbound]
-             | .[0] // empty' "$sbj" 2>/dev/null)
-         if [ -n "$_conflict" ]; then
-             red "❌ ${_p} 附着失败：已被代理 '${_conflict}' 占用（一个协议只能附着到一个代理）"
-             _failed+=("$_p")
-         else
-             _selected+=("$_p")
-         fi
-     done
-
-     if [ -n "$_attach_input" ] && [ ${#_selected[@]} -eq 0 ]; then
-         red "❌ 附着失败，未做任何修改。"
-         [ ${#_failed[@]} -gt 0 ] && yellow "  未附着: ${_failed[*]}"
-         menu_pause; return
+         _inbs=$(printf '%s\n' "${_selected[@]}" | jq -R . | jq -s .)
      fi
-
-    if [ ${#_selected[@]} -gt 0 ]; then
-        _inbs=$(printf '%s\n' "${_selected[@]}" | jq -R . | jq -s .)
-    else
-        _inbs="[]"
-    fi
 
     # 删除该出站旧的 inbound 规则，写入新的（空数组 = 只清除关联）
     if jq --arg tag "$_tag" --argjson inbs "$_inbs" '
@@ -5445,16 +5585,17 @@ attach_socks5_proxy() {
         | ($R | map(select(.action != "sniff" and .action != "resolve" and (.inbound == null or .outbound != $tag)))) as $splits
         | $doc
         | if ($inbs | length) > 0 then
-            .route.rules = $sniff + [{inbound: $inbs, outbound: $tag}] + $splits + $resolve
+            .route.rules = $sniff + ($splits + [{inbound: $inbs, outbound: $tag}]
+                | sort_by(if .rule_set != null then 0 elif .inbound != null then 1 else 2 end)) + $resolve
           else
             .route.rules = $sniff + $splits + $resolve
           end
     ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$sbj"; then
         sbrestart
-        if [ ${#_selected[@]} -gt 0 ]; then
-            green "✅ $_tag 已附着到: ${_selected[*]}"
-        else
+        if [ "$_attach_input" = "0" ]; then
             green "✅ $_tag 关联已清除"
+        else
+            green "✅ $_tag 已附着到: ${_selected[*]}"
         fi
         if [ ${#_failed[@]} -gt 0 ]; then
             yellow "⚠️ 以下协议未附着（已跳过）: ${_failed[*]}"
