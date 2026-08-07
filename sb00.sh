@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.4.16(2026-08-07)"
+VERSION="1.4.17(2026-08-07)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -850,7 +850,7 @@ cleanup_sb_shortcut() {
 # sb 快捷命令（查看指令说明页面）
 interactive_sb_shortcut_menu() {
     clear
-    green "========= [5] sb 快捷命令 ========="
+    green "========= [6] sb 快捷命令 ========="
     echo ""
     if command -v sb > /dev/null 2>&1; then
         green " 当前状态：✅ 已安装（$(command -v sb)）"
@@ -4392,7 +4392,7 @@ interactive_sub_menu() {
     local _ch
     while true; do
         clear
-        green "========= [6] 订阅管理 ========="
+        green "========= [9] 订阅管理 ========="
         update_subscription_file
         echo ""
         if is_true "$(get_subscribe_flag)"; then
@@ -4456,7 +4456,7 @@ edit_ports_menu() {
     local _sel _port _is_port _desc _tag _need_nginx _need_argo
     while true; do
         clear
-        green "========= 节点配置修改 → 端口修改 ========="
+        green "========= [4][1] 节点配置修改 → 端口修改 ========="
         echo ""
         green "  1) Trojan-WS (Argo) 端口"
         yellow "       当前: $(read_port_file port_tr)"
@@ -4526,7 +4526,7 @@ edit_subscription_menu() {
     local _sel _np
     while true; do
         clear
-        green "========= 节点配置修改 → 订阅设置 ========="
+        green "========= [4][2] 节点配置修改 → 订阅设置 ========="
         echo ""
         if is_true "$(get_subscribe_flag)"; then
             green "  📌 订阅状态: 已开启"
@@ -4572,7 +4572,7 @@ edit_snis_menu() {
     local _sel _val
     while true; do
         clear
-        green "========= 节点配置修改 → SNI / CDN 设置 ========="
+        green "========= [4][3] 节点配置修改 → SNI / CDN 设置 ========="
         echo ""
         green "  1) CDN 优选域名"
         yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/cdn_host" 2>/dev/null)"
@@ -4670,7 +4670,7 @@ edit_argo_menu() {
     local _sel _vlvm _argodomain _mode _tmp _d _a
     while true; do
         clear
-        green "========= 节点配置修改 → Argo 隧道修改 ========="
+        green "========= [4][4] 节点配置修改 → Argo 隧道修改 ========="
         echo ""
         _vlvm=$(cat "$SINGBOX_FOLDER_PATH/vlvm" 2>/dev/null)
         _argodomain=$(cat "$SINGBOX_FOLDER_PATH/argo_domain" 2>/dev/null)
@@ -4691,7 +4691,6 @@ edit_argo_menu() {
         green "  1) 切换固定 Argo 隧道"
         green "  2) 切换临时 Argo 隧道"
         red   "  3) 取消使用 Argo 隧道"
-        green "  4) 切换 Argo 使用协议 (Trojan-WS-TLS / Vmess-WS-TLS)"
         purple "  0) 返回上级菜单"
         reading "请输入选择: " _sel
         case "$_sel" in
@@ -4726,29 +4725,42 @@ edit_argo_menu() {
                 green "✅ 取消使用 Argo 隧道操作已完成！"
                 menu_pause
                 ;;
-            4)
-                _vlvm=$(cat "$SINGBOX_FOLDER_PATH/vlvm" 2>/dev/null)
-                echo ""
-                green "  1) Vmess-WS-TLS (Argo)"
-                green "  2) Trojan-WS-TLS (Argo)"
-                reading "请输入选择 (当前: ${_vlvm:-未设置}): " _tmp
-                case "$_tmp" in
-                    1)
-                        if [ ! -s "$SINGBOX_FOLDER_PATH/port_vm_ws" ]; then
-                            red "❌ 未安装 Vmess-WS 协议，无法切换。"; menu_pause; continue
-                        fi
-                        echo "Vmess" > "$SINGBOX_FOLDER_PATH/vlvm"
-                        green "✅ 已切换 Argo 使用协议为 Vmess-WS-TLS 操作已完成！"
-                        ;;
-                    2)
-                        if [ ! -s "$SINGBOX_FOLDER_PATH/port_tr" ]; then
-                            red "❌ 未安装 Trojan-WS 协议，无法切换。"; menu_pause; continue
-                        fi
-                        echo "Trojan" > "$SINGBOX_FOLDER_PATH/vlvm"
-                        green "✅ 已切换 Argo 使用协议为 Trojan-WS-TLS 操作已完成！"
-                        ;;
-                    *) yellow "无效选项" ;;
-                esac
+            *) yellow "无效选项"; menu_pause ;;
+        esac
+    done
+}
+
+# 切换 Argo 使用协议（Trojan-WS-TLS / Vmess-WS-TLS）
+edit_argo_protocol_menu() {
+    local _vlvm _tmp
+    while true; do
+        clear
+        green "========= [4][5] 节点配置修改 → 切换 Argo 使用协议 ========="
+        echo ""
+        _vlvm=$(cat "$SINGBOX_FOLDER_PATH/vlvm" 2>/dev/null)
+        green "  当前 Argo 使用协议: ${_vlvm:-未设置}"
+        echo ""
+        green "  1) Vmess-WS-TLS (Argo)"
+        green "  2) Trojan-WS-TLS (Argo)"
+        purple "  0) 返回上级菜单"
+        reading "请输入选择: " _tmp
+        case "$_tmp" in
+            0) return ;;
+            1)
+                if [ ! -s "$SINGBOX_FOLDER_PATH/port_vm_ws" ]; then
+                    red "❌ 未安装 Vmess-WS 协议，无法切换。"; menu_pause; continue
+                fi
+                echo "Vmess" > "$SINGBOX_FOLDER_PATH/vlvm"
+                green "✅ 已切换 Argo 使用协议为 Vmess-WS-TLS 操作已完成！"
+                regenerate_links_and_sub
+                menu_pause
+                ;;
+            2)
+                if [ ! -s "$SINGBOX_FOLDER_PATH/port_tr" ]; then
+                    red "❌ 未安装 Trojan-WS 协议，无法切换。"; menu_pause; continue
+                fi
+                echo "Trojan" > "$SINGBOX_FOLDER_PATH/vlvm"
+                green "✅ 已切换 Argo 使用协议为 Trojan-WS-TLS 操作已完成！"
                 regenerate_links_and_sub
                 menu_pause
                 ;;
@@ -4762,12 +4774,13 @@ node_config_menu() {
     local _ch
     while true; do
         clear
-        green "========= 节点配置修改 (node) ========="
+        green "========= [4] 节点配置修改 (node) ========="
         echo ""
         green "  1) 端口修改"
         green "  2) 订阅设置 (修改订阅端口 / 取消订阅)"
         green "  3) SNI / CDN 设置修改"
         green "  4) Argo 隧道修改"
+        green "  5) 切换 Argo 使用协议 (Trojan-WS-TLS / Vmess-WS-TLS)"
         purple "  0) 返回主菜单"
         reading "请输入选择: " _ch
         case "$_ch" in
@@ -4776,6 +4789,7 @@ node_config_menu() {
             2) edit_subscription_menu ;;
             3) edit_snis_menu ;;
             4) edit_argo_menu ;;
+            5) edit_argo_protocol_menu ;;
             *) yellow "无效选项"; sleep 1 ;;
         esac
     done
@@ -4788,7 +4802,7 @@ interactive_log_menu() {
     echo "$_lines" | grep -qE '^[0-9]+$' || _lines=100
     while true; do
         clear
-        green "========= [7] 查看日志 ========="
+        green "========= [10] 查看日志 ========="
         echo ""
         green "  1) Sing-box 日志 (最近 $_lines 行)"
         green "  2) Argo (cloudflared) 日志 (最近 $_lines 行)"
@@ -4961,7 +4975,7 @@ rt_manage() {
     local _ch _rules _outs
     while true; do
         clear
-        green "========= 分流管理 (rt) ========="
+        green "========= [5] 分流管理 (rt) ========="
         echo ""
         green "当前已启用的分流规则集:"
         _rules=$(jq -r '.route.rules[]? | select(.rule_set != null) | .rule_set[]?' "$sbj" 2>/dev/null | sort -u)
@@ -5012,11 +5026,14 @@ rt_manage() {
 # 查看各协议对应的代理出口（无代理 = 原IP出站）
 rt_proxy_map() {
     local sbj="$SINGBOX_FOLDER_PATH/sb.json" _p _out _cnt=0
+    local _order=(vmess-sb trojan-ws-sb vless-reality-vision-sb hy2-sb tuic-sb anytls-sb)
     clear
-    green "========= 各协议对应的代理出口 ========="
+    green "========= [5][6] 分流管理 → 各协议对应的代理出口 ========="
     echo ""
-    while IFS= read -r _p; do
-        [ -z "$_p" ] && continue
+    for _p in "${_order[@]}"; do
+        if ! jq -e --arg t "$_p" '.inbounds[]? | select(.tag == $t)' "$sbj" >/dev/null 2>&1; then
+            continue
+        fi
         _out=$(jq -r --arg p "$_p" '[.route.rules[]? | select(.inbound != null) | select(.inbound | index($p)) | .outbound // empty] | .[0] // empty' "$sbj" 2>/dev/null)
         if [ -n "$_out" ]; then
             green "  ${_p} -----> ${_out}"
@@ -5024,7 +5041,7 @@ rt_proxy_map() {
             yellow "  ${_p} -----> 原ip出站"
         fi
         _cnt=$((_cnt+1))
-    done < <(jq -r '.inbounds[]? | select(.tag != "socks5-sb") | .tag' "$sbj" 2>/dev/null)
+    done
     if [ "$_cnt" -eq 0 ]; then
         yellow "  未检测到已安装的协议入站"
     fi
@@ -5036,7 +5053,7 @@ rt_proxy_map() {
 add_rule_menu() {
     local _add_choice rule_tag
     clear
-    green "========= 设置分流服务 ========="
+    green "========= [5][1] 分流管理 → 设置分流服务 ========="
     echo ""
     green "  1)  OpenAI"
     green "  2)  Claude"
@@ -5125,9 +5142,11 @@ add_rule_menu() {
 
 # 删除分流规则集
 delete_rule_menu() {
-    local _del_input _tag _count
-    clear
-    green "当前已启用的分流规则集:"
+     local _del_input _tag _count
+     clear
+     green "========= [5][2] 分流管理 → 删除分流服务 ========="
+     echo ""
+     green "当前已启用的分流规则集:"
     _count=$(jq -r '[.route.rules[]? | select(.rule_set != null) | .rule_set[]?] | length' "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null)
     if [ "$_count" -eq 0 ] 2>/dev/null || [ -z "$_count" ]; then
         yellow "  无"
@@ -5160,11 +5179,13 @@ delete_rule_menu() {
 
 # 添加 Socks5/HTTP 代理出站
 add_socks5_proxy() {
-    local _proxy_url _proto _outbound_type _after_proto _tag_from_url _user_pass _host_port
-    local _user _password _decoded _server _port _check_proto _is_local _proxy_auth
-    local _tag _force_add _test_result
-    clear
-    reading "请输入代理URL (支持socks://,socks5://,http:// 支持v2rayN导出的节点链接): " _proxy_url
+     local _proxy_url _proto _outbound_type _after_proto _tag_from_url _user_pass _host_port
+     local _user _password _decoded _server _port _check_proto _is_local _proxy_auth
+     local _tag _force_add _test_result
+     clear
+     green "========= [5][3] 分流管理 → 添加 Socks5/HTTP 出站 ========="
+     echo ""
+     reading "请输入代理URL (支持socks://,socks5://,http:// 支持v2rayN导出的节点链接): " _proxy_url
     [ -z "$_proxy_url" ] && { red "输入为空！"; menu_pause; return; }
 
     if [[ "$_proxy_url" =~ ^([a-zA-Z0-9]+):// ]]; then
@@ -5272,16 +5293,18 @@ add_socks5_proxy() {
     green "$_tag 代理出站已添加"
     reading "是否为此代理指定附着的协议？(y/n，直接回车=否): " _attach_now
     if [[ "$_attach_now" =~ ^[yY]$ ]]; then
-        attach_socks5_proxy "$_tag"
+        attach_socks5_proxy "$_tag" 3
     fi
     menu_pause
 }
 
 # 删除 Socks5/HTTP 代理出站
 delete_socks5_proxy() {
-    local _out_list _del_input _tag _del_type
-    clear
-    green "当前 socks/http 代理出站（可删除）:"
+     local _out_list _del_input _tag _del_type _used_inbound _used_rule _del_confirm
+     clear
+     green "========= [5][5] 分流管理 → 删除 Socks5/HTTP 出站 ========="
+     echo ""
+     green "当前 socks/http 代理出站（可删除）:"
     _out_list=$(jq -r '[.outbounds[]? | select(.type == "socks" or .type == "http")] | to_entries | .[] | "\(.key+1). \(.value.tag) [\(.value.type)]"' "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null)
     [ -z "$_out_list" ] && { yellow "没有可删除的 socks/http 代理出站。"; menu_pause; return; }
     echo "$_out_list"
@@ -5301,6 +5324,26 @@ delete_socks5_proxy() {
     fi
     [ "$_tag" = "wireguard-out" ] && { red "wireguard-out 为系统内置，不可删除！"; menu_pause; return; }
 
+    # 检查该代理是否正被协议/分流规则使用
+    _used_inbound=$(jq -r --arg tag "$_tag" '
+        [.route.rules[]? | select(.inbound != null and .outbound == $tag) | .inbound[]?] | join(", ")
+    ' "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null)
+    _used_rule=$(jq -r --arg tag "$_tag" '
+        [.route.rules[]? | select(.rule_set != null and .outbound == $tag) | .rule_set[]?] | join(", ")
+    ' "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null)
+    if [ -n "$_used_inbound" ] || [ -n "$_used_rule" ]; then
+        echo ""
+        yellow "⚠️  该代理当前正在被以下对象使用："
+        [ -n "$_used_inbound" ] && yellow "    附着协议: ${_used_inbound}"
+        [ -n "$_used_rule" ] && yellow "    分流规则: ${_used_rule}"
+        echo ""
+        yellow "删除后将自动解除这些关联（相关协议/服务改走服务器原IP出站）。"
+        reading "确认删除该被使用中的代理？(y/n，直接回车=否): " _del_confirm
+        if ! [[ "$_del_confirm" =~ ^[yY]$ ]]; then
+            green "已取消删除，未做任何修改。"; menu_pause; return
+        fi
+    fi
+
     jq --arg tag "$_tag" 'del(.outbounds[] | select(.tag == $tag))' "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
     # 同步删除引用该出站的分流规则
     jq --arg tag "$_tag" '
@@ -5319,49 +5362,73 @@ delete_socks5_proxy() {
 }
 
 # 设置 socks/http 出站附着的协议（生成 inbound 路由规则，多选，可留空清除关联）
+# 编号与安装时一致且按字母升序：a=全选 b=VLESS c=Hysteria2 d=TUIC e=AnyTLS f=Vmess-WS g=Trojan-WS
 attach_socks5_proxy() {
-    local sbj="$SINGBOX_FOLDER_PATH/sb.json"
-    local _tag="$1" _protos _attached _attach_input _selected=() _n _inbs
-    _protos=($(jq -r '.inbounds[]? | select(.tag != "socks5-sb") | .tag' "$sbj" 2>/dev/null))
-    if [ ${#_protos[@]} -eq 0 ]; then
-        yellow "未检测到已安装的协议入站（tuic/hy2/vmess/vless 等）。"; menu_pause; return
-    fi
+     local sbj="$SINGBOX_FOLDER_PATH/sb.json"
+     local _tag="$1" _parent="${2:-3}"
+     local _letters=(b c d e f g) _ptags=(vless-reality-vision-sb hy2-sb tuic-sb anytls-sb vmess-sb trojan-ws-sb)
+     local _protos=() _letters_all _attached _attach_input _selected=() _failed=() _n _p _conflict _inbs
+     clear
+     green "========= [5][${_parent}] 分流管理 → 附着协议到代理 ========="
+     echo ""
+     for _n in "${!_letters[@]}"; do
+         if jq -e --arg t "${_ptags[$_n]}" '.inbounds[]? | select(.tag == $t)' "$sbj" >/dev/null 2>&1; then
+             _protos+=("${_letters[$_n]}:${_ptags[$_n]}")
+         fi
+     done
+     if [ ${#_protos[@]} -eq 0 ]; then
+         yellow "未检测到已安装的协议入站（tuic/hy2/vmess/vless 等）。"; menu_pause; return
+     fi
 
-    echo ""
-    _attached=$(jq -r --arg tag "$_tag" '.route.rules[]? | select(.inbound != null and .outbound == $tag) | .inbound[]?' "$sbj" 2>/dev/null)
-    if [ -n "$_attached" ]; then
-        green "$_tag 当前附着的协议:"
-        echo "$_attached" | while read -r _p; do green "  - $_p"; done
-    else
-        yellow "$_tag 当前未附着任何协议"
-    fi
+     echo ""
+     _attached=$(jq -r --arg tag "$_tag" '.route.rules[]? | select(.inbound != null and .outbound == $tag) | .inbound[]?' "$sbj" 2>/dev/null)
+     if [ -n "$_attached" ]; then
+         green "$_tag 当前附着的协议:"
+         echo "$_attached" | while read -r _p; do green "  - $_p"; done
+     else
+         yellow "$_tag 当前未附着任何协议"
+     fi
 
-    echo ""
-    green "可附着的已安装协议:"
-    for i in "${!_protos[@]}"; do
-        green "  $((i+1)). ${_protos[$i]}"
-    done
-    echo ""
-    yellow "输入要附着的协议编号（多选用空格分隔，直接回车=清除关联）:"
-    reading "请输入: " _attach_input
-    _attach_input=$(echo "$_attach_input" | tr ',' ' ')
-    for _n in $_attach_input; do
-        if [[ "$_n" =~ ^[0-9]+$ ]] && [ "$_n" -ge 1 ] && [ "$_n" -le "${#_protos[@]}" ]; then
-            _p="${_protos[$((_n-1))]}"
-            _conflict=$(jq -r --arg p "$_p" --arg tag "$_tag" '
-                [.route.rules[]? | select(.inbound != null and .outbound != $tag) | .inbound[]? | select(. == $p)]
-                | if length > 0 then .[0] else empty end' "$sbj" 2>/dev/null)
-            if [ -n "$_conflict" ]; then
-                red "协议 ${_p} 已被其他代理使用，已跳过（一个协议只能附着到一个代理）"
-            else
-                _selected+=("$_p")
-            fi
-        fi
-    done
+     echo ""
+     green "可附着的已安装协议:"
+     for _n in "${!_protos[@]}"; do
+         green "  ${_protos[$_n]%%:*}) ${_protos[$_n]#*:}"
+     done
+     echo ""
+     yellow "输入要附着的协议编号（多选用空格分隔，a=全选，直接回车=清除关联）:"
+     reading "请输入: " _attach_input
+     _attach_input=$(echo "$_attach_input" | tr ',' ' ' | tr '[:upper:]' '[:lower:]')
+     _letters_all=""
+     for _entry in "${_protos[@]}"; do _letters_all="$_letters_all ${_entry%%:*}"; done
+     for _n in $_attach_input; do
+         [ "$_n" = "a" ] && { _attach_input="$_attach_input $_letters_all"; break; }
+     done
+     _failed=()
+     for _n in $_attach_input; do
+         _p=""
+         for _entry in "${_protos[@]}"; do
+             [ "${_entry%%:*}" = "$_n" ] && { _p="${_entry#*:}"; break; }
+         done
+         if [ -z "$_p" ]; then
+             _failed+=("$_n")
+             continue
+         fi
+         _conflict=$(jq -r --arg p "$_p" --arg tag "$_tag" '
+             [.route.rules[]? | select(.inbound != null and .outbound != $tag and (.inbound | index($p))) | .outbound]
+             | .[0] // empty' "$sbj" 2>/dev/null)
+         if [ -n "$_conflict" ]; then
+             red "❌ ${_p} 附着失败：已被代理 '${_conflict}' 占用（一个协议只能附着到一个代理）"
+             _failed+=("$_p")
+         else
+             _selected+=("$_p")
+         fi
+     done
 
-    if [ -n "$_attach_input" ] && [ ${#_selected[@]} -eq 0 ]; then
-        red "编号无效，未做任何修改。"; menu_pause; return
-    fi
+     if [ -n "$_attach_input" ] && [ ${#_selected[@]} -eq 0 ]; then
+         red "❌ 附着失败，未做任何修改。"
+         [ ${#_failed[@]} -gt 0 ] && yellow "  未附着: ${_failed[*]}"
+         menu_pause; return
+     fi
 
     if [ ${#_selected[@]} -gt 0 ]; then
         _inbs=$(printf '%s\n' "${_selected[@]}" | jq -R . | jq -s .)
@@ -5370,7 +5437,7 @@ attach_socks5_proxy() {
     fi
 
     # 删除该出站旧的 inbound 规则，写入新的（空数组 = 只清除关联）
-    jq --arg tag "$_tag" --argjson inbs "$_inbs" '
+    if jq --arg tag "$_tag" --argjson inbs "$_inbs" '
         . as $doc
         | ($doc.route.rules // []) as $R
         | ($R | map(select(.action == "sniff"))) as $sniff
@@ -5382,21 +5449,29 @@ attach_socks5_proxy() {
           else
             .route.rules = $sniff + $splits + $resolve
           end
-    ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$sbj"
-    sbrestart
-    if [ ${#_selected[@]} -gt 0 ]; then
-        green "$_tag 已附着到: ${_selected[*]}"
+    ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$sbj"; then
+        sbrestart
+        if [ ${#_selected[@]} -gt 0 ]; then
+            green "✅ $_tag 已附着到: ${_selected[*]}"
+        else
+            green "✅ $_tag 关联已清除"
+        fi
+        if [ ${#_failed[@]} -gt 0 ]; then
+            yellow "⚠️ 以下协议未附着（已跳过）: ${_failed[*]}"
+        fi
     else
-        green "$_tag 关联已清除"
+        red "❌ 写入 sb.json 失败，配置未更新，请检查磁盘空间或权限。"
     fi
 }
 
 # 选择一个 socks/http 出站，重新设置它附着的协议
 edit_socks5_proxy() {
-    local sbj="$SINGBOX_FOLDER_PATH/sb.json"
-    local _out_list _edit_input _tag _e_type
-    clear
-    green "当前 socks/http 代理出站（可修改关联协议）:"
+     local sbj="$SINGBOX_FOLDER_PATH/sb.json"
+     local _out_list _edit_input _tag _e_type
+     clear
+     green "========= [5][4] 分流管理 → 修改 Socks5/HTTP 出站关联的协议 ========="
+     echo ""
+     green "当前 socks/http 代理出站（可修改关联协议）:"
     _out_list=$(jq -r '[.outbounds[]? | select(.type == "socks" or .type == "http")] | to_entries | .[] | "\(.key+1). \(.value.tag) [\(.value.type)]"' "$sbj" 2>/dev/null)
     [ -z "$_out_list" ] && { yellow "没有可修改的 socks/http 代理出站。"; menu_pause; return; }
     echo "$_out_list"
@@ -5414,7 +5489,7 @@ edit_socks5_proxy() {
             red "'$_tag' 不是 socks/http 代理出站，不可修改！"; menu_pause; return
         fi
     fi
-    attach_socks5_proxy "$_tag"
+    attach_socks5_proxy "$_tag" 4
 }
 
 # 设置全局代理出站（所有流量走指定 socks/http 代理）
