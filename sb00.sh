@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.4.13(2026-08-06)"
+VERSION="1.4.15(2026-08-07)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -813,6 +813,7 @@ print_sb_shortcut_help() {
     green "    sb list key        查看节点 + vless Reality 私钥"
     green "    sb res             重启 sing-box 和 cloudflared"
     green "    sb rt              分流管理"
+    green "    sb node            节点配置修改 (端口/订阅/SNI/Argo)"
     green "    sb sub             订阅管理"
     green "    sb del             卸载（保留二进制）"
     green "    sb delall          卸载全部并清理"
@@ -4397,6 +4398,379 @@ interactive_sub_menu() {
     done
 }
 
+# ================== 节点配置修改（node） ==================
+
+# 读取端口文件值（存在则输出，否则空）
+read_port_file() { [ -s "$SINGBOX_FOLDER_PATH/$1" ] && cat "$SINGBOX_FOLDER_PATH/$1"; }
+
+# 校验 1-65535 端口
+is_valid_port() { [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
+
+# 询问新端口：留空回车 = 随机（结果写入全局 NEW_PORT，避免 prompt 污染 stdout）
+ask_new_port() {
+    local _proto="$1" _in
+    reading "请输入新的 ${_proto} 端口 (留空回车=随机): " _in
+    if [ -z "$_in" ]; then
+        _in="$(rand_port)"
+        green "  ↳ ${_proto} 端口: ${_in} (随机)"
+    elif is_valid_port "$_in"; then
+        green "  ↳ ${_proto} 端口: ${_in}"
+    else
+        red "❌ 端口无效 (1-65535)"; return 1
+    fi
+    NEW_PORT="$_in"
+}
+
+# 更新 sb.json 中指定 tag 的 inbound 监听端口
+update_inbound_port() {
+    local _tag="$1" _port="$2"
+    jq --arg tag "$_tag" --argjson p "$_port" \
+        '(.inbounds[]? | select(.tag == $tag)) .listen_port = $p' \
+        "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" \
+        && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
+}
+
+# 刷新 nginx 配置并重启（trojan/vmess/argo 端口变更时需要）
+regen_nginx_and_restart() {
+    export nginx_pt="${nginx_pt:-$(read_port_file nginx_port)}"
+    export argo_pt="${argo_pt:-$(read_port_file argoport)}"
+    setup_nginx_subscribe > /dev/null 2>&1 && nginx_restart
+}
+
+# 端口修改子菜单
+edit_ports_menu() {
+    local _sel _port _is_port _desc _tag _need_nginx _need_argo
+    while true; do
+        clear
+        green "========= 节点配置修改 → 端口修改 ========="
+        echo ""
+        green "  1) Trojan-WS (Argo) 端口"
+        yellow "       当前: $(read_port_file port_tr)"
+        green "  2) Vmess-WS (Argo) 端口"
+        yellow "       当前: $(read_port_file port_vm_ws)"
+        green "  3) VLESS-Reality 端口"
+        yellow "       当前: $(read_port_file port_vlr)"
+        green "  4) Hysteria2 端口"
+        yellow "       当前: $(read_port_file port_hy2)"
+        green "  5) TUIC 端口"
+        yellow "       当前: $(read_port_file port_tu)"
+        green "  6) AnyTLS 端口"
+        yellow "       当前: $(read_port_file port_any)"
+        green "  7) Argo 端口"
+        yellow "       当前: $(read_port_file argoport)"
+        purple "  0) 返回上级菜单"
+        echo ""
+        yellow "注：仅显示已安装的协议，未安装的协议修改会被忽略。"
+        reading "请输入选择: " _sel
+        case "$_sel" in
+            0) return ;;
+            1|2|3|4|5|6|7) ;;
+            *) yellow "无效选项"; menu_pause; continue ;;
+        esac
+        case "$_sel" in
+            1) _desc="Trojan-WS (Argo)"; _file=port_tr; _tag=trojan-ws-sb; _need_nginx=1 ;;
+            2) _desc="Vmess-WS (Argo)"; _file=port_vm_ws; _tag=vmess-sb; _need_nginx=1 ;;
+            3) _desc="VLESS-Reality"; _file=port_vlr; _tag=vless-reality-vision-sb ;;
+            4) _desc="Hysteria2"; _file=port_hy2; _tag=hy2-sb ;;
+            5) _desc="TUIC"; _file=port_tu; _tag=tuic-sb ;;
+            6) _desc="AnyTLS"; _file=port_any; _tag=anytls-sb ;;
+            7) _desc="Argo"; _file=argoport; _tag=""; _need_argo=1 ;;
+        esac
+
+        if [ ! -s "$SINGBOX_FOLDER_PATH/$_file" ]; then
+            red "❌ 未安装 ${_desc} 协议，无法修改。"; menu_pause; continue
+        fi
+        NEW_PORT=""
+        ask_new_port "$_desc" || { menu_pause; continue; }
+        _port="$NEW_PORT"
+        echo "$_port" > "$SINGBOX_FOLDER_PATH/$_file"
+
+        if [ -n "$_need_argo" ]; then
+            # Argo 端口：更新 tunnel.yml 回源端口 + nginx 监听 + 重启 cloudflared
+            if [ -s "$SINGBOX_FOLDER_PATH/tunnel.yml" ]; then
+                sed -i.bak "s|http://localhost:[0-9]*|http://localhost:${_port}|g" "$SINGBOX_FOLDER_PATH/tunnel.yml" 2>/dev/null
+                rm -f "$SINGBOX_FOLDER_PATH/tunnel.yml.bak" 2>/dev/null
+            fi
+            export argo_pt="$_port"
+            regen_nginx_and_restart
+            argorestart
+            green "✅ Argo 端口修改操作已完成！新端口: ${_port}"
+            menu_pause
+            continue
+        fi
+
+        update_inbound_port "$_tag" "$_port"
+        [ -n "$_need_nginx" ] && regen_nginx_and_restart
+        sbrestart
+        update_subscription_file
+        green "✅ ${_desc} 端口修改操作已完成！新端口: ${_port}"
+        menu_pause
+    done
+}
+
+# 订阅设置子菜单（修改订阅端口 / 取消订阅）
+edit_subscription_menu() {
+    local _sel _np
+    while true; do
+        clear
+        green "========= 节点配置修改 → 订阅设置 ========="
+        echo ""
+        if is_true "$(get_subscribe_flag)"; then
+            green "  📌 订阅状态: 已开启"
+            yellow "  订阅端口: $(read_port_file nginx_port)"
+            green "  订阅地址: $(show_sub_url)"
+        else
+            yellow "  📌 订阅状态: 未开启"
+        fi
+        echo ""
+        green "  1) 修改订阅端口 (Nginx)"
+        red   "  2) 取消节点订阅"
+        purple "  0) 返回上级菜单"
+        reading "请输入选择: " _sel
+        case "$_sel" in
+            0) return ;;
+            1)
+                NEW_PORT=""
+                ask_new_port "订阅 (Nginx)" || { menu_pause; continue; }
+                _np="$NEW_PORT"
+                echo "$_np" > "$SINGBOX_FOLDER_PATH/nginx_port"
+                export nginx_pt="$_np"
+                export subscribe="$(get_subscribe_flag)"
+                setup_nginx_subscribe > /dev/null 2>&1 && nginx_restart
+                update_subscription_file
+                green "✅ 订阅端口修改操作已完成！新端口: ${_np}"
+                green "  新订阅地址: $(show_sub_url)"
+                menu_pause
+                ;;
+            2)
+                echo "false" > "$SINGBOX_FOLDER_PATH/subscribe"
+                export subscribe="false"
+                setup_nginx_subscribe > /dev/null 2>&1 && nginx_restart
+                green "✅ 取消节点订阅操作已完成！订阅已关闭。"
+                menu_pause
+                ;;
+            *) yellow "无效选项"; menu_pause ;;
+        esac
+    done
+}
+
+# SNI / CDN 修改子菜单
+edit_snis_menu() {
+    local _sel _val
+    while true; do
+        clear
+        green "========= 节点配置修改 → SNI / CDN 设置 ========="
+        echo ""
+        green "  1) CDN 优选域名"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/cdn_host" 2>/dev/null)"
+        green "  2) CDN 端口 (仅限 HTTPS 系端口 ${HTTPS_CDN_PORTS[*]})"
+        yellow "       当前: $(read_port_file cdn_pt)"
+        green "  3) Hysteria2 伪装域名"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/hy_sni" 2>/dev/null)"
+        green "  4) VLESS 伪装域名"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/vl_sni" 2>/dev/null)"
+        green "  5) VLESS 伪装端口"
+        yellow "       当前: $(read_port_file vl_sni_pt)"
+        green "  6) TUIC 伪装域名"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/tu_sni" 2>/dev/null)"
+        green "  7) AnyTLS 伪装域名"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/any_sni" 2>/dev/null)"
+        purple "  0) 返回上级菜单"
+        reading "请输入选择: " _sel
+        case "$_sel" in
+            0) return ;;
+            1)
+                reading "请输入新的 CDN 优选域名 (留空=取消): " _val
+                [ -z "$_val" ] && { yellow "已取消"; menu_pause; continue; }
+                echo "$_val" > "$SINGBOX_FOLDER_PATH/cdn_host"
+                update_subscription_file
+                green "✅ CDN 优选域名修改操作已完成！新值: ${_val}"
+                menu_pause
+                ;;
+            2)
+                reading "请输入新的 CDN 端口 (${HTTPS_CDN_PORTS[*]}, 留空=取消): " _val
+                [ -z "$_val" ] && { yellow "已取消"; menu_pause; continue; }
+                if ! printf '%s\n' "${HTTPS_CDN_PORTS[@]}" | grep -qx "$_val"; then
+                    red "❌ CDN 端口仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS[*]})"; menu_pause; continue
+                fi
+                echo "$_val" > "$SINGBOX_FOLDER_PATH/cdn_pt"
+                update_subscription_file
+                green "✅ CDN 端口修改操作已完成！新值: ${_val}"
+                menu_pause
+                ;;
+            3)
+                reading "请输入新的 Hysteria2 伪装域名 (留空=取消): " _val
+                [ -z "$_val" ] && { yellow "已取消"; menu_pause; continue; }
+                echo "$_val" > "$SINGBOX_FOLDER_PATH/hy_sni"
+                update_subscription_file
+                green "✅ Hysteria2 伪装域名修改操作已完成！新值: ${_val}"
+                menu_pause
+                ;;
+            4)
+                reading "请输入新的 VLESS 伪装域名 (留空=取消): " _val
+                [ -z "$_val" ] && { yellow "已取消"; menu_pause; continue; }
+                echo "$_val" > "$SINGBOX_FOLDER_PATH/vl_sni"
+                [ -s "$SINGBOX_FOLDER_PATH/sb.json" ] && \
+                    jq --arg v "$_val" '(.inbounds[]? | select(.tag == "vless-reality-vision-sb")) .tls.server_name = $v | (.inbounds[]? | select(.tag == "vless-reality-vision-sb")) .tls.reality.handshake.server = $v' \
+                    "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
+                sbrestart
+                update_subscription_file
+                green "✅ VLESS 伪装域名修改操作已完成！新值: ${_val}"
+                menu_pause
+                ;;
+            5)
+                NEW_PORT=""
+                ask_new_port "VLESS 伪装" || { menu_pause; continue; }
+                _val="$NEW_PORT"
+                echo "$_val" > "$SINGBOX_FOLDER_PATH/vl_sni_pt"
+                jq --argjson p "$_val" '(.inbounds[]? | select(.tag == "vless-reality-vision-sb")) .tls.reality.handshake.server_port = $p' \
+                    "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
+                sbrestart
+                update_subscription_file
+                green "✅ VLESS 伪装端口修改操作已完成！新值: ${_val}"
+                menu_pause
+                ;;
+            6)
+                reading "请输入新的 TUIC 伪装域名 (留空=取消): " _val
+                [ -z "$_val" ] && { yellow "已取消"; menu_pause; continue; }
+                echo "$_val" > "$SINGBOX_FOLDER_PATH/tu_sni"
+                update_subscription_file
+                green "✅ TUIC 伪装域名修改操作已完成！新值: ${_val}"
+                menu_pause
+                ;;
+            7)
+                reading "请输入新的 AnyTLS 伪装域名 (留空=取消): " _val
+                [ -z "$_val" ] && { yellow "已取消"; menu_pause; continue; }
+                echo "$_val" > "$SINGBOX_FOLDER_PATH/any_sni"
+                [ -s "$SINGBOX_FOLDER_PATH/sb.json" ] && \
+                    jq --arg v "$_val" '(.inbounds[]? | select(.tag == "anytls-sb")) .tls.server_name = $v' \
+                    "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
+                sbrestart
+                update_subscription_file
+                green "✅ AnyTLS 伪装域名修改操作已完成！新值: ${_val}"
+                menu_pause
+                ;;
+            *) yellow "无效选项"; menu_pause ;;
+        esac
+    done
+}
+
+# Argo 隧道修改子菜单（切换固定/临时、取消、切换协议）
+edit_argo_menu() {
+    local _sel _vlvm _argodomain _mode _tmp _d _a
+    while true; do
+        clear
+        green "========= 节点配置修改 → Argo 隧道修改 ========="
+        echo ""
+        _vlvm=$(cat "$SINGBOX_FOLDER_PATH/vlvm" 2>/dev/null)
+        _argodomain=$(cat "$SINGBOX_FOLDER_PATH/argo_domain" 2>/dev/null)
+        if [ -n "$_argodomain" ]; then
+            _mode="固定隧道"
+            [ -s "$SINGBOX_FOLDER_PATH/tunnel.yml" ] && _mode="固定隧道 (JSON)"
+            [ -s "$SINGBOX_FOLDER_PATH/sbargotoken" ] && _mode="固定隧道 (Token)"
+        elif [ -s "$SINGBOX_FOLDER_PATH/argoport" ]; then
+            _mode="临时隧道 (trycloudflare)"
+        else
+            _mode="未启用"
+        fi
+        green "  Argo 状态: ${_mode}"
+        green "  Argo 使用协议: ${_vlvm:--}"
+        [ -n "$_argodomain" ] && green "  Argo 域名: ${_argodomain}"
+        [ -s "$SINGBOX_FOLDER_PATH/argoport" ] && yellow "  Argo 本地端口: $(cat "$SINGBOX_FOLDER_PATH/argoport")"
+        echo ""
+        green "  1) 切换固定 Argo 隧道"
+        green "  2) 切换临时 Argo 隧道"
+        red   "  3) 取消使用 Argo 隧道"
+        green "  4) 切换 Argo 使用协议 (Trojan-WS-TLS / Vmess-WS-TLS)"
+        purple "  0) 返回上级菜单"
+        reading "请输入选择: " _sel
+        case "$_sel" in
+            0) return ;;
+            1)
+                reading "请输入 Argo 域名: " _d
+                [ -z "$_d" ] && { red "❌ 域名不能为空"; menu_pause; continue; }
+                reading "请输入 Argo Token 或粘贴 JSON 凭据: " _a
+                [ -z "$_a" ] && { red "❌ Token/JSON 不能为空"; menu_pause; continue; }
+                echo "$_d" > "$SINGBOX_FOLDER_PATH/argo_domain"
+                rm -f "$SINGBOX_FOLDER_PATH/tunnel.yml" "$SINGBOX_FOLDER_PATH/tunnel.json" "$SINGBOX_FOLDER_PATH/sbargotoken"
+                prepare_argo_credentials "$_a" "$_d" "$(cat "$SINGBOX_FOLDER_PATH/argoport" 2>/dev/null)"
+                if [ "$ARGO_MODE" = "json" ]; then
+                    echo "" > /dev/null
+                elif [ "$ARGO_MODE" = "token" ]; then
+                    echo "$_a" > "$SINGBOX_FOLDER_PATH/sbargotoken"
+                fi
+                argorestart
+                green "✅ 切换固定 Argo 隧道操作已完成！"
+                menu_pause
+                ;;
+            2)
+                rm -f "$SINGBOX_FOLDER_PATH/tunnel.yml" "$SINGBOX_FOLDER_PATH/tunnel.json" "$SINGBOX_FOLDER_PATH/sbargotoken" "$SINGBOX_FOLDER_PATH/argo_domain"
+                argorestart
+                green "✅ 切换临时 Argo 隧道操作已完成！"
+                menu_pause
+                ;;
+            3)
+                pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null
+                [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ] && pkill -15 -f "cloudflared" 2> /dev/null
+                rm -f "$SINGBOX_FOLDER_PATH/tunnel.yml" "$SINGBOX_FOLDER_PATH/tunnel.json" "$SINGBOX_FOLDER_PATH/sbargotoken" "$SINGBOX_FOLDER_PATH/argo_domain" "$SINGBOX_FOLDER_PATH/argo.log"
+                green "✅ 取消使用 Argo 隧道操作已完成！"
+                menu_pause
+                ;;
+            4)
+                _vlvm=$(cat "$SINGBOX_FOLDER_PATH/vlvm" 2>/dev/null)
+                echo ""
+                green "  1) Vmess-WS-TLS (Argo)"
+                green "  2) Trojan-WS-TLS (Argo)"
+                reading "请输入选择 (当前: ${_vlvm:-未设置}): " _tmp
+                case "$_tmp" in
+                    1)
+                        if [ ! -s "$SINGBOX_FOLDER_PATH/port_vm_ws" ]; then
+                            red "❌ 未安装 Vmess-WS 协议，无法切换。"; menu_pause; continue
+                        fi
+                        echo "Vmess" > "$SINGBOX_FOLDER_PATH/vlvm"
+                        green "✅ 已切换 Argo 使用协议为 Vmess-WS-TLS 操作已完成！"
+                        ;;
+                    2)
+                        if [ ! -s "$SINGBOX_FOLDER_PATH/port_tr" ]; then
+                            red "❌ 未安装 Trojan-WS 协议，无法切换。"; menu_pause; continue
+                        fi
+                        echo "Trojan" > "$SINGBOX_FOLDER_PATH/vlvm"
+                        green "✅ 已切换 Argo 使用协议为 Trojan-WS-TLS 操作已完成！"
+                        ;;
+                    *) yellow "无效选项" ;;
+                esac
+                update_subscription_file
+                menu_pause
+                ;;
+            *) yellow "无效选项"; menu_pause ;;
+        esac
+    done
+}
+
+# 节点配置修改主菜单
+node_config_menu() {
+    local _ch
+    while true; do
+        clear
+        green "========= 节点配置修改 (node) ========="
+        echo ""
+        green "  1) 端口修改"
+        green "  2) 订阅设置 (修改订阅端口 / 取消订阅)"
+        green "  3) SNI / CDN 设置修改"
+        green "  4) Argo 隧道修改"
+        purple "  0) 返回主菜单"
+        reading "请输入选择: " _ch
+        case "$_ch" in
+            0) return ;;
+            1) edit_ports_menu ;;
+            2) edit_subscription_menu ;;
+            3) edit_snis_menu ;;
+            4) edit_argo_menu ;;
+            *) yellow "无效选项"; sleep 1 ;;
+        esac
+    done
+}
+
 interactive_log_menu() {
     local _ch _log _log_files _f _lines
     _lines=100
@@ -4590,7 +4964,14 @@ rt_manage() {
         fi
         echo ""
         green "已添加的 socks/http 代理出站:"
-        _outs=$(jq -r '.outbounds[]? | select(.tag != "direct" and .tag != "block" and .tag != "wireguard-out") | "  - \(.tag) [\(.type)]"' "$sbj" 2>/dev/null)
+        _outs=$(jq -r '
+            . as $doc
+            | [.outbounds[]? | select(.type == "socks" or .type == "http")] as $os
+            | [$os[] | (.tag as $t
+                | ([$doc.route.rules[]? | select(.inbound != null and .outbound == $t) | .inbound[]?]) as $a
+                | "  - \($t) [\(.type)]" + (if ($a | length) > 0 then " (附着: \($a | join(", ")))" else "" end))]
+            | .[]
+        ' "$sbj" 2>/dev/null)
         if [ -n "$_outs" ]; then
             echo "$_outs"
         else
@@ -4600,18 +4981,45 @@ rt_manage() {
         green "  1) 设置分流服务 (未添加socks/http直接设置则使用WARP)"
         red   "  2) 删除分流服务"
         green "  3) 添加 Socks5/HTTP 出站"
-        red   "  4) 删除 Socks5/HTTP 出站"
+        green "  4) 修改 Socks5/HTTP 出站关联的协议"
+        red   "  5) 删除 Socks5/HTTP 出站"
+        green "  6) 查看各协议对应的代理出口"
         purple "  0) 返回主菜单"
         reading "请输入选择: " _ch
         case "$_ch" in
             1) add_rule_menu ;;
             2) delete_rule_menu ;;
             3) add_socks5_proxy ;;
-            4) delete_socks5_proxy ;;
+            4) edit_socks5_proxy ;;
+            5) delete_socks5_proxy ;;
+            6) rt_proxy_map ;;
             0) return ;;
             *) yellow "无效选项"; menu_pause ;;
         esac
     done
+}
+
+# 查看各协议对应的代理出口（无代理 = 原IP出站）
+rt_proxy_map() {
+    local sbj="$SINGBOX_FOLDER_PATH/sb.json" _p _out _cnt=0
+    clear
+    green "========= 各协议对应的代理出口 ========="
+    echo ""
+    while IFS= read -r _p; do
+        [ -z "$_p" ] && continue
+        _out=$(jq -r --arg p "$_p" '[.route.rules[]? | select(.inbound != null) | select(.inbound | index($p)) | .outbound // empty] | .[0] // empty' "$sbj" 2>/dev/null)
+        if [ -n "$_out" ]; then
+            green "  ${_p} -----> ${_out}"
+        else
+            yellow "  ${_p} -----> 原ip出站"
+        fi
+        _cnt=$((_cnt+1))
+    done < <(jq -r '.inbounds[]? | select(.tag != "socks5-sb") | .tag' "$sbj" 2>/dev/null)
+    if [ "$_cnt" -eq 0 ]; then
+        yellow "  未检测到已安装的协议入站"
+    fi
+    echo ""
+    menu_pause
 }
 
 # 选择要分流的服务并设置出站
@@ -4852,6 +5260,10 @@ add_socks5_proxy() {
 
     sbrestart
     green "$_tag 代理出站已添加"
+    reading "是否为此代理指定附着的协议？(y/n，直接回车=否): " _attach_now
+    if [[ "$_attach_now" =~ ^[yY]$ ]]; then
+        attach_socks5_proxy "$_tag"
+    fi
     menu_pause
 }
 
@@ -4894,6 +5306,105 @@ delete_socks5_proxy() {
     sbrestart
     green "$_tag 代理出站已删除。"
     menu_pause
+}
+
+# 设置 socks/http 出站附着的协议（生成 inbound 路由规则，多选，可留空清除关联）
+attach_socks5_proxy() {
+    local sbj="$SINGBOX_FOLDER_PATH/sb.json"
+    local _tag="$1" _protos _attached _attach_input _selected=() _n _inbs
+    _protos=($(jq -r '.inbounds[]? | select(.tag != "socks5-sb") | .tag' "$sbj" 2>/dev/null))
+    if [ ${#_protos[@]} -eq 0 ]; then
+        yellow "未检测到已安装的协议入站（tuic/hy2/vmess/vless 等）。"; menu_pause; return
+    fi
+
+    echo ""
+    _attached=$(jq -r --arg tag "$_tag" '.route.rules[]? | select(.inbound != null and .outbound == $tag) | .inbound[]?' "$sbj" 2>/dev/null)
+    if [ -n "$_attached" ]; then
+        green "$_tag 当前附着的协议:"
+        echo "$_attached" | while read -r _p; do green "  - $_p"; done
+    else
+        yellow "$_tag 当前未附着任何协议"
+    fi
+
+    echo ""
+    green "可附着的已安装协议:"
+    for i in "${!_protos[@]}"; do
+        green "  $((i+1)). ${_protos[$i]}"
+    done
+    echo ""
+    yellow "输入要附着的协议编号（多选用空格分隔，直接回车=清除关联）:"
+    reading "请输入: " _attach_input
+    _attach_input=$(echo "$_attach_input" | tr ',' ' ')
+    for _n in $_attach_input; do
+        if [[ "$_n" =~ ^[0-9]+$ ]] && [ "$_n" -ge 1 ] && [ "$_n" -le "${#_protos[@]}" ]; then
+            _p="${_protos[$((_n-1))]}"
+            _conflict=$(jq -r --arg p "$_p" --arg tag "$_tag" '
+                [.route.rules[]? | select(.inbound != null and .outbound != $tag) | .inbound[]? | select(. == $p)]
+                | if length > 0 then .[0] else empty end' "$sbj" 2>/dev/null)
+            if [ -n "$_conflict" ]; then
+                red "协议 ${_p} 已被其他代理使用，已跳过（一个协议只能附着到一个代理）"
+            else
+                _selected+=("$_p")
+            fi
+        fi
+    done
+
+    if [ -n "$_attach_input" ] && [ ${#_selected[@]} -eq 0 ]; then
+        red "编号无效，未做任何修改。"; menu_pause; return
+    fi
+
+    if [ ${#_selected[@]} -gt 0 ]; then
+        _inbs=$(printf '%s\n' "${_selected[@]}" | jq -R . | jq -s .)
+    else
+        _inbs="[]"
+    fi
+
+    # 删除该出站旧的 inbound 规则，写入新的（空数组 = 只清除关联）
+    jq --arg tag "$_tag" --argjson inbs "$_inbs" '
+        . as $doc
+        | ($doc.route.rules // []) as $R
+        | ($R | map(select(.action == "sniff"))) as $sniff
+        | ($R | map(select(.action == "resolve"))) as $resolve
+        | ($R | map(select(.action != "sniff" and .action != "resolve" and (.inbound == null or .outbound != $tag)))) as $splits
+        | $doc
+        | if ($inbs | length) > 0 then
+            .route.rules = $sniff + [{inbound: $inbs, outbound: $tag}] + $splits + $resolve
+          else
+            .route.rules = $sniff + $splits + $resolve
+          end
+    ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$sbj"
+    sbrestart
+    if [ ${#_selected[@]} -gt 0 ]; then
+        green "$_tag 已附着到: ${_selected[*]}"
+    else
+        green "$_tag 关联已清除"
+    fi
+}
+
+# 选择一个 socks/http 出站，重新设置它附着的协议
+edit_socks5_proxy() {
+    local sbj="$SINGBOX_FOLDER_PATH/sb.json"
+    local _out_list _edit_input _tag _e_type
+    clear
+    green "当前 socks/http 代理出站（可修改关联协议）:"
+    _out_list=$(jq -r '[.outbounds[]? | select(.type == "socks" or .type == "http")] | to_entries | .[] | "\(.key+1). \(.value.tag) [\(.value.type)]"' "$sbj" 2>/dev/null)
+    [ -z "$_out_list" ] && { yellow "没有可修改的 socks/http 代理出站。"; menu_pause; return; }
+    echo "$_out_list"
+    echo ""
+    reading "输入要修改的代理编号或标签: " _edit_input
+    if [[ "$_edit_input" =~ ^[0-9]+$ ]]; then
+        _tag=$(jq -r --arg idx "$_edit_input" '.outbounds | map(select(.type == "socks" or .type == "http")) | .[($idx | tonumber)-1].tag // empty' "$sbj")
+        [ -z "$_tag" ] && { red "编号无效！"; menu_pause; return; }
+    else
+        _tag="$_edit_input"
+        _e_type=$(jq -r --arg tag "$_tag" '.outbounds[]? | select(.tag == $tag) | .type' "$sbj" 2>/dev/null)
+        if [ -z "$_e_type" ]; then
+            red "标签 '$_tag' 不存在！"; menu_pause; return
+        elif [ "$_e_type" != "socks" ] && [ "$_e_type" != "http" ]; then
+            red "'$_tag' 不是 socks/http 代理出站，不可修改！"; menu_pause; return
+        fi
+    fi
+    attach_socks5_proxy "$_tag"
 }
 
 # 设置全局代理出站（所有流量走指定 socks/http 代理）
@@ -4976,20 +5487,21 @@ interactive_main() {
         echo ""
         yellow "  【管 理】"
         green "    [3] 服务管理"
-        green "    [4] 分流管理 (rt)"
-        green "    [5] sb 快捷命令 (sc)"
+        green "    [4] 节点配置修改 (node)"
+        green "    [5] 分流管理 (rt)"
+        green "    [6] sb 快捷命令 (sc)"
         echo ""
         yellow "  【查 看】"
-        green "    [6] 查看节点信息 (list)"
-        green "    [7] 查看运行状态"
-        green "    [8] 订阅管理 (sub)"
+        green "    [7] 查看节点信息 (list)"
+        green "    [8] 查看运行状态"
+        green "    [9] 订阅管理 (sub)"
         echo ""
         yellow "  【日 志】"
-        green "    [9] 查看日志 (logs)"
+        green "    [10] 查看日志 (logs)"
         echo ""
         red   "  【危险操作】"
-        red   "    [10] 卸载 (del, 保留二进制)"
-        red   "    [11] 卸载全部并清理 (delall)"
+        red   "    [11] 卸载 (del, 保留二进制)"
+        red   "    [12] 卸载全部并清理 (delall)"
         echo ""
         purple "    [0] 退出"
         echo ""
@@ -4999,20 +5511,21 @@ interactive_main() {
             1) interactive_install; menu_pause ;;
             2) interactive_reinstall; menu_pause ;;
             3) interactive_service_menu ;;
-            4) rt_manage ;;
-            5) interactive_sb_shortcut_menu ;;
-            6) cip; menu_pause ;;
-            7) menu_status_block; show_local_ip_info_with_out_ip_hint; menu_pause ;;
-            8) interactive_sub_menu ;;
-            9) interactive_log_menu ;;
-            10)
+            4) node_config_menu ;;
+            5) rt_manage ;;
+            6) interactive_sb_shortcut_menu ;;
+            7) cip; menu_pause ;;
+            8) menu_status_block; show_local_ip_info_with_out_ip_hint; menu_pause ;;
+            9) interactive_sub_menu ;;
+            10) interactive_log_menu ;;
+            11)
                 reading "确认卸载? (y/N): " _ch
                 if [ "$_ch" = "y" ] || [ "$_ch" = "Y" ]; then
                     cleandel
                     green "✅ 已卸载 (保留二进制)"
                 fi
                 menu_pause ;;
-            11)
+            12)
                 reading "确认卸载全部并清理? (y/N): " _ch
                 if [ "$_ch" = "y" ] || [ "$_ch" = "Y" ]; then
                     cleandel delall
@@ -5170,6 +5683,12 @@ main() {
         exit
     fi
 
+    # 节点配置修改（端口/订阅/SNI/Argo）
+    if [ "$_cmd" = "node" ] || [ "$_cmd" = "nc" ]; then
+        node_config_menu
+        exit
+    fi
+
     # 创建/刷新 sb 快捷命令
     if [ "$_cmd" = "sc" ] || [ "$_cmd" = "shortcut" ]; then
         ensure_sb_shortcut
@@ -5185,7 +5704,7 @@ main() {
     # 无效命令提示
     echo
     red "❌ 无效命令：$1"
-    yellow "可用命令：menu / ins / rep / del / delall / list / sub / res / ups / rt / sc / sc_off / autostart / autostart_off / nginx_start / nginx_stop / nginx_restart / nginx_status"
+    yellow "可用命令：menu / ins / rep / del / delall / list / sub / res / ups / rt / node / sc / sc_off / autostart / autostart_off / nginx_start / nginx_stop / nginx_restart / nginx_status"
     showmode
     exit 1
 
