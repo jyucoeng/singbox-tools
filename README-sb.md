@@ -419,6 +419,11 @@ tail -200 /root/doraemon/argo.log
 
 ## 版本变更信息
 
+v1.0.14 (2026-08-07)
+ - 支持交互式菜单操作
+ - 支持内置代理 / 分流管理
+ - 方便对接代理 [jyucoeng/aimili-vpngate](https://github.com/jyucoeng/aimili-vpngate)，该项目的代理出口为家宽 IP，可让节点使用家宽出口
+
 v1.0.13
  - sing-box 内核（1.13.14）下载源切换到本仓库 jyucoeng/singbox-tools（release: v1.13.14）
  - 新增 .github/workflows/sync-singbox.yml：手动触发，从上游镜像 4 个 linux 二进制包（amd64/arm64 及 musl 变体）到本仓库 release
