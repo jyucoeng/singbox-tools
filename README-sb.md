@@ -36,7 +36,7 @@ sb nginx_status    查看 Nginx 状态
 在服务器上执行 `sb sc` 创建快捷命令后即可使用以上指令。
 
 # 1、 singbox 安装以及卸载
-## singbox 一键安装脚本（vmess argo/trojan argo/vless argo 选1 + hy2+vless-Reality+tuic+anytls+socks5，这些协议可自由组合）
+## singbox 一键安装脚本（vmess argo/trojan argo/vless argo 3选1 + hy2+vless-Reality+tuic+anytls+socks5，这些协议可自由组合）
 
 举个例子🌰说明（这里会列出所有支持的环境变量）：
 
