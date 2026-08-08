@@ -36,7 +36,7 @@ sb nginx_status    查看 Nginx 状态
 在服务器上执行 `sb sc` 创建快捷命令后即可使用以上指令。
 
 # 1、 singbox 安装以及卸载
-## singbox 一键安装脚本（vmess argo/trojan argo 选1 + hy2+vless-Reality+tuic+anytls+socks5，这些协议可自由组合）
+## singbox 一键安装脚本（vmess argo/trojan argo/vless argo 选1 + hy2+vless-Reality+tuic+anytls+socks5，这些协议可自由组合）
 
 举个例子🌰说明（这里会列出所有支持的环境变量）：
 
@@ -54,6 +54,7 @@ uuid=0631a7f3-09f8-4144-acf2-a4f5bd9ed200 \
 ippz=4 \
 out_ip='你的特殊出口ip(仅当你的出口ip和服务器ip不一致时有效，需配合ipzz使用，一般情况下留空或者不传值)' \
 trpt=41002(备注：pt为 port的简写) \
+vlpt=41008(备注：pt为 port的简写，vless argo 用) \
 vlrt=41003(备注：rt为 reality port的简写) \
 hypt=41004 \
 tupt=41005 \
@@ -123,6 +124,9 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 ——  Trojan Argo：
 trojan://${uuid}@${cdn_host}:${cdn_pt}?...
 
+——  Vless Argo：
+vless://${uuid}@${cdn_host}:${cdn_pt}?...
+
 举🌰：
 ```
 trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
@@ -176,13 +180,14 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
    trpt=41003 \
    hypt=41001 \
    vlrt=41002 \
+   vlpt=41008 \
    vmpt=41004 \
    tupt=41005 \
    anypt=41006 \
    socks5pt=31017 \
    nginx_pt=31007 \
    ```
-   这些分别为trojan、hy2、vless、tuic、anytls、vmess、socks5、nginx订阅地址的端口.
+   这些分别为trojan、hy2、vless-reality、vless-argo、tuic、anytls、vmess、socks5、nginx订阅地址的端口.
    - pt为 port的简写
    - rt为 reality port的简写
 
@@ -203,11 +208,12 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
 
 - 当argo=vmpt 表示启用vmess的argo
 - 当argo=trpt 表示启用trojan的argo
+- 当argo=vlpt 表示启用vless的argo
 - 或者这个argo参数留空，表示不启用argo
 
-⚠️ Argo 只能用于 VMess / Trojan，是2选1的模式，暂时不支持同时argo
+⚠️ Argo 只能用于 VMess / Trojan / Vless，是3选1的模式，暂时不支持同时argo
 
-❌ 对 hypt / vlrt /tupt无效
+❌ 对 hypt / vlrt / tupt无效（vless 用的是 vlpt，即 vless-ws 走 argo）
 
 ## 9、 agn / agk（Argo 固定隧道）
 
@@ -321,7 +327,7 @@ vlrt=2083 \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
-## 组合3️⃣、 VMess  Argo/ Trojan  Argo（最常用，2个协议选一个）
+## 组合3️⃣、 VMess  Argo/ Trojan  Argo / Vless Argo（最常用，3个协议选一个）
 
 ### 当使用Vmess Argo时
 
@@ -344,6 +350,18 @@ argo=trpt \
 agn="test-vmess.xxxx.xyz" \
 agk="ey开头的那一串" \
 name="小叮当-韩国春川trojanc"  \
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)  rep
+```
+
+## 当使用vless Argo时
+
+```bash
+ippz=4 \
+vlpt=41008 \
+argo=vlpt \
+agn="test-vless.xxxx.xyz" \
+agk="ey开头的那一串" \
+name="小叮当-韩国春川vless"  \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)  rep
 ```
 
@@ -404,17 +422,19 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 | socks5pt                     | 1（socks5）                                           |
 | vmpt                         | 0（无直连）                                           |
 | trpt                         | 0（无直连）                                           |
+| vlpt                         | 0（无直连）                                           |
 | vmpt + argo=vmpt             | 1（Argo-vmess）                                       |
 | trpt + argo=trpt             | 1（Argo-trojan）                                      |
+| vlpt + argo=vlpt             | 1（Argo-vless）                                       |
 | hypt + vlrt                  | 2（hy2和vless直连）                                   |
 | hypt + vlrt + tupt           | 3（hy2、vless、tuic直连）                             |
 | hypt + vlrt + tupt + anypt   | 4（hy2、vless、tuic、anytls直连）                     |
 | hypt + vlrt + socks5pt       | 3（hy2、vless、socks5直连）                           |
 | hypt + vlrt + tupt + anypt + socks5pt | 5（hy2、vless、tuic、anytls、socks5直连）     |
-| hypt + vlrt + argo           | **3（hy2、vless直连+Argo-vmess或者Argo-trojan）**         |
-| hypt + vlrt + tupt + argo    | **4（hy2、vless、tuic直连+Argo-vmess或者Argo-trojan）**   |
-| hypt + vlrt + tupt + anypt + argo | **5（hy2、vless、tuic、anytls直连+Argo-vmess或者Argo-trojan）** |
-| hypt + vlrt + tupt + anypt + socks5pt + argo | **6（hy2、vless、tuic、anytls、socks5直连+Argo-vmess或者Argo-trojan）** |
+| hypt + vlrt + argo           | **3（hy2、vless直连+Argo-vmess/Argo-trojan/Argo-vless）**         |
+| hypt + vlrt + tupt + argo    | **4（hy2、vless、tuic直连+Argo-vmess/Argo-trojan/Argo-vless）**   |
+| hypt + vlrt + tupt + anypt + argo | **5（hy2、vless、tuic、anytls直连+Argo-vmess/Argo-trojan/Argo-vless）** |
+| hypt + vlrt + tupt + anypt + socks5pt + argo | **6（hy2、vless、tuic、anytls、socks5直连+Argo-vmess/Argo-trojan/Argo-vless）** |
 
 ## 日志查看
 
@@ -449,6 +469,12 @@ tail -200 /root/doraemon/argo.log
 
 
 ## 版本变更信息
+
+v1.0.15 (2026-08-08)
+ - Argo 隧道协议由 vmess/trojan 二选一升级为 vmess/trojan/vless 三选一
+ - 新增 vless argo 支持：环境变量 `vlpt` 指定 vless-ws 本地端口，`argo=vlpt` 启用
+ - 安装菜单 / 端口修改菜单 / Argo 协议切换菜单 / 分流管理均支持 vless
+ - nginx 订阅新增 `/${uuid}-vl` 反代，vless argo 链接自动输出到订阅与 jh.txt
 
 v1.0.14 (2026-08-07)
  - 支持交互式菜单操作
