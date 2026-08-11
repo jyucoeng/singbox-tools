@@ -61,6 +61,7 @@ tupt=41005 \
 argo="trpt" \
 anypt=41006 \
 xhttppt=41003(备注：pt为 port的简写，xhttp 用) \
+xhttp_sni_pt=443(备注：xhttp 的伪装握手端口，默认443) \
 nginx_pt=41007 \
 socks5pt=41017 \
 socks5_username='你的socks5自定义用户名' \
@@ -149,6 +150,8 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
 
 - xhttp_sni 指的是用xhttp协议的sni(伪装域名)，缺省值为www.apple.com，你可以自己传你要的值，比如 www.yahoo.com 。 不传就会使用缺省值做兜底。
 
+- xhttp_sni_pt 指的是xhttp协议的sni(伪装域名)对应的握手端口，默认是443，你可在安装时自定义为https系那几个中的一个。**独立于 vl_sni_pt**，只安装 xhttp 未安装 vless-reality 时也能单独设置。
+
 - argo的对外默认优选端口为443（可自行修改cdn_pt 参数），同样argo_pt对本地的监听端口为8001.也可以自定义（但是不建议改，不然你就要同时去把CF里面的对应的HTTP改成你自定义的端口。）
 
 <img width="1514" height="621" alt="CleanShot 2026-01-25 at 12 50 32" src="https://github.com/user-attachments/assets/ec1d2396-4832-4b1b-9da7-cbda4e9c56f1" />
@@ -188,10 +191,11 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
    tupt=41005 \
    anypt=41006 \
    xhttppt=41003 \
+   xhttp_sni_pt=443 \
    socks5pt=31017 \
    nginx_pt=31007 \
    ```
-   这些分别为trojan、hy2、vless-reality、vless-argo、tuic、anytls、vmess、xhttp、socks5、nginx订阅地址的端口.
+   这些分别为trojan、hy2、vless-reality、vless-argo、tuic、anytls、vmess、xhttp、xhttp伪装端口、socks5、nginx订阅地址的端口.
    - pt为 port的简写
    - rt为 reality port的简写
 
@@ -493,6 +497,10 @@ tail -200 /root/doraemon/argo.log
 
 
 ## 版本变更信息
+
+v1.0.17 (2026-08-11)
+ - xhttp 新增独立伪装端口 `xhttp_sni_pt`（默认 443）：仅安装 xhttp、未安装 vless-reality 时也能单独设置伪装握手端口
+ - `sb node → SNI / CDN 设置` 菜单新增「VLESS-XHTTP 伪装端口」修改项
 
 v1.0.16 (2026-08-11)
  - 新增 VLESS-XHTTP-Reality 直连协议：环境变量 `xhttppt` 指定端口，默认 SNI 为 www.apple.com，可用 `xhttp_sni` 自定义

@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.0.16(2026-08-11)"
+VERSION="1.0.17(2026-08-11)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -79,6 +79,7 @@ HTTPS_CDN_PORTS=(443 2053 2083 2087 2096 8443)
 # 默认 CDN 端口和 Vless SNI 端口
 cdn_pt="${cdn_pt:-443}"
 vl_sni_pt="${vl_sni_pt:-443}"
+xhttp_sni_pt="${xhttp_sni_pt:-443}"
 
 v46url="https://icanhazip.com"
 SCRIPT_URL="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb00.sh"
@@ -1026,7 +1027,9 @@ normalize_cdn_pt() {
 # ✅ 规范化 cdn_pt（让后续写入文件/输出节点都统一）
 cdn_pt="$(normalize_cdn_pt "$cdn_pt" 443)"
 vl_sni_pt="$(normalize_cdn_pt "$vl_sni_pt" 443)"
+xhttp_sni_pt="$(normalize_cdn_pt "$xhttp_sni_pt" 443)"
 export vl_sni_pt
+export xhttp_sni_pt
 export cdn_pt
 
 # ================== 处理tunnel的json ==================
@@ -1957,6 +1960,13 @@ installsb() {
             echo "$xhttp_sni" > "$SINGBOX_FOLDER_PATH/xhttp_sni"
         fi
 
+        # xhttp_sni_pt 独立于 vl_sni_pt：只装 xhttp 未装 vless-reality 时也能单独设置伪装端口
+        if [ -s "$SINGBOX_FOLDER_PATH/xhttp_sni_pt" ]; then
+            xhttp_sni_pt=$(cat "$SINGBOX_FOLDER_PATH/xhttp_sni_pt")
+        else
+            echo "$xhttp_sni_pt" > "$SINGBOX_FOLDER_PATH/xhttp_sni_pt"
+        fi
+
         if [ ! -f "$SINGBOX_FOLDER_PATH/reality.key" ]; then
             "$SINGBOX_FOLDER_PATH/sing-box" generate reality-keypair > "$SINGBOX_FOLDER_PATH/reality.key"
         fi
@@ -1967,7 +1977,7 @@ installsb() {
         short_id="$(get_short_id "$SINGBOX_FOLDER_PATH/short_id")"
 
         jq --arg port "$port_xhttp" --arg uuid "$uuid" \
-            --arg sni "$xhttp_sni" --arg sni_pt "$vl_sni_pt" \
+            --arg sni "$xhttp_sni" --arg sni_pt "$xhttp_sni_pt" \
             --arg priv_key "$private_key" --arg sid "$short_id" '
             .inbounds += [{
                 type: "vless", tag: "vless-xhttp-reality-sb", listen: "::",
@@ -3067,6 +3077,7 @@ write2SingboxFolders() {
     echo "${nginx_pt}" > "$SINGBOX_FOLDER_PATH/nginx_port"
 
     echo "${vl_sni_pt}" > "$SINGBOX_FOLDER_PATH/vl_sni_pt"
+    echo "${xhttp_sni_pt}" > "$SINGBOX_FOLDER_PATH/xhttp_sni_pt"
 
     # ✅ 订阅开关落盘（默认 false）
     echo "${subscribe}" > "$SINGBOX_FOLDER_PATH/subscribe"
@@ -4395,11 +4406,14 @@ menu_collect_install() {
         reading "  VLESS-XHTTP 伪装域名 (默认=www.apple.com): " _ans
         [ -n "$_ans" ] && export xhttp_sni="$_ans"
         green "  ↳ VLESS-XHTTP 伪装域名: ${xhttp_sni:-www.apple.com}"
+        reading "  VLESS-XHTTP 伪装端口 (默认=443): " _ans
+        [ -n "$_ans" ] && export xhttp_sni_pt="$_ans"
+        green "  ↳ VLESS-XHTTP 伪装端口: ${xhttp_sni_pt:-443}"
     else
         green "  ↳ SNI/CDN: 全部使用默认值"
         green "  ↳ CDN 优选域名=${cdn_host:-saas.sin.fan}, CDN 端口=${cdn_pt:-443},"
         green "  ↳ Hysteria2 伪装域名=${hy_sni:-www.apple.com}, VLESS 伪装域名=${vl_sni:-www.apple.com},"
-        green "  ↳ VLESS 伪装端口=${vl_sni_pt:-443}, TUIC 伪装域名=${tu_sni:-www.apple.com}"
+        green "  ↳ VLESS 伪装端口=${vl_sni_pt:-443}, VLESS-XHTTP 伪装端口=${xhttp_sni_pt:-443}, TUIC 伪装域名=${tu_sni:-www.apple.com}"
     fi
 
     # 节点名称前缀（最后询问）
@@ -4746,6 +4760,8 @@ edit_snis_menu() {
         yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/any_sni" 2>/dev/null)"
         green "  8) VLESS-XHTTP 伪装域名"
         yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/xhttp_sni" 2>/dev/null)"
+        green "  9) VLESS-XHTTP 伪装端口"
+        yellow "       当前: $(read_port_file xhttp_sni_pt)"
         purple "  0) 返回上级菜单"
         reading "请输入选择: " _sel
         case "$_sel" in
@@ -4827,6 +4843,17 @@ edit_snis_menu() {
                     "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
                 refresh_sb_and_sub
                 green "✅ VLESS-XHTTP 伪装域名修改操作已完成！新值: ${_val}"
+                menu_pause
+                ;;
+            9)
+                NEW_PORT=""
+                ask_new_port "VLESS-XHTTP 伪装" || { menu_pause; continue; }
+                _val="$NEW_PORT"
+                echo "$_val" > "$SINGBOX_FOLDER_PATH/xhttp_sni_pt"
+                jq --argjson p "$_val" '(.inbounds[]? | select(.tag == "vless-xhttp-reality-sb")) .tls.reality.handshake.server_port = $p' \
+                    "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
+                refresh_sb_and_sub
+                green "✅ VLESS-XHTTP 伪装端口修改操作已完成！新值: ${_val}"
                 menu_pause
                 ;;
             *) yellow "无效选项"; menu_pause ;;
