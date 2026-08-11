@@ -22,7 +22,7 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.0.15(2026-08-08)"
+VERSION="1.0.16(2026-08-11)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -31,6 +31,7 @@ export hy_sni=${hy_sni:-"www.apple.com"}    # Default SNI for hy2 protocol
 export vl_sni=${vl_sni:-"www.apple.com"}    # Default SNI for vless protocol   www.ua.edu www.yahoo.com
 export tu_sni=${tu_sni:-"www.apple.com"}    # Default SNI for hy2 protocol
 export any_sni=${any_sni:-"www.apple.com"}  # Default SNI for anytls protocol
+export xhttp_sni=${xhttp_sni:-"www.apple.com"}  # Default SNI for vless-xhttp-reality protocol
 
 # Environment variables for ports and other settings
 export uuid=${uuid:-''}
@@ -41,6 +42,7 @@ export port_hy2=${hypt:-''}
 export port_vlr=${vlrt:-''}
 export port_tu=${tupt:-''}
 export port_any=${anypt:-''}
+export port_xhttp=${xhttppt:-''}
 export port_socks5=${socks5pt:-''}
 export socks5_username=${socks5_username:-''}
 export socks5_password=${socks5_password:-''}
@@ -136,7 +138,7 @@ get_subscribe_flag() {
 is_yes() { [ "${1:-}" = "yes" ]; }
 
 # 这些变量是你脚本外部用来“开启协议”的标记：
-# trpt / hypt / vmpt / vlpt / vlrt / tupt / anypt / socks5pt
+# trpt / hypt / vmpt / vlpt / vlrt / tupt / anypt / xhttppt / socks5pt
 # 只要标记存在，就启用对应协议
 if [ -n "${trpt+x}" ]; then
     trp=yes
@@ -169,13 +171,17 @@ if [ -n "${anypt+x}" ]; then
     anyp=yes
 fi
 
+if [ -n "${xhttppt+x}" ]; then
+    xhtp=yes
+fi
+
 if [ -n "${socks5pt+x}" ]; then
     socksp=yes
 fi
 
 # 判断：至少启用一个协议
 any_proto_enabled() {
-    is_yes "$vlr" || is_yes "$vmp" || is_yes "$vlp" || is_yes "$trp" || is_yes "$hyp" || is_yes "$tup" || is_yes "$anyp" || is_yes "$socksp"
+    is_yes "$vlr" || is_yes "$vmp" || is_yes "$vlp" || is_yes "$trp" || is_yes "$hyp" || is_yes "$tup" || is_yes "$anyp" || is_yes "$xhtp" || is_yes "$socksp"
 }
 
 # 判断：是否需要 Argo
@@ -874,7 +880,7 @@ showmode() {
     blue "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     green "     Sing-box 一键脚本"
     yellow "     协议: vmess/trojan/vless (Argo 选1)"
-    yellow "          vless reality+hy2+tuic+anytls+socks5"
+    yellow "          vless reality+xhttp+hy2+tuic+anytls+socks5"
     green "     Author：$AUTHOR"
     green "     Version: ${VERSION}"
     blue "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -1930,6 +1936,54 @@ installsb() {
                         short_id: [$sid]
                     }
                 }
+            }]' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
+    fi
+
+    # 添加vless-xhttp-reality协议
+    if [ -n "$xhtp" ]; then
+        if [ -z "$port_xhttp" ] && [ ! -e "$SINGBOX_FOLDER_PATH/port_xhttp" ]; then
+            port_xhttp=$(rand_port)
+            echo "$port_xhttp" > "$SINGBOX_FOLDER_PATH/port_xhttp"
+        elif [ -n "$port_xhttp" ]; then
+            echo "$port_xhttp" > "$SINGBOX_FOLDER_PATH/port_xhttp"
+        fi
+        port_xhttp=$(cat "$SINGBOX_FOLDER_PATH/port_xhttp")
+        yellow "VLESS-XHTTP-Reality端口：$port_xhttp"
+
+        # xhttp_sni 也应该保持稳定：优先读取文件，不存在才使用新值
+        if [ -s "$SINGBOX_FOLDER_PATH/xhttp_sni" ]; then
+            xhttp_sni=$(cat "$SINGBOX_FOLDER_PATH/xhttp_sni")
+        else
+            echo "$xhttp_sni" > "$SINGBOX_FOLDER_PATH/xhttp_sni"
+        fi
+
+        if [ ! -f "$SINGBOX_FOLDER_PATH/reality.key" ]; then
+            "$SINGBOX_FOLDER_PATH/sing-box" generate reality-keypair > "$SINGBOX_FOLDER_PATH/reality.key"
+        fi
+
+        # ✅ Reality Keypair：只传私钥即可（自动算公钥/或复用文件），节点输出保持一致
+        init_reality_keypair
+        private_key="${reality_private}"
+        short_id="$(get_short_id "$SINGBOX_FOLDER_PATH/short_id")"
+
+        jq --arg port "$port_xhttp" --arg uuid "$uuid" \
+            --arg sni "$xhttp_sni" --arg sni_pt "$vl_sni_pt" \
+            --arg priv_key "$private_key" --arg sid "$short_id" '
+            .inbounds += [{
+                type: "vless", tag: "vless-xhttp-reality-sb", listen: "::",
+                listen_port: ($port | tonumber),
+                users: [{uuid: $uuid, flow: "xtls-rprx-vision"}],
+                tls: {
+                    enabled: true,
+                    server_name: $sni,
+                    reality: {
+                        enabled: true,
+                        handshake: {server: $sni, server_port: ($sni_pt | tonumber)},
+                        private_key: $priv_key,
+                        short_id: [$sid]
+                    }
+                },
+                transport: {type: "xhttp", host: $sni, path: "/"}
             }]' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
     fi
 
@@ -3004,6 +3058,8 @@ write2SingboxFolders() {
     echo "${tu_sni}" > "$SINGBOX_FOLDER_PATH/tu_sni"
     # any_sni 在 anytls 配置生成时处理，这里不覆盖
     [ ! -s "$SINGBOX_FOLDER_PATH/any_sni" ] && echo "${any_sni}" > "$SINGBOX_FOLDER_PATH/any_sni"
+    # xhttp_sni 在 xhttp 配置生成时处理，这里不覆盖
+    [ ! -s "$SINGBOX_FOLDER_PATH/xhttp_sni" ] && echo "${xhttp_sni}" > "$SINGBOX_FOLDER_PATH/xhttp_sni"
     echo "${cdn_host}" > "$SINGBOX_FOLDER_PATH/cdn_host"
     echo "${cdn_pt}" > "$SINGBOX_FOLDER_PATH/cdn_pt"
 
@@ -3405,6 +3461,7 @@ regenerate_links_and_sub() {
     local _cip_arg="${1:-}"
     local uuid server_ip sxname port_hy2 hy_sni SHA256_hy2 port_tu tu_sni password
     local port_vlr public_key short_id vl_sni port_any any_sni
+    local port_xhttp xhttp_sni
     local argodomain cdn_host cdn_pt vlvm vmatls_link1 vlessws_link1 tratls_link1 sbtk
     local port_socks5 socks5_username socks5_password socks5_user_enc socks5_pass_enc socks5_link
 
@@ -3453,6 +3510,22 @@ regenerate_links_and_sub() {
         yellow "💣【 VLESS-Reality-Vision 】(直连协议)"
         green "$vless_link"
         append_jh "$vless_link"
+        echo
+
+        # 查看节点时提示用户保存私钥（方便下次保持节点一致）,一般这里的$1值为"key"
+        print_reality_key "$_cip_arg"
+    fi
+    # VLESS-XHTTP-Reality protocol (vless-xhttp-reality)
+    if grep -q "vless-xhttp-reality-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
+        port_xhttp=$(cat "$SINGBOX_FOLDER_PATH/port_xhttp")
+        public_key=$(sed -n '2p' "$SINGBOX_FOLDER_PATH/reality.key" | awk '{print $2}')
+        short_id=$(cat "$SINGBOX_FOLDER_PATH/short_id")
+        xhttp_sni=$(cat "$SINGBOX_FOLDER_PATH/xhttp_sni")
+
+        xhttp_link="vless://${uuid}@${server_ip}:${port_xhttp}?encryption=none&security=reality&type=xhttp&pbk=${public_key}&fp=chrome&sni=${xhttp_sni}&sid=${short_id}&flow=xtls-rprx-vision&path=%2F#${sxname}XHTTP-Reality-$hostname"
+        yellow "💣【 VLESS-XHTTP-Reality 】(直连协议)"
+        green "$xhttp_link"
+        append_jh "$xhttp_link"
         echo
 
         # 查看节点时提示用户保存私钥（方便下次保持节点一致）,一般这里的$1值为"key"
@@ -3804,7 +3877,7 @@ check_port_conflicts_or_exit() {
     fi
 
     # 固定检查协议端口；subscribe=true 时才额外检查 nginx_pt
-    local vars="vmpt vlpt trpt vlrt hypt tupt anypt socks5pt"
+    local vars="vmpt vlpt trpt vlrt hypt tupt anypt xhttppt socks5pt"
     if $need_nginx; then
         vars="$vars argo_pt nginx_pt"
     fi
@@ -3961,7 +4034,7 @@ menu_status_block() {
 
 # 根据 *pt 环境变量重新推导协议开关与端口变量（交互模式设置环境变量后调用）
 menu_reload_proto_flags() {
-    trp=; vmag=; hyp=; vmp=; vlp=; vlr=; tup=; anyp=; socksp=
+    trp=; vmag=; hyp=; vmp=; vlp=; vlr=; tup=; anyp=; socksp=; xhtp=
     [ -n "${trpt+x}" ] && { trp=yes; vmag=yes; }
     [ -n "${hypt+x}" ] && hyp=yes
     [ -n "${vmpt+x}" ] && { vmp=yes; vmag=yes; }
@@ -3969,11 +4042,13 @@ menu_reload_proto_flags() {
     [ -n "${vlrt+x}" ] && vlr=yes
     [ -n "${tupt+x}" ] && tup=yes
     [ -n "${anypt+x}" ] && anyp=yes
+    [ -n "${xhttppt+x}" ] && xhtp=yes
     [ -n "${socks5pt+x}" ] && socksp=yes
-    export trp hyp vmp vlp vlr tup anyp socksp vmag
+    export trp hyp vmp vlp vlr tup anyp socksp vmag xhtp
     # 重新绑定端口变量（与文件顶部一致）
     export port_vm_ws=${vmpt:-''} port_vl_ws=${vlpt:-''} port_tr=${trpt:-''} port_hy2=${hypt:-''} \
            port_vlr=${vlrt:-''} port_tu=${tupt:-''} port_any=${anypt:-''} \
+           port_xhttp=${xhttppt:-''} \
            port_socks5=${socks5pt:-''}
 }
 
@@ -4112,6 +4187,7 @@ menu_collect_install() {
     green "  c) Hysteria2"
     green "  d) TUIC"
     green "  e) AnyTLS"
+    green "  x) VLESS-XHTTP-Reality"
     reading "输入选项 (回车默认=全部直连协议 b c d e): " _ch
     [ -z "$_ch" ] && _ch="b c d e"
     _ch="$(printf '%s' "$_ch" | tr ',' ' ' | tr '[:upper:]' '[:lower:]')"
@@ -4122,6 +4198,7 @@ menu_collect_install() {
             c) _names="$_names,Hysteria2" ;;
             d) _names="$_names,TUIC" ;;
             e) _names="$_names,AnyTLS" ;;
+            x) _names="$_names,XHTTP" ;;
         esac
     done
     green "  ↳ 直连协议: ${_ch} (${_names#,})"
@@ -4157,6 +4234,7 @@ menu_collect_install() {
             c) export hypt="" ;;
             d) export tupt="" ;;
             e) export anypt="" ;;
+            x) export xhttppt="" ;;
             f) export vmpt="" ;;
             g) export trpt="" ;;
             v) export vlpt="" ;;
@@ -4178,12 +4256,13 @@ menu_collect_install() {
         [ -n "$trp" ] && export trpt="$(menu_ask_port "Trojan-WS (Argo)")"
         [ -n "$vmp" ] && export vmpt="$(menu_ask_port "Vmess-WS (Argo)")"
         [ -n "$vlp" ] && export vlpt="$(menu_ask_port "Vless-WS (Argo)")"
-        for _sel in vlr hyp tup anyp; do
+        for _sel in vlr hyp tup anyp xhtp; do
             case "$_sel" in
                 vlr)  [ -n "$vlr" ]  && export vlrt="$(menu_ask_port "VLESS-Reality")" ;;
                 hyp)  [ -n "$hyp" ]  && export hypt="$(menu_ask_port "Hysteria2")" ;;
                 tup)  [ -n "$tup" ]  && export tupt="$(menu_ask_port "TUIC")" ;;
                 anyp) [ -n "$anyp" ] && export anypt="$(menu_ask_port "AnyTLS")" ;;
+                xhtp) [ -n "$xhtp" ] && export xhttppt="$(menu_ask_port "VLESS-XHTTP-Reality")" ;;
             esac
         done
         [ -n "$trp$vmp$vlp" ] && export argo_pt="$(menu_ask_port "Argo" 8001)"
@@ -4196,6 +4275,7 @@ menu_collect_install() {
         [ -n "$hyp" ] && { hypt="$(rand_port)"; export hypt; green "  ↳ Hysteria2 端口: ${hypt} (随机)"; }
         [ -n "$tup" ] && { tupt="$(rand_port)"; export tupt; green "  ↳ TUIC 端口: ${tupt} (随机)"; }
         [ -n "$anyp" ] && { anypt="$(rand_port)"; export anypt; green "  ↳ AnyTLS 端口: ${anypt} (随机)"; }
+        [ -n "$xhtp" ] && { xhttppt="$(rand_port)"; export xhttppt; green "  ↳ VLESS-XHTTP-Reality 端口: ${xhttppt} (随机)"; }
         [ -n "$trp$vmp$vlp" ] && { argo_pt="${argo_pt:-8001}"; export argo_pt; green "  ↳ Argo 端口: ${argo_pt} (默认)"; }
     fi
 
@@ -4249,8 +4329,8 @@ menu_collect_install() {
         green "  ↳ 订阅: 不开启 (默认)"
     fi
 
-    # VLESS 才询问 reality_private
-    if [ -n "$vlr" ]; then
+    # VLESS 才询问 reality_private（xhttp-reality 也复用同一把私钥）
+    if [ -n "$vlr" ] || [ -n "$xhtp" ]; then
         echo ""
         reading "reality_private (回车=自动生成): " _ans
         if [ -n "$_ans" ]; then
@@ -4312,6 +4392,9 @@ menu_collect_install() {
         reading "  TUIC 伪装域名 (默认=www.apple.com): " _ans
         [ -n "$_ans" ] && export tu_sni="$_ans"
         green "  ↳ TUIC 伪装域名: ${tu_sni:-www.apple.com}"
+        reading "  VLESS-XHTTP 伪装域名 (默认=www.apple.com): " _ans
+        [ -n "$_ans" ] && export xhttp_sni="$_ans"
+        green "  ↳ VLESS-XHTTP 伪装域名: ${xhttp_sni:-www.apple.com}"
     else
         green "  ↳ SNI/CDN: 全部使用默认值"
         green "  ↳ CDN 优选域名=${cdn_host:-saas.sin.fan}, CDN 端口=${cdn_pt:-443},"
@@ -4333,6 +4416,7 @@ menu_collect_install() {
 menu_show_selection() {
     green "  ========== 将安装的协议 =========="
     [ -n "$vlr" ]    && green "    - VLESS-Reality-Vision"
+    [ -n "$xhtp" ]   && green "    - VLESS-XHTTP-Reality"
     [ -n "$hyp" ]    && green "    - Hysteria2"
     [ -n "$tup" ]    && green "    - TUIC"
     [ -n "$anyp" ]   && green "    - AnyTLS"
@@ -4538,7 +4622,9 @@ edit_ports_menu() {
         yellow "       当前: $(read_port_file port_tu)"
         green "  7) AnyTLS 端口"
         yellow "       当前: $(read_port_file port_any)"
-        green "  8) Argo 端口"
+        green "  8) VLESS-XHTTP-Reality 端口"
+        yellow "       当前: $(read_port_file port_xhttp)"
+        green "  9) Argo 端口"
         yellow "       当前: $(read_port_file argoport)"
         purple "  0) 返回上级菜单"
         echo ""
@@ -4546,7 +4632,7 @@ edit_ports_menu() {
         reading "请输入选择: " _sel
         case "$_sel" in
             0) return ;;
-            1|2|3|4|5|6|7|8) ;;
+            1|2|3|4|5|6|7|8|9) ;;
             *) yellow "无效选项"; menu_pause; continue ;;
         esac
         case "$_sel" in
@@ -4557,7 +4643,8 @@ edit_ports_menu() {
             5) _desc="Hysteria2"; _file=port_hy2; _tag=hy2-sb ;;
             6) _desc="TUIC"; _file=port_tu; _tag=tuic-sb ;;
             7) _desc="AnyTLS"; _file=port_any; _tag=anytls-sb ;;
-            8) _desc="Argo"; _file=argoport; _tag=""; _need_argo=1 ;;
+            8) _desc="VLESS-XHTTP-Reality"; _file=port_xhttp; _tag=vless-xhttp-reality-sb ;;
+            9) _desc="Argo"; _file=argoport; _tag=""; _need_argo=1 ;;
         esac
 
         if [ ! -s "$SINGBOX_FOLDER_PATH/$_file" ]; then
@@ -4657,6 +4744,8 @@ edit_snis_menu() {
         yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/tu_sni" 2>/dev/null)"
         green "  7) AnyTLS 伪装域名"
         yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/any_sni" 2>/dev/null)"
+        green "  8) VLESS-XHTTP 伪装域名"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/xhttp_sni" 2>/dev/null)"
         purple "  0) 返回上级菜单"
         reading "请输入选择: " _sel
         case "$_sel" in
@@ -4727,6 +4816,17 @@ edit_snis_menu() {
                     "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
                 refresh_sb_and_sub
                 green "✅ AnyTLS 伪装域名修改操作已完成！新值: ${_val}"
+                menu_pause
+                ;;
+            8)
+                reading "请输入新的 VLESS-XHTTP 伪装域名 (留空=取消): " _val
+                [ -z "$_val" ] && { yellow "已取消"; menu_pause; continue; }
+                echo "$_val" > "$SINGBOX_FOLDER_PATH/xhttp_sni"
+                [ -s "$SINGBOX_FOLDER_PATH/sb.json" ] && \
+                    jq --arg v "$_val" '(.inbounds[]? | select(.tag == "vless-xhttp-reality-sb")) .tls.server_name = $v | (.inbounds[]? | select(.tag == "vless-xhttp-reality-sb")) .tls.reality.handshake.server = $v | (.inbounds[]? | select(.tag == "vless-xhttp-reality-sb")) .transport.host = $v' \
+                    "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
+                refresh_sb_and_sub
+                green "✅ VLESS-XHTTP 伪装域名修改操作已完成！新值: ${_val}"
                 menu_pause
                 ;;
             *) yellow "无效选项"; menu_pause ;;
@@ -5109,7 +5209,7 @@ rt_manage() {
 # 查看各协议对应的代理出口（无代理 = 原IP出站）
 rt_proxy_map() {
     local sbj="$SINGBOX_FOLDER_PATH/sb.json" _p _out _cnt=0
-    local _order=(vmess-sb vless-ws-sb trojan-ws-sb vless-reality-vision-sb hy2-sb tuic-sb anytls-sb)
+    local _order=(vmess-sb vless-ws-sb trojan-ws-sb vless-reality-vision-sb vless-xhttp-reality-sb hy2-sb tuic-sb anytls-sb)
     clear
     green "========= [5][6] 分流管理 → 各协议对应的代理出口 ========="
     echo ""
@@ -5163,7 +5263,7 @@ view_proxy_protocols() {
 # 修改某协议使用的代理（选已添加的 socks/http 代理，0=直连原IP出口，回车=取消）
 edit_protocol_proxy() {
     local sbj="$SINGBOX_FOLDER_PATH/sb.json"
-    local _letters=(b c d e f g h) _ptags=(vless-reality-vision-sb hy2-sb tuic-sb anytls-sb vmess-sb trojan-ws-sb vless-ws-sb)
+    local _letters=(b c d e f g h i) _ptags=(vless-reality-vision-sb hy2-sb tuic-sb anytls-sb vmess-sb trojan-ws-sb vless-ws-sb vless-xhttp-reality-sb)
     local _protos=() _n _p _tag _cur _plist _choice
     clear
     green "========= [5][7] 分流管理 → 修改各协议使用的代理 ========="
@@ -5581,10 +5681,11 @@ delete_socks5_proxy() {
 
 # 设置 socks/http 出站附着的协议（生成 inbound 路由规则，多选，0=清除全部关联，回车=取消）
 # 编号与安装时一致且按字母升序：a=全选 b=VLESS c=Hysteria2 d=TUIC e=AnyTLS f=Vmess-WS g=Trojan-WS h=Vless-WS
+# 编号与安装时一致且按字母升序：a=全选 b=VLESS c=Hysteria2 d=TUIC e=AnyTLS f=Vmess-WS g=Trojan-WS h=Vless-WS i=XHTTP
 attach_socks5_proxy() {
      local sbj="$SINGBOX_FOLDER_PATH/sb.json"
      local _tag="$1" _parent="${2:-3}"
-     local _letters=(b c d e f g h) _ptags=(vless-reality-vision-sb hy2-sb tuic-sb anytls-sb vmess-sb trojan-ws-sb vless-ws-sb)
+     local _letters=(b c d e f g h i) _ptags=(vless-reality-vision-sb hy2-sb tuic-sb anytls-sb vmess-sb trojan-ws-sb vless-ws-sb vless-xhttp-reality-sb)
      local _protos=() _letters_all _attached _attach_input _selected=() _failed=() _n _p _conflict _inbs
      clear
      green "========= [5][${_parent}] 分流管理 → 附着协议到代理 ========="

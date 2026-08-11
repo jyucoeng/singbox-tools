@@ -22,11 +22,11 @@ SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.0.14(2026-08-07)"
+VERSION="1.0.15(2026-08-08)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
-export cdn_host=${cdn_host:-"saas.sin.fan"} # Default CDN host for vmess or trojan  cdn.7zz.cn
+export cdn_host=${cdn_host:-"saas.sin.fan"} # Default CDN host for vmess/trojan/vless  cdn.7zz.cn
 export hy_sni=${hy_sni:-"www.apple.com"}    # Default SNI for hy2 protocol
 export vl_sni=${vl_sni:-"www.apple.com"}    # Default SNI for vless protocol   www.ua.edu www.yahoo.com
 export tu_sni=${tu_sni:-"www.apple.com"}    # Default SNI for hy2 protocol
@@ -35,6 +35,7 @@ export any_sni=${any_sni:-"www.apple.com"}  # Default SNI for anytls protocol
 # Environment variables for ports and other settings
 export uuid=${uuid:-''}
 export port_vm_ws=${vmpt:-''}
+export port_vl_ws=${vlpt:-''}
 export port_tr=${trpt:-''}
 export port_hy2=${hypt:-''}
 export port_vlr=${vlrt:-''}
@@ -135,7 +136,7 @@ get_subscribe_flag() {
 is_yes() { [ "${1:-}" = "yes" ]; }
 
 # 这些变量是你脚本外部用来“开启协议”的标记：
-# trpt / hypt / vmpt / vlrt / tupt / anypt / socks5pt
+# trpt / hypt / vmpt / vlpt / vlrt / tupt / anypt / socks5pt
 # 只要标记存在，就启用对应协议
 if [ -n "${trpt+x}" ]; then
     trp=yes
@@ -148,6 +149,11 @@ fi
 
 if [ -n "${vmpt+x}" ]; then
     vmp=yes
+    vmag=yes
+fi
+
+if [ -n "${vlpt+x}" ]; then
+    vlp=yes
     vmag=yes
 fi
 
@@ -169,7 +175,7 @@ fi
 
 # 判断：至少启用一个协议
 any_proto_enabled() {
-    is_yes "$vlr" || is_yes "$vmp" || is_yes "$trp" || is_yes "$hyp" || is_yes "$tup" || is_yes "$anyp" || is_yes "$socksp"
+    is_yes "$vlr" || is_yes "$vmp" || is_yes "$vlp" || is_yes "$trp" || is_yes "$hyp" || is_yes "$tup" || is_yes "$anyp" || is_yes "$socksp"
 }
 
 # 判断：是否需要 Argo
@@ -181,13 +187,13 @@ need_argo() {
     if [ -n "${argo:-}" ]; then
         argo_src="env"
         argo_val="$argo"
-        if [ "$argo_val" = "vmpt" ] || [ "$argo_val" = "trpt" ]; then
+        if [ "$argo_val" = "vmpt" ] || [ "$argo_val" = "trpt" ] || [ "$argo_val" = "vlpt" ]; then
             argo_needed=1
         fi
     elif [ -s "$SINGBOX_FOLDER_PATH/vlvm" ]; then
         argo_src="file"
         argo_val="$(cat "$SINGBOX_FOLDER_PATH/vlvm" 2> /dev/null | tr -d '\r\n')"
-        if [ "$argo_val" = "Vmess" ] || [ "$argo_val" = "Trojan" ]; then
+        if [ "$argo_val" = "Vmess" ] || [ "$argo_val" = "Trojan" ] || [ "$argo_val" = "Vless" ]; then
             argo_needed=1
         fi
     else
@@ -867,8 +873,8 @@ interactive_sb_shortcut_menu() {
 showmode() {
     blue "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     green "     Sing-box 一键脚本"
-    yellow "     协议: vmess/trojan (Argo 选1)"
-    yellow "           vless+hy2+tuic+anytls+socks5"
+    yellow "     协议: vmess/trojan/vless (Argo 选1)"
+    yellow "          vless reality+hy2+tuic+anytls+socks5"
     green "     Author：$AUTHOR"
     green "     Version: ${VERSION}"
     blue "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -1863,6 +1869,30 @@ installsb() {
             }]' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
     fi
 
+    # 添加vless-ws协议（Argo 本地使用）
+    if [ -n "$vlp" ]; then
+        if [ -z "$port_vl_ws" ] && [ ! -e "$SINGBOX_FOLDER_PATH/port_vl_ws" ] && [ ! -e "$SINGBOX_FOLDER_PATH/port_vm_ws" ]; then
+            port_vl_ws=$(rand_port)
+            echo "$port_vl_ws" > "$SINGBOX_FOLDER_PATH/port_vl_ws"
+        elif [ -n "$port_vl_ws" ]; then
+            echo "$port_vl_ws" > "$SINGBOX_FOLDER_PATH/port_vl_ws"
+        elif [ -s "$SINGBOX_FOLDER_PATH/port_vm_ws" ]; then
+            # 兼容旧版本 vmess 端口文件，升级后复用同一端口
+            port_vl_ws=$(cat "$SINGBOX_FOLDER_PATH/port_vm_ws")
+            echo "$port_vl_ws" > "$SINGBOX_FOLDER_PATH/port_vl_ws"
+        fi
+        port_vl_ws=$(cat "$SINGBOX_FOLDER_PATH/port_vl_ws")
+        yellow "Vless-ws端口 (Argo本地使用)：$port_vl_ws"
+
+        jq --arg port "$port_vl_ws" --arg uuid "$uuid" '
+            .inbounds += [{
+                type: "vless", tag: "vless-ws-sb", listen: "::",
+                listen_port: ($port | tonumber),
+                users: [{uuid: $uuid}],
+                transport: {type: "ws", path: "/\($uuid)-vl"}
+            }]' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
+    fi
+
     # 添加vless-reality-vision协议
     if [ -n "$vlr" ]; then
         if [ -z "$port_vlr" ] && [ ! -e "$SINGBOX_FOLDER_PATH/port_vlr" ]; then
@@ -2120,9 +2150,15 @@ setup_nginx_subscribe() {
     mkdir -p "$webroot"
     chmod 755 /var /var/www /var/www/singbox 2> /dev/null
 
-    local vm_port tr_port uuid
+    local vm_port vl_port tr_port uuid
     uuid="$(cat "$SINGBOX_FOLDER_PATH/uuid" 2> /dev/null)"
     vm_port="$(cat "$SINGBOX_FOLDER_PATH/port_vm_ws" 2> /dev/null)"
+    if [ -s "$SINGBOX_FOLDER_PATH/port_vl_ws" ]; then
+        vl_port="$(cat "$SINGBOX_FOLDER_PATH/port_vl_ws" 2> /dev/null)"
+    else
+        # 兼容旧版本 vmess 端口文件
+        vl_port="$(cat "$SINGBOX_FOLDER_PATH/port_vm_ws" 2> /dev/null)"
+    fi
     tr_port="$(cat "$SINGBOX_FOLDER_PATH/port_tr" 2> /dev/null)"
 
     local conf
@@ -2160,6 +2196,19 @@ EOF
         cat >> "$conf" << EOF
     location /${uuid}-vm {
         proxy_pass http://127.0.0.1:${vm_port};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+    }
+
+EOF
+    fi
+
+    if [ -n "$vl_port" ] && [ -n "$uuid" ]; then
+        cat >> "$conf" << EOF
+    location /${uuid}-vl {
+        proxy_pass http://127.0.0.1:${vl_port};
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -2302,11 +2351,11 @@ nginx_status() {
 
 # 确保 cloudflared 如果需要
 ensure_cloudflared_if_needed() {
-    # ✅ 仅当启用 argo=vmpt/trpt 且 vmag 存在时才需要 cloudflared
+    # ✅ 仅当启用 argo=vmpt/trpt/vlpt 且 vmag 存在时才需要 cloudflared
     debug_log "【调试】ensure_cloudflared_if_needed：检查是否需要 cloudflared"
-    if { [ "${argo:-}" != "vmpt" ] && [ "${argo:-}" != "trpt" ]; } || [ -z "${vmag:-}" ]; then
-        debug_log "【调试】ensure_cloudflared_if_needed：未启用 Argo（或未启用 vmess/trojan），跳过 cloudflared 下载/安装"
-        purple "ℹ️ 未启用 Argo（或未启用 vmess/trojan），跳过 cloudflared 下载/安装"
+    if { [ "${argo:-}" != "vmpt" ] && [ "${argo:-}" != "trpt" ] && [ "${argo:-}" != "vlpt" ]; } || [ -z "${vmag:-}" ]; then
+        debug_log "【调试】ensure_cloudflared_if_needed：未启用 Argo（或未启用 vmess/trojan/vless），跳过 cloudflared 下载/安装"
+        purple "ℹ️ 未启用 Argo（或未启用 vmess/trojan/vless），跳过 cloudflared 下载/安装"
         return 0
     fi
     debug_log "【调试】ensure_cloudflared_if_needed：需要 cloudflared，开始下载/安装"
@@ -2584,7 +2633,7 @@ post_install_finalize_legacy() {
 ensure_nginx_if_needed() {
     # ✅ 需要 Nginx 的条件：
     # 1) 订阅开启 subscribe=true
-    # 2) 启用 argo（vmpt/trpt）
+    # 2) 启用 argo（vmpt/trpt/vlpt）
     local need_nginx=false
 
     if is_true "$(get_subscribe_flag)"; then
@@ -2878,6 +2927,8 @@ ins() {
             echo "Vmess" > "$SINGBOX_FOLDER_PATH/vlvm"
         elif [ "$argo" = "trpt" ]; then
             echo "Trojan" > "$SINGBOX_FOLDER_PATH/vlvm"
+        elif [ "$argo" = "vlpt" ]; then
+            echo "Vless" > "$SINGBOX_FOLDER_PATH/vlvm"
         fi
 
         # 2.3 生成 Argo 凭据（JSON / token）
@@ -3354,7 +3405,7 @@ regenerate_links_and_sub() {
     local _cip_arg="${1:-}"
     local uuid server_ip sxname port_hy2 hy_sni SHA256_hy2 port_tu tu_sni password
     local port_vlr public_key short_id vl_sni port_any any_sni
-    local argodomain cdn_host cdn_pt vlvm vmatls_link1 tratls_link1 sbtk
+    local argodomain cdn_host cdn_pt vlvm vmatls_link1 vlessws_link1 tratls_link1 sbtk
     local port_socks5 socks5_username socks5_password socks5_user_enc socks5_pass_enc socks5_link
 
     rm -rf "$SINGBOX_FOLDER_PATH/jh.txt"
@@ -3435,10 +3486,16 @@ regenerate_links_and_sub() {
         if [ "$vlvm" = "Vmess" ]; then
             vmatls_link1="vmess://$(echo "{\"v\":\"2\",\"ps\":\"${sxname}vmess-ws-tls-argo-$hostname-${cdn_pt}\",\"add\":\"${cdn_host}\",\"port\":\"${cdn_pt}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":\"$argodomain\",\"path\":\"/${uuid}-vm\",\"tls\":\"tls\",\"sni\":\"$argodomain\"}" | base64 | tr -d '\n\r')"
 
+            vlessws_link1=""
             tratls_link1=""
         elif [ "$vlvm" = "Trojan" ]; then
             tratls_link1="trojan://${uuid}@${cdn_host}:${cdn_pt}?security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-tr&sni=${argodomain}&fp=chrome#${sxname}trojan-ws-tls-argo-$hostname-${cdn_pt}"
             vmatls_link1=""
+            vlessws_link1=""
+        elif [ "$vlvm" = "Vless" ]; then
+            vlessws_link1="vless://${uuid}@${cdn_host}:${cdn_pt}?encryption=none&security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-vl&sni=${argodomain}&fp=chrome#${sxname}vless-ws-tls-argo-$hostname-${cdn_pt}"
+            vmatls_link1=""
+            tratls_link1=""
         fi
 
         sbtk=$(cat "$SINGBOX_FOLDER_PATH/sbargotoken" 2> /dev/null)
@@ -3456,8 +3513,8 @@ regenerate_links_and_sub() {
 
         green ""
         green "💣 ${cdn_pt}端口 Argo-TLS 节点 (优选IP可替换):"
-        green "${vmatls_link1}${tratls_link1}"
-        append_jh "${vmatls_link1}${tratls_link1}"
+        green "${vmatls_link1}${vlessws_link1}${tratls_link1}"
+        append_jh "${vmatls_link1}${vlessws_link1}${tratls_link1}"
         yellow "---------------------------------------------------------"
 
     fi
@@ -3747,7 +3804,7 @@ check_port_conflicts_or_exit() {
     fi
 
     # 固定检查协议端口；subscribe=true 时才额外检查 nginx_pt
-    local vars="vmpt trpt vlrt hypt tupt anypt socks5pt"
+    local vars="vmpt vlpt trpt vlrt hypt tupt anypt socks5pt"
     if $need_nginx; then
         vars="$vars argo_pt nginx_pt"
     fi
@@ -3904,17 +3961,18 @@ menu_status_block() {
 
 # 根据 *pt 环境变量重新推导协议开关与端口变量（交互模式设置环境变量后调用）
 menu_reload_proto_flags() {
-    trp=; vmag=; hyp=; vmp=; vlr=; tup=; anyp=; socksp=
+    trp=; vmag=; hyp=; vmp=; vlp=; vlr=; tup=; anyp=; socksp=
     [ -n "${trpt+x}" ] && { trp=yes; vmag=yes; }
     [ -n "${hypt+x}" ] && hyp=yes
     [ -n "${vmpt+x}" ] && { vmp=yes; vmag=yes; }
+    [ -n "${vlpt+x}" ] && { vlp=yes; vmag=yes; }
     [ -n "${vlrt+x}" ] && vlr=yes
     [ -n "${tupt+x}" ] && tup=yes
     [ -n "${anypt+x}" ] && anyp=yes
     [ -n "${socks5pt+x}" ] && socksp=yes
-    export trp hyp vmp vlr tup anyp socksp vmag
+    export trp hyp vmp vlp vlr tup anyp socksp vmag
     # 重新绑定端口变量（与文件顶部一致）
-    export port_vm_ws=${vmpt:-''} port_tr=${trpt:-''} port_hy2=${hypt:-''} \
+    export port_vm_ws=${vmpt:-''} port_vl_ws=${vlpt:-''} port_tr=${trpt:-''} port_hy2=${hypt:-''} \
            port_vlr=${vlrt:-''} port_tu=${tupt:-''} port_any=${anypt:-''} \
            port_socks5=${socks5pt:-''}
 }
@@ -4068,15 +4126,17 @@ menu_collect_install() {
     done
     green "  ↳ 直连协议: ${_ch} (${_names#,})"
 
-    # Argo 隧道协议：二选一或二选零
+    # Argo 隧道协议：三选一或选零
     echo ""
-    purple "===== 选择 Argo 隧道协议 (二选一，回车=不选) ====="
+    purple "===== 选择 Argo 隧道协议 (三选一，回车=不选) ====="
     green "  f) Vmess-WS-TLS"
     green "  g) Trojan-WS-TLS"
+    green "  v) Vless-WS-TLS"
     reading "输入选项 (回车=不选): " _ans
     _ans="$(printf '%s' "$_ans" | tr '[:upper:]' '[:lower:]')"
     case "$_ans" in
         *g*) _ch="$_ch g"; green "  ↳ Argo 协议: Trojan-WS-TLS" ;;
+        *v*) _ch="$_ch v"; green "  ↳ Argo 协议: Vless-WS-TLS" ;;
         *f*) _ch="$_ch f"; green "  ↳ Argo 协议: Vmess-WS-TLS" ;;
         *) : ; green "  ↳ Argo 协议: 不选 (默认)" ;;
     esac
@@ -4099,6 +4159,7 @@ menu_collect_install() {
             e) export anypt="" ;;
             f) export vmpt="" ;;
             g) export trpt="" ;;
+            v) export vlpt="" ;;
             h) export socks5pt="" ;;
             *) yellow "  跳过未知选项: $_sel" ;;
         esac
@@ -4116,6 +4177,7 @@ menu_collect_install() {
         green "  ↳ 端口: 逐个自定义 (默认)"
         [ -n "$trp" ] && export trpt="$(menu_ask_port "Trojan-WS (Argo)")"
         [ -n "$vmp" ] && export vmpt="$(menu_ask_port "Vmess-WS (Argo)")"
+        [ -n "$vlp" ] && export vlpt="$(menu_ask_port "Vless-WS (Argo)")"
         for _sel in vlr hyp tup anyp; do
             case "$_sel" in
                 vlr)  [ -n "$vlr" ]  && export vlrt="$(menu_ask_port "VLESS-Reality")" ;;
@@ -4124,25 +4186,28 @@ menu_collect_install() {
                 anyp) [ -n "$anyp" ] && export anypt="$(menu_ask_port "AnyTLS")" ;;
             esac
         done
-        [ -n "$trp$vmp" ] && export argo_pt="$(menu_ask_port "Argo" 8001)"
+        [ -n "$trp$vmp$vlp" ] && export argo_pt="$(menu_ask_port "Argo" 8001)"
     else
         green "  ↳ 端口: 全部随机生成"
         [ -n "$trp" ] && { trpt="$(rand_port)"; export trpt; green "  ↳ Trojan-WS (Argo) 端口: ${trpt} (随机)"; }
         [ -n "$vmp" ] && { vmpt="$(rand_port)"; export vmpt; green "  ↳ Vmess-WS (Argo) 端口: ${vmpt} (随机)"; }
+        [ -n "$vlp" ] && { vlpt="$(rand_port)"; export vlpt; green "  ↳ Vless-WS (Argo) 端口: ${vlpt} (随机)"; }
         [ -n "$vlr" ] && { vlrt="$(rand_port)"; export vlrt; green "  ↳ VLESS-Reality 端口: ${vlrt} (随机)"; }
         [ -n "$hyp" ] && { hypt="$(rand_port)"; export hypt; green "  ↳ Hysteria2 端口: ${hypt} (随机)"; }
         [ -n "$tup" ] && { tupt="$(rand_port)"; export tupt; green "  ↳ TUIC 端口: ${tupt} (随机)"; }
         [ -n "$anyp" ] && { anypt="$(rand_port)"; export anypt; green "  ↳ AnyTLS 端口: ${anypt} (随机)"; }
-        [ -n "$trp$vmp" ] && { argo_pt="${argo_pt:-8001}"; export argo_pt; green "  ↳ Argo 端口: ${argo_pt} (默认)"; }
+        [ -n "$trp$vmp$vlp" ] && { argo_pt="${argo_pt:-8001}"; export argo_pt; green "  ↳ Argo 端口: ${argo_pt} (默认)"; }
     fi
 
     menu_reload_proto_flags
 
-    # Argo 隧道配置（vmess/trojan 已强制二选一，这里最多启用一个）
+    # Argo 隧道配置（vmess/trojan/vless 已强制三选一，这里最多启用一个）
     if [ -n "$vmp" ]; then
         export argo=vmpt
     elif [ -n "$trp" ]; then
         export argo=trpt
+    elif [ -n "$vlp" ]; then
+        export argo=vlpt
     else
         export argo=""
     fi
@@ -4273,6 +4338,7 @@ menu_show_selection() {
     [ -n "$anyp" ]   && green "    - AnyTLS"
     [ -n "$socksp" ] && green "    - Socks5"
     [ -n "$vmp" ]    && green "    - Vmess-WS-TLS (Argo)"
+    [ -n "$vlp" ]    && green "    - Vless-WS-TLS (Argo)"
     [ -n "$trp" ]    && green "    - Trojan-WS-TLS (Argo)"
     echo ""
 }
@@ -4462,15 +4528,17 @@ edit_ports_menu() {
         yellow "       当前: $(read_port_file port_tr)"
         green "  2) Vmess-WS (Argo) 端口"
         yellow "       当前: $(read_port_file port_vm_ws)"
-        green "  3) VLESS-Reality 端口"
+        green "  3) Vless-WS (Argo) 端口"
+        yellow "       当前: $(read_port_file port_vl_ws)"
+        green "  4) VLESS-Reality 端口"
         yellow "       当前: $(read_port_file port_vlr)"
-        green "  4) Hysteria2 端口"
+        green "  5) Hysteria2 端口"
         yellow "       当前: $(read_port_file port_hy2)"
-        green "  5) TUIC 端口"
+        green "  6) TUIC 端口"
         yellow "       当前: $(read_port_file port_tu)"
-        green "  6) AnyTLS 端口"
+        green "  7) AnyTLS 端口"
         yellow "       当前: $(read_port_file port_any)"
-        green "  7) Argo 端口"
+        green "  8) Argo 端口"
         yellow "       当前: $(read_port_file argoport)"
         purple "  0) 返回上级菜单"
         echo ""
@@ -4478,17 +4546,18 @@ edit_ports_menu() {
         reading "请输入选择: " _sel
         case "$_sel" in
             0) return ;;
-            1|2|3|4|5|6|7) ;;
+            1|2|3|4|5|6|7|8) ;;
             *) yellow "无效选项"; menu_pause; continue ;;
         esac
         case "$_sel" in
             1) _desc="Trojan-WS (Argo)"; _file=port_tr; _tag=trojan-ws-sb; _need_nginx=1 ;;
             2) _desc="Vmess-WS (Argo)"; _file=port_vm_ws; _tag=vmess-sb; _need_nginx=1 ;;
-            3) _desc="VLESS-Reality"; _file=port_vlr; _tag=vless-reality-vision-sb ;;
-            4) _desc="Hysteria2"; _file=port_hy2; _tag=hy2-sb ;;
-            5) _desc="TUIC"; _file=port_tu; _tag=tuic-sb ;;
-            6) _desc="AnyTLS"; _file=port_any; _tag=anytls-sb ;;
-            7) _desc="Argo"; _file=argoport; _tag=""; _need_argo=1 ;;
+            3) _desc="Vless-WS (Argo)"; _file=port_vl_ws; _tag=vless-ws-sb; _need_nginx=1 ;;
+            4) _desc="VLESS-Reality"; _file=port_vlr; _tag=vless-reality-vision-sb ;;
+            5) _desc="Hysteria2"; _file=port_hy2; _tag=hy2-sb ;;
+            6) _desc="TUIC"; _file=port_tu; _tag=tuic-sb ;;
+            7) _desc="AnyTLS"; _file=port_any; _tag=anytls-sb ;;
+            8) _desc="Argo"; _file=argoport; _tag=""; _need_argo=1 ;;
         esac
 
         if [ ! -s "$SINGBOX_FOLDER_PATH/$_file" ]; then
@@ -4730,7 +4799,7 @@ edit_argo_menu() {
     done
 }
 
-# 切换 Argo 使用协议（Trojan-WS-TLS / Vmess-WS-TLS）
+# 切换 Argo 使用协议（Vmess-WS-TLS / Trojan-WS-TLS / Vless-WS-TLS）
 edit_argo_protocol_menu() {
     local _vlvm _tmp
     while true; do
@@ -4742,6 +4811,7 @@ edit_argo_protocol_menu() {
         echo ""
         green "  1) Vmess-WS-TLS (Argo)"
         green "  2) Trojan-WS-TLS (Argo)"
+        green "  3) Vless-WS-TLS (Argo)"
         purple "  0) 返回上级菜单"
         reading "请输入选择: " _tmp
         case "$_tmp" in
@@ -4764,6 +4834,15 @@ edit_argo_protocol_menu() {
                 regenerate_links_and_sub
                 menu_pause
                 ;;
+            3)
+                if [ ! -s "$SINGBOX_FOLDER_PATH/port_vl_ws" ] && [ ! -s "$SINGBOX_FOLDER_PATH/port_vm_ws" ]; then
+                    red "❌ 未安装 Vless-WS 协议，无法切换。"; menu_pause; continue
+                fi
+                echo "Vless" > "$SINGBOX_FOLDER_PATH/vlvm"
+                green "✅ 已切换 Argo 使用协议为 Vless-WS-TLS 操作已完成！"
+                regenerate_links_and_sub
+                menu_pause
+                ;;
             *) yellow "无效选项"; menu_pause ;;
         esac
     done
@@ -4780,7 +4859,7 @@ node_config_menu() {
         green "  2) 订阅设置 (修改订阅端口 / 取消订阅)"
         green "  3) SNI / CDN 设置修改"
         green "  4) Argo 隧道修改"
-        green "  5) 切换 Argo 使用协议 (Trojan-WS-TLS / Vmess-WS-TLS)"
+        green "  5) 切换 Argo 使用协议 (Vmess-WS-TLS / Trojan-WS-TLS / Vless-WS-TLS)"
         purple "  0) 返回主菜单"
         reading "请输入选择: " _ch
         case "$_ch" in
@@ -5030,7 +5109,7 @@ rt_manage() {
 # 查看各协议对应的代理出口（无代理 = 原IP出站）
 rt_proxy_map() {
     local sbj="$SINGBOX_FOLDER_PATH/sb.json" _p _out _cnt=0
-    local _order=(vmess-sb trojan-ws-sb vless-reality-vision-sb hy2-sb tuic-sb anytls-sb)
+    local _order=(vmess-sb vless-ws-sb trojan-ws-sb vless-reality-vision-sb hy2-sb tuic-sb anytls-sb)
     clear
     green "========= [5][6] 分流管理 → 各协议对应的代理出口 ========="
     echo ""
@@ -5084,7 +5163,7 @@ view_proxy_protocols() {
 # 修改某协议使用的代理（选已添加的 socks/http 代理，0=直连原IP出口，回车=取消）
 edit_protocol_proxy() {
     local sbj="$SINGBOX_FOLDER_PATH/sb.json"
-    local _letters=(b c d e f g) _ptags=(vless-reality-vision-sb hy2-sb tuic-sb anytls-sb vmess-sb trojan-ws-sb)
+    local _letters=(b c d e f g h) _ptags=(vless-reality-vision-sb hy2-sb tuic-sb anytls-sb vmess-sb trojan-ws-sb vless-ws-sb)
     local _protos=() _n _p _tag _cur _plist _choice
     clear
     green "========= [5][7] 分流管理 → 修改各协议使用的代理 ========="
@@ -5501,11 +5580,11 @@ delete_socks5_proxy() {
 }
 
 # 设置 socks/http 出站附着的协议（生成 inbound 路由规则，多选，0=清除全部关联，回车=取消）
-# 编号与安装时一致且按字母升序：a=全选 b=VLESS c=Hysteria2 d=TUIC e=AnyTLS f=Vmess-WS g=Trojan-WS
+# 编号与安装时一致且按字母升序：a=全选 b=VLESS c=Hysteria2 d=TUIC e=AnyTLS f=Vmess-WS g=Trojan-WS h=Vless-WS
 attach_socks5_proxy() {
      local sbj="$SINGBOX_FOLDER_PATH/sb.json"
      local _tag="$1" _parent="${2:-3}"
-     local _letters=(b c d e f g) _ptags=(vless-reality-vision-sb hy2-sb tuic-sb anytls-sb vmess-sb trojan-ws-sb)
+     local _letters=(b c d e f g h) _ptags=(vless-reality-vision-sb hy2-sb tuic-sb anytls-sb vmess-sb trojan-ws-sb vless-ws-sb)
      local _protos=() _letters_all _attached _attach_input _selected=() _failed=() _n _p _conflict _inbs
      clear
      green "========= [5][${_parent}] 分流管理 → 附着协议到代理 ========="

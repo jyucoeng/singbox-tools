@@ -36,7 +36,7 @@ sb nginx_status    查看 Nginx 状态
 在服务器上执行 `sb sc` 创建快捷命令后即可使用以上指令。
 
 # 1、 singbox 安装以及卸载
-## singbox 一键安装脚本（vmess argo/trojan argo/vless argo 3选1 + hy2+vless-Reality+tuic+anytls+socks5，这些协议可自由组合）
+## singbox 一键安装脚本（vmess argo/trojan argo/vless argo 3选1 + hy2+vless-Reality+xhttp+tuic+anytls+socks5，这些协议可自由组合）
 
 举个例子🌰说明（这里会列出所有支持的环境变量）：
 
@@ -60,6 +60,7 @@ hypt=41004 \
 tupt=41005 \
 argo="trpt" \
 anypt=41006 \
+xhttppt=41003(备注：pt为 port的简写，xhttp 用) \
 nginx_pt=41007 \
 socks5pt=41017 \
 socks5_username='你的socks5自定义用户名' \
@@ -146,6 +147,8 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
 
 - any_sni 指的是用anytls协议的sni(伪装域名)，缺省值为www.apple.com，你可以自己传你要的值，比如 www.yahoo.com 。 不传就会使用缺省值做兜底。
 
+- xhttp_sni 指的是用xhttp协议的sni(伪装域名)，缺省值为www.apple.com，你可以自己传你要的值，比如 www.yahoo.com 。 不传就会使用缺省值做兜底。
+
 - argo的对外默认优选端口为443（可自行修改cdn_pt 参数），同样argo_pt对本地的监听端口为8001.也可以自定义（但是不建议改，不然你就要同时去把CF里面的对应的HTTP改成你自定义的端口。）
 
 <img width="1514" height="621" alt="CleanShot 2026-01-25 at 12 50 32" src="https://github.com/user-attachments/assets/ec1d2396-4832-4b1b-9da7-cbda4e9c56f1" />
@@ -184,10 +187,11 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
    vmpt=41004 \
    tupt=41005 \
    anypt=41006 \
+   xhttppt=41003 \
    socks5pt=31017 \
    nginx_pt=31007 \
    ```
-   这些分别为trojan、hy2、vless-reality、vless-argo、tuic、anytls、vmess、socks5、nginx订阅地址的端口.
+   这些分别为trojan、hy2、vless-reality、vless-argo、tuic、anytls、vmess、xhttp、socks5、nginx订阅地址的端口.
    - pt为 port的简写
    - rt为 reality port的简写
 
@@ -239,6 +243,8 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
 
 ## 11、 reality_private  此为vless Reallity协议的密钥。
 传这个值是为了你在安装和重装节点的时候，生成的vless节点保持一致,这样你就不用来回导入节点了，不加这个的话每次生成的证书都会不一样的。
+
+> **vless-reality 与 xhttp（VLESS-XHTTP-Reality）共用同一把 reality 密钥**，两种协议同时安装时节点保持一致的密钥和 short_id。
 
 如果不在意一致，你可以直接不用管。不传的时候，这个值会自动生成。
 然后安装或者重装完成的时候，会打印一次给你，请自行保存这个值。
@@ -293,6 +299,21 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ```bash
 vlrt=2083 \
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
+```
+
+### 仅xhttp（VLESS-XHTTP-Reality）协议
+
+```bash
+xhttppt=2083 \
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
+```
+
+### xhttp + vless Reality 协议（xhttp与vless-reality共用同一把reality密钥）
+
+```bash
+xhttppt=2083 \
+vlrt=2084 \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
@@ -419,6 +440,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 | vlrt                         | 1（vless）                                            |
 | tupt                         | 1（tuic）                                             |
 | anypt                        | 1（anytls）                                           |
+| xhttppt                      | 1（xhttp）                                            |
 | socks5pt                     | 1（socks5）                                           |
 | vmpt                         | 0（无直连）                                           |
 | trpt                         | 0（无直连）                                           |
@@ -431,6 +453,8 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 | hypt + vlrt + tupt + anypt   | 4（hy2、vless、tuic、anytls直连）                     |
 | hypt + vlrt + socks5pt       | 3（hy2、vless、socks5直连）                           |
 | hypt + vlrt + tupt + anypt + socks5pt | 5（hy2、vless、tuic、anytls、socks5直连）     |
+| hypt + vlrt + xhttppt        | 3（hy2、vless、xhttp直连）                           |
+| hypt + vlrt + xhttppt + tupt | 4（hy2、vless、xhttp、tuic直连）                     |
 | hypt + vlrt + argo           | **3（hy2、vless直连+Argo-vmess/Argo-trojan/Argo-vless）**         |
 | hypt + vlrt + tupt + argo    | **4（hy2、vless、tuic直连+Argo-vmess/Argo-trojan/Argo-vless）**   |
 | hypt + vlrt + tupt + anypt + argo | **5（hy2、vless、tuic、anytls直连+Argo-vmess/Argo-trojan/Argo-vless）** |
@@ -469,6 +493,12 @@ tail -200 /root/doraemon/argo.log
 
 
 ## 版本变更信息
+
+v1.0.16 (2026-08-11)
+ - 新增 VLESS-XHTTP-Reality 直连协议：环境变量 `xhttppt` 指定端口，默认 SNI 为 www.apple.com，可用 `xhttp_sni` 自定义
+ - 安装菜单 / 端口修改菜单 / SNI 修改 / 分流管理均支持 xhttp，可与 vless-reality 等其他协议自由组合
+ - xhttp 与 vless-reality 共用同一把 reality 私钥和 short_id，同时安装时节点保持一致
+ - `sb list key` 查看节点时会同时打印 reality_private（xhttp 与 vless-reality 共用同一规则）
 
 v1.0.15 (2026-08-08)
  - Argo 隧道协议由 vmess/trojan 二选一升级为 vmess/trojan/vless 三选一
