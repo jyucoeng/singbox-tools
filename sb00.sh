@@ -1621,7 +1621,7 @@ print_reality_keypair_hint() {
     [ -n "${reality_private:-}" ] || return 0
 
     echo
-    yellow "🔐 Reality 私钥（请保存，后续可将此参数值放在安装参数里，可保持reality协议节点一致）"
+    yellow "🔐 Reality 私钥（请保存，后续可将此参数值放在安装参数里，可保持vless reality/xhttp协议节点一致）"
     green "reality_private=${reality_private}"
     echo
 }
