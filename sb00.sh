@@ -25,7 +25,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.0.23(2026-08-25)"
+VERSION="1.0.24(2026-08-25)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -1617,6 +1617,15 @@ print_reality_keypair_hint() {
 }
 
 # 初始化 Reality Keypair
+# 标准 base64 → URL-safe base64（兼容旧版 reality.key，sing-box 1.13+ 使用 URL-safe 编码）
+_to_urlsafe_base64() {
+    local k="$1"
+    k="${k//+/-}"      # + → -
+    k="${k//\//_}"     # / → _
+    k="${k//=/}"       # 去掉 = 填充
+    echo "$k"
+}
+
 init_reality_keypair() {
     local key_file="$SINGBOX_FOLDER_PATH/reality.key"
     local file_priv="" file_pub=""
@@ -1631,6 +1640,9 @@ init_reality_keypair() {
     if [ -f "$key_file" ]; then
         file_priv="$(awk -F': ' '/PrivateKey/{print $2; exit}' "$key_file" 2> /dev/null)"
         file_pub="$(awk -F': ' '/PublicKey/{print $2; exit}' "$key_file" 2> /dev/null)"
+        # 兼容旧版：标准 base64 → URL-safe base64（sing-box 1.13+ 使用 URL-safe 编码）
+        file_priv="$(_to_urlsafe_base64 "$file_priv")"
+        file_pub="$(_to_urlsafe_base64 "$file_pub")"
         debug_log "📄 【调试】 init_reality_keypair: 检测到已有 reality.key（priv=${#file_priv} chars, pub=${#file_pub} chars）"
     else
         debug_log "📄 【调试】 init_reality_keypair: 未找到 reality.key（首次安装或文件丢失）"
@@ -1640,6 +1652,8 @@ init_reality_keypair() {
     if [ -n "$env_priv" ]; then
         debug_log "🧩 【调试】 init_reality_keypair: 使用环境变量 reality_private（优先级最高）"
 
+        # 兼容旧版：标准 base64 → URL-safe base64
+        env_priv="$(_to_urlsafe_base64 "$env_priv")"
         priv="$env_priv"
 
         # 如果文件里私钥与传入相同，则优先复用文件里的公钥（避免变化）
@@ -3240,8 +3254,8 @@ ensure_and_print_reality_private_for_cip() {
     [ "$want_print" = "1" ] || return 0
 
     if [ -z "$reality_private" ] && [ -s "$SINGBOX_FOLDER_PATH/reality.key" ]; then
-        reality_private="$(awk '/PrivateKey/{print $NF; exit}' "$SINGBOX_FOLDER_PATH/reality.key" 2> /dev/null)"
-        reality_public="$(awk '/PublicKey/{print $NF; exit}' "$SINGBOX_FOLDER_PATH/reality.key" 2> /dev/null)"
+        reality_private="$(_to_urlsafe_base64 "$(awk '/PrivateKey/{print $NF; exit}' "$SINGBOX_FOLDER_PATH/reality.key" 2> /dev/null)")"
+        reality_public="$(_to_urlsafe_base64 "$(awk '/PublicKey/{print $NF; exit}' "$SINGBOX_FOLDER_PATH/reality.key" 2> /dev/null)")"
     fi
 
     if [ -n "$reality_private" ]; then
@@ -3455,7 +3469,7 @@ regenerate_links_and_sub() {
     # VLESS-Reality-Vision protocol (vless-reality-vision)
     if grep -q "vless-reality-vision-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
         port_vlr=$(cat "$SINGBOX_FOLDER_PATH/port_vlr")
-        public_key=$(sed -n '2p' "$SINGBOX_FOLDER_PATH/reality.key" | awk '{print $2}')
+        public_key="$(_to_urlsafe_base64 "$(sed -n '2p' "$SINGBOX_FOLDER_PATH/reality.key" | awk '{print $2}')")"
         short_id=$(cat "$SINGBOX_FOLDER_PATH/short_id")
         vl_sni=$(cat "$SINGBOX_FOLDER_PATH/vl_sni")
 
