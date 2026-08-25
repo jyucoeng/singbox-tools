@@ -4110,24 +4110,24 @@ menu_status_block() {
     local argo_port
     argo_port="${argo_pt:-$ARGO_DEFAULT_PORT}"
     if ! $argo_needed; then
-        green "  $(black "Argo        :") $(purple "○ 未启用")（当前场景无需 Argo，端口：${argo_port}）"
+        green "  $(white "Argo        :") $(purple "○ 未启用")（当前场景无需 Argo，端口：${argo_port}）"
     elif [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ] || command -v cloudflared > /dev/null 2>&1; then
         if pgrep -f "$SINGBOX_FOLDER_PATH/cloudflared" > /dev/null 2>&1; then
-            green "  $(black "Argo        :") ${st_cf}（端口：${argo_port}）"
+            green "  $(white "Argo        :") ${st_cf}（端口：${argo_port}）"
         else
-            green "  $(black "Argo        :") ${st_cf}（已启用 Argo，端口：${argo_port}）"
+            green "  $(white "Argo        :") ${st_cf}（已启用 Argo，端口：${argo_port}）"
         fi
     else
-        green "  $(black "Argo        :") $(yellow "○ 未安装")（已启用 Argo，端口：${argo_port}）"
+        green "  $(white "Argo        :") $(yellow "○ 未安装")（已启用 Argo，端口：${argo_port}）"
     fi
     if ! $argo_needed && ! is_true "$sub_flag"; then
-        green "  $(black "Nginx       :") $(purple "○ 未启用（订阅未开启，无需）")"
+        green "  $(white "Nginx       :") $(purple "○ 未启用（订阅未开启，无需）")"
     elif ! command -v nginx > /dev/null 2>&1; then
-        green "  $(black "Nginx       :") $(yellow "○ 未安装")（${sub_desc}，端口：${nginx_port}）"
+        green "  $(white "Nginx       :") $(yellow "○ 未安装")（${sub_desc}，端口：${nginx_port}）"
     elif ps aux | grep -v grep | grep -q nginx; then
-        green "  $(black "Nginx       :") $(green "● 运行中")${v_nginx:+ $v_nginx}（${sub_desc}，端口：${nginx_port}）"
+        green "  $(white "Nginx       :") $(green "● 运行中")${v_nginx:+ $v_nginx}（${sub_desc}，端口：${nginx_port}）"
     else
-        green "  $(black "Nginx       :") $(red "■ 已停止")（${sub_desc}，端口：${nginx_port}）"
+        green "  $(white "Nginx       :") $(red "■ 已停止")（${sub_desc}，端口：${nginx_port}）"
     fi
     _SUPPRESS_LOG="$_old_suppress"
 }
