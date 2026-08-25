@@ -23,7 +23,7 @@ OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 INSTALL_LOG="$SINGBOX_FOLDER_PATH/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.0.17(2026-08-25)"
+VERSION="1.0.18(2026-08-25)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -305,10 +305,6 @@ install_deps() {
         local -a failed=()
         local p
 
-        # 安装输出日志（避免刷屏；失败时可回看）
-        local run_log="/tmp/singbox_deps_${label}.log"
-        : > "$run_log" 2> /dev/null || true
-
         pkg_installed() {
             local pkg="$1"
             case "$label" in
@@ -336,22 +332,13 @@ install_deps() {
 
             yellow "👉 正在安装依赖包：$p"
 
-            if [ "${DEBUG_FLAG:-0}" = "1" ]; then
-                # 调试模式：不静默，方便看具体报错
-                if "${_cmd[@]}" "$p"; then
-                    debug_log "【调试】 ✅ 安装成功：$p"
-                else
-                    red "❌ 安装失败：${p}（已跳过）"
-                    failed+=("$p")
-                fi
+            # 实时输出安装过程（安装日志会同步记录），失败包记录后跳过
+            if "${_cmd[@]}" "$p"; then
+                debug_log "【调试】 ✅ 安装成功：$p"
+                green "✅ 安装成功：$p"
             else
-                # 默认：静默，把输出写到日志，失败时提示查看
-                if "${_cmd[@]}" "$p" >> "$run_log" 2>&1; then
-                    green "✅ 安装成功：$p"
-                else
-                    red "❌ 安装失败：${p}（已跳过，详见 ${run_log}）"
-                    failed+=("$p")
-                fi
+                red "❌ 安装失败：${p}（已跳过）"
+                failed+=("$p")
             fi
         done
 
@@ -3735,21 +3722,10 @@ argorestart() {
 
 # ================== 脚本安装日志（仅保留最近一次安装） ==================
 # ins / rep / 菜单安装时：清空旧日志重新写入，完整记录安装过程输出，便于失败后排查
+# 由独立的 tee 进程负责记录：终端输出不经过重定向，保持实时刷新不被"卡住"
 
-# 把输入原样复制到终端（stdout），同时剥离 ANSI 颜色码后追加写入安装日志
-install_log_strip() {
-    awk -v _log="$INSTALL_LOG" '
-        BEGIN { _e = sprintf("%c", 27) }
-        {
-            print; fflush()
-            gsub(_e "\\[[0-9;?]*[A-Za-z]", "")
-            print >> _log
-            close(_log)
-        }'
-}
-
-# 开始记录：清空旧安装日志、写入头部，并把后续 stdout/stderr 同步到终端+日志
-install_log_on() {
+# 清空旧日志并写入头部
+install_log_begin() {
     mkdir -p "$SINGBOX_FOLDER_PATH" 2>/dev/null
     : > "$INSTALL_LOG" 2>/dev/null
     {
@@ -3760,30 +3736,37 @@ install_log_on() {
         echo " 开始时间: $(date '+%Y-%m-%d %H:%M:%S')"
         echo "==================================================="
     } >> "$INSTALL_LOG" 2>/dev/null
-    exec 3>&1 4>&2 # 备份原始 stdout/stderr
-    exec > >(install_log_strip) 2>&1
-    INSTALL_LOG_ON=1
 }
 
-# 结束记录：恢复原始 stdout/stderr 并等待后台 awk 写完尾部内容
-install_log_off() {
-    [ "${INSTALL_LOG_ON}" = "1" ] || return 0
-    INSTALL_LOG_ON=0
-    exec 1>&3 2>&4 3>&- 4>&-
-    sleep 1
+# 收尾：终端打印结束标记 + 追加进日志 + 剥离文件里的 ANSI 颜色码
+install_log_end() {
+    local _rc="$1" _e
+    yellow "===== 安装流程结束（退出码 ${_rc}） $(date '+%Y-%m-%d %H:%M:%S') ====="
+    {
+        echo ""
+        echo "===== 安装流程结束（退出码 ${_rc}） $(date '+%Y-%m-%d %H:%M:%S') ====="
+        echo ""
+    } >> "$INSTALL_LOG" 2>/dev/null
+    _e=$(printf '\033')
+    sed "s/$_e\[[0-9;?]*[A-Za-z]//g" "$INSTALL_LOG" > "${INSTALL_LOG}.tmp" 2>/dev/null &&
+        mv -f "${INSTALL_LOG}.tmp" "$INSTALL_LOG"
 }
 
 # 包装器：run_install_logged <模式说明> <安装函数名>...
+# 安装函数在管道子壳中运行，stdout/stderr 经 tee 实时回显终端并写入日志；
+# 失败时沿用原行为直接退出整个脚本
 run_install_logged() {
     local _label="$1"; shift
     local _rc
-    install_log_on "$_label"
-    "$@"
-    _rc=$?
-    yellow "===== 安装流程结束（退出码 ${_rc}） $(date '+%Y-%m-%d %H:%M:%S') =====" >&1
-    install_log_off
+    install_log_begin "$_label"
+    { "$@"; } 2>&1 | tee -a "$INSTALL_LOG"
+    _rc="${PIPESTATUS[0]}"
+    install_log_end "$_rc"
+    if [ "$_rc" -ne 0 ]; then
+        exit "$_rc"
+    fi
     green "📜 本次安装日志已保存：$INSTALL_LOG （菜单[10]-4 可查看）"
-    return $_rc
+    return 0
 }
 
 install_step() {
@@ -4929,7 +4912,7 @@ node_config_menu() {
 }
 
 interactive_log_menu() {
-    local _ch _log _title _hint _lines
+    local _ch _log _title _hint _lines _e
     while true; do
         clear
         green "========= [10] 查看日志 ========="
@@ -4963,10 +4946,12 @@ interactive_log_menu() {
         _lines=100
         reading "显示最近行数 (默认100): " _lines
         echo "$_lines" | grep -qE '^[0-9]+$' || _lines=100
+        # 显示时剥离 ANSI 颜色码（兼容安装被中断后日志残留颜色码的情况）
+        _e=$(printf '\033')
         echo ""
         green "=== $_title (最近 $_lines 行) ==="
         if [ -s "$_log" ]; then
-            tail -n "$_lines" "$_log"
+            tail -n "$_lines" "$_log" | sed "s/$_e\[[0-9;?]*[A-Za-z]//g"
         else
             yellow "$_hint"
         fi
