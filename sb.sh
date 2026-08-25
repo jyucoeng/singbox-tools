@@ -13,6 +13,7 @@ if [ -z "${BASH_VERSION}" ]; then
   fi
 fi
 
+
 export LANG=en_US.UTF-8
 
 # ================== 文件夹路径配置 ==================
@@ -20,9 +21,11 @@ export LANG=en_US.UTF-8
 SB_FOLDER="doraemon"
 SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
+LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志集中于此）
+INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.0.15(2026-08-08)"
+VERSION="1.0.22(2026-08-25)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -92,12 +95,14 @@ export DEBUG_FLAG=${DEBUG_FLAG:-'0'}
 # ================== 常量和环境变量 结束 ==================
 
 # ================== 颜色函数 ==================
-white() { printf "\033[1;37m%s\033[0m\n" "$1"; }
-red() { printf "\e[1;91m%s\033[0m\n" "$1"; }
-green() { printf "\e[1;32m%s\033[0m\n" "$1"; }
-yellow() { printf "\e[1;33m%s\033[0m\n" "$1"; }
-blue() { printf "\e[1;34m%s\033[0m\n" "$1"; }
-purple() { printf "\e[1;35m%s\033[0m\n" "$1"; }
+# 每个打印函数在终端显示的同时，把纯文本同步追加写入脚本安装日志
+# （_log_write 仅在 run_install_logged 安装期间开启，其余时间为空操作）
+white() { printf "\033[1;37m%s\033[0m\n" "$1"; _log_write "$1"; }
+red() { printf "\e[1;91m%s\e[0m\n" "$1"; _log_write "$1"; }
+green() { printf "\e[1;32m%s\e[0m\n" "$1"; _log_write "$1"; }
+yellow() { printf "\e[1;33m%s\e[0m\n" "$1"; _log_write "$1"; }
+blue() { printf "\e[1;34m%s\e[0m\n" "$1"; _log_write "$1"; }
+purple() { printf "\e[1;35m%s\e[0m\n" "$1"; _log_write "$1"; }
 #彩虹打印
 gradient() {
     local text="$1"
@@ -108,6 +113,7 @@ gradient() {
         i=$(((i + 1) % ${#colors[@]}))
     done
     echo
+    _log_write "$text"
 }
 # ================== 颜色函数 ==================
 
@@ -269,8 +275,8 @@ install_deps() {
     )
 
     # 失败包记录文件
-    local fail_log="$SINGBOX_FOLDER_PATH/deps_failed.log"
-    mkdir -p "$SINGBOX_FOLDER_PATH" 2> /dev/null || true
+    local fail_log="$LOGS_DIR/deps_failed.log"
+    mkdir -p "$LOGS_DIR" 2> /dev/null || true
 
     # 找出缺的命令
     local -a missing=()
@@ -304,10 +310,6 @@ install_deps() {
         local -a failed=()
         local p
 
-        # 安装输出日志（避免刷屏；失败时可回看）
-        local run_log="/tmp/singbox_deps_${label}.log"
-        : > "$run_log" 2> /dev/null || true
-
         pkg_installed() {
             local pkg="$1"
             case "$label" in
@@ -335,22 +337,13 @@ install_deps() {
 
             yellow "👉 正在安装依赖包：$p"
 
-            if [ "${DEBUG_FLAG:-0}" = "1" ]; then
-                # 调试模式：不静默，方便看具体报错
-                if "${_cmd[@]}" "$p"; then
-                    debug_log "【调试】 ✅ 安装成功：$p"
-                else
-                    red "❌ 安装失败：${p}（已跳过）"
-                    failed+=("$p")
-                fi
+            # 实时输出安装过程（安装日志会同步记录），失败包记录后跳过
+            if "${_cmd[@]}" "$p"; then
+                debug_log "【调试】 ✅ 安装成功：$p"
+                green "✅ 安装成功：$p"
             else
-                # 默认：静默，把输出写到日志，失败时提示查看
-                if "${_cmd[@]}" "$p" >> "$run_log" 2>&1; then
-                    green "✅ 安装成功：$p"
-                else
-                    red "❌ 安装失败：${p}（已跳过，详见 ${run_log}）"
-                    failed+=("$p")
-                fi
+                red "❌ 安装失败：${p}（已跳过）"
+                failed+=("$p")
             fi
         done
 
@@ -832,6 +825,11 @@ print_sb_shortcut_help() {
     green "    sb nginx_stop      停止 Nginx"
     green "    sb nginx_restart   重启 Nginx"
     green "    sb nginx_status    查看 Nginx 状态"
+    green "    sb logs            查看日志菜单（Sing-box/Argo/Nginx/安装日志）"
+    green "    sb log_sb 100      查看 Sing-box 运行日志（最近100行）"
+    green "    sb log_argo 100    查看 Argo 隧道日志（最近100行）"
+    green "    sb log_ins 100     查看脚本安装日志（最近100行）"
+    green "    sb log_stop        查看服务停止原因日志（排查崩溃用）"
 }
 
 # 清理 sb 快捷命令
@@ -890,7 +888,8 @@ install_nginx_pkg() {
     yellow "👉 正在安装 Nginx..."
 
     # 统一把详细输出写到日志，失败时 tail 出来
-    local log="/tmp/singbox_nginx_install.log"
+    mkdir -p "$LOGS_DIR" 2> /dev/null
+    local log="$LOGS_DIR/nginx_install.log"
     : > "$log" 2> /dev/null || true
 
     # Debian/Ubuntu (apt-get)
@@ -1127,7 +1126,7 @@ prepare_argo_credentials() {
 
         # 提取 TunnelID
         local tunnel_id
-        tunnel_id=$(echo "$auth" | sed -n 's/.*"TunnelID"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+        tunnel_id=$(printf '%s' "$auth" | sed -n 's/.*"TunnelID"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 
         if [ -z "$tunnel_id" ]; then
             red "❌ Argo JSON 中未找到 TunnelID"
@@ -1782,7 +1781,7 @@ installsb() {
     local tmpj="$SINGBOX_FOLDER_PATH/.sb.tmp"
 
     # Initialize JSON with log config (matching index.js generateSingBoxConfig style)
-    jq -n --arg logfile "$SINGBOX_FOLDER_PATH/singbox.log" '{log: {disabled: false, level: "info", timestamp: true, output: $logfile}, inbounds: []}' > "$sbj"
+    jq -n --arg logfile "$LOGS_DIR/singbox.log" '{log: {disabled: false, level: "info", timestamp: true, output: $logfile}, inbounds: []}' > "$sbj"
 
     # 添加tuic协议
     if [ -n "$tup" ]; then
@@ -2047,8 +2046,9 @@ setup_warp_config() {
 #  Generate Sing-box configuration file
 sbbout() {
     if [ -e "$SINGBOX_FOLDER_PATH/sb.json" ]; then
-        local sbj="$SINGBOX_FOLDER_PATH/sb.json"
-        local tmpj="$SINGBOX_FOLDER_PATH/.sb.tmp"
+    local sbj="$SINGBOX_FOLDER_PATH/sb.json"
+    local tmpj="$SINGBOX_FOLDER_PATH/.sb.tmp"
+    mkdir -p "$LOGS_DIR" 2> /dev/null
 
         # 读取 .warp_config：文件存在表示 WARP 已启用，内容为 true/false 表示 YouTube 是否走 WARP
         local warp_enabled=false need_youtube=false
@@ -2082,8 +2082,8 @@ After=network.target
 Type=simple
 NoNewPrivileges=yes
 ExecStart=$SINGBOX_FOLDER_PATH/sing-box run -c $SINGBOX_FOLDER_PATH/sb.json
-StandardOutput=append:$SINGBOX_FOLDER_PATH/singbox.log
-StandardError=append:$SINGBOX_FOLDER_PATH/singbox.log
+StandardOutput=append:$LOGS_DIR/singbox.log
+StandardError=append:$LOGS_DIR/singbox.log
 Restart=on-failure
 RestartSec=5s
 [Install]
@@ -2518,34 +2518,35 @@ start_argo_no_daemon() {
     local mode="$1"
     local token="$2"
     local port="$3"
+    mkdir -p "$LOGS_DIR" 2> /dev/null
 
     if [ "$mode" = "json" ]; then
         debug_log "【调试】使用 json 模式，nohup 启动 argo"
         nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel \
             --edge-ip-version auto \
             --config "$SINGBOX_FOLDER_PATH/tunnel.yml" run \
-            > "$SINGBOX_FOLDER_PATH/argo.log" 2>&1 &
+            > "$LOGS_DIR/argo.log" 2>&1 &
     elif [ -n "$token" ]; then
         debug_log "【调试】使用 token 模式，nohup 启动 argo"
         nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel \
             --no-autoupdate \
             --edge-ip-version auto run \
             --token "$token" \
-            > "$SINGBOX_FOLDER_PATH/argo.log" 2>&1 &
+            > "$LOGS_DIR/argo.log" 2>&1 &
     else
         debug_log "【调试】使用 URL 模式，nohup 启动 argo"
         nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel \
             --url "http://localhost:${port}" \
             --edge-ip-version auto \
             --no-autoupdate \
-            > "$SINGBOX_FOLDER_PATH/argo.log" 2>&1 &
+            > "$LOGS_DIR/argo.log" 2>&1 &
     fi
 }
 
 # 等待并检查 Argo
 wait_and_check_argo() {
     local argo_tunnel_type="${1:-临时}" # 第一个参数：隧道类型（固定/临时）
-    local argo_log="$SINGBOX_FOLDER_PATH/argo.log"
+    local argo_log="$LOGS_DIR/argo.log"
     local ym_log="$SINGBOX_FOLDER_PATH/argo_domain"
     local argodomain=""
     local i=0
@@ -2979,7 +2980,7 @@ ins() {
         fi
 
         # 2.5 等待并检查 Argo 申请结果（原版 sleep + grep 逻辑）
-        debug_log "【调试】开始等待并检查 Argo 申请结果：tunnel_type=${argo_tunnel_type}，日志文件：$SINGBOX_FOLDER_PATH/argo.log"
+        debug_log "【调试】开始等待并检查 Argo 申请结果：tunnel_type=${argo_tunnel_type}，日志文件：$LOGS_DIR/argo.log"
         wait_and_check_argo "$argo_tunnel_type"
     fi
 
@@ -3200,8 +3201,8 @@ show_sub_url() {
     fi
 
     # 当 need_argo_flag 为 true 且 argodomain 为空且 argo.log 存在时
-    if $need_argo_flag && [ -z "$argodomain" ] && [ -s "$SINGBOX_FOLDER_PATH/argo.log" ]; then
-        argodomain=$(grep -aoE '[a-zA-Z0-9.-]+\.trycloudflare\.com' "$SINGBOX_FOLDER_PATH/argo.log" 2> /dev/null | tail -n1)
+    if $need_argo_flag && [ -z "$argodomain" ] && [ -s "$LOGS_DIR/argo.log" ]; then
+        argodomain=$(grep -aoE '[a-zA-Z0-9.-]+\.trycloudflare\.com' "$LOGS_DIR/argo.log" 2> /dev/null | tail -n1)
     fi
 
     # 当argodomain 不为空时
@@ -3308,14 +3309,14 @@ update_server_ip() {
     # 如果 current_server_ip 是 IPv6 地址（即包含中括号），去除中括号
     if echo "$current_server_ip" | grep -q '^\[' && echo "$current_server_ip" | grep -q '\]$'; then
         debug_log "[调试] 去掉 current_server_ip 中的中括号"
-        current_server_ip=$(echo "$current_server_ip" | sed 's/^\[\(.*\)\]$/\1/') # 去掉中括号
+        current_server_ip=$(printf '%s' "$current_server_ip" | sed 's/^\[\(.*\)\]$/\1/') # 去掉中括号
         debug_log "[调试] 去掉中括号后的 current_server_ip: $current_server_ip"
     fi
 
     # 如果 out_ip_local 非空且包含中括号，则去除中括号
     if [ -n "$out_ip_local" ] && echo "$out_ip_local" | grep -q '^\[' && echo "$out_ip_local" | grep -q '\]$'; then
         debug_log "[调试] 去掉 out_ip_local 中的中括号"
-        out_ip_local=$(echo "$out_ip_local" | sed 's/^\[\(.*\)\]$/\1/') # 去掉中括号
+        out_ip_local=$(printf '%s' "$out_ip_local" | sed 's/^\[\(.*\)\]$/\1/') # 去掉中括号
         debug_log "[调试] 去掉中括号后的 out_ip_local: $out_ip_local"
     fi
 
@@ -3472,8 +3473,8 @@ regenerate_links_and_sub() {
 
     argodomain=$(cat "$SINGBOX_FOLDER_PATH/argo_domain" 2> /dev/null)
 
-    if need_argo && [ -z "$argodomain" ] && [ -s "$SINGBOX_FOLDER_PATH/argo.log" ]; then
-        argodomain=$(grep -aoE '[a-zA-Z0-9.-]+\.trycloudflare\.com' "$SINGBOX_FOLDER_PATH/argo.log" 2> /dev/null | tail -n1)
+    if need_argo && [ -z "$argodomain" ] && [ -s "$LOGS_DIR/argo.log" ]; then
+        argodomain=$(grep -aoE '[a-zA-Z0-9.-]+\.trycloudflare\.com' "$LOGS_DIR/argo.log" 2> /dev/null | tail -n1)
     fi
 
     cdn_host=$(cat "$SINGBOX_FOLDER_PATH/cdn_host")
@@ -3484,7 +3485,7 @@ regenerate_links_and_sub() {
         vlvm=$(cat "$SINGBOX_FOLDER_PATH/vlvm" 2> /dev/null)
         uuid=$(cat "$SINGBOX_FOLDER_PATH/uuid")
         if [ "$vlvm" = "Vmess" ]; then
-            vmatls_link1="vmess://$(echo "{\"v\":\"2\",\"ps\":\"${sxname}vmess-ws-tls-argo-$hostname-${cdn_pt}\",\"add\":\"${cdn_host}\",\"port\":\"${cdn_pt}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":\"$argodomain\",\"path\":\"/${uuid}-vm\",\"tls\":\"tls\",\"sni\":\"$argodomain\"}" | base64 | tr -d '\n\r')"
+            vmatls_link1="vmess://$(printf '%s' "{\"v\":\"2\",\"ps\":\"${sxname}vmess-ws-tls-argo-$hostname-${cdn_pt}\",\"add\":\"${cdn_host}\",\"port\":\"${cdn_pt}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":\"$argodomain\",\"path\":\"/${uuid}-vm\",\"tls\":\"tls\",\"sni\":\"$argodomain\"}" | base64 | tr -d '\n\r')"
 
             vlessws_link1=""
             tratls_link1=""
@@ -3552,13 +3553,13 @@ cleanup_nginx() {
 
     # 禁用 nginx 自启（避免卸载后 nginx 仍然起来）
     if has_systemd; then
-        systemctl stop nginx > /dev/null 2>&1
+        timeout 5 systemctl stop nginx > /dev/null 2>&1 || true
         systemctl disable nginx > /dev/null 2>&1
     elif command -v rc-service > /dev/null 2>&1; then
-        rc-service nginx stop > /dev/null 2>&1
+        timeout 5 rc-service nginx stop > /dev/null 2>&1 || true
         rc-update del nginx default > /dev/null 2>&1
     fi
-    echo "Nginx 已被清理(清理配置文件和禁止自启，nginx 服务已停止)。"
+    green "  ✓ Nginx 已清理（配置已删除，自启已禁用）"
 }
 
 # Remove singbox folder
@@ -3574,27 +3575,16 @@ cleandel() {
         "$OLD_SINGBOX_FOLDER"
     )
 
-    # 继续清理进程
-    for P in /proc/[0-9]*; do
-        if [ -L "$P/exe" ]; then
-            TARGET=$(readlink -f "$P/exe" 2> /dev/null)
-            # 检查是否匹配任何要清理的文件夹
-            for folder in "${folders_to_clean[@]}"; do
-                if echo "$TARGET" | grep -qE "$folder/(cloudflared|sing-box)"; then
-                    kill "$(basename "$P")" 2> /dev/null
-                    break
-                fi
-            done
-        fi
-    done
-
     # 杀死进程（兼容两个路径）
+    green "  ▸ 终止进程..."
     pkill -15 -f "$SINGBOX_FOLDER_PATH/sing-box" 2> /dev/null
     pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null
     pkill -15 -f "$OLD_SINGBOX_FOLDER/sing-box" 2> /dev/null
     pkill -15 -f "$OLD_SINGBOX_FOLDER/cloudflared" 2> /dev/null
+    green "  ✓ 进程已终止"
 
     # 处理 crontab，兼容 Debian 和 Alpine
+    green "  ▸ 清理定时任务..."
     crontab -l > /tmp/crontab.tmp 2> /dev/null || touch /tmp/crontab.tmp
     sed -i '/.*singbox.*/d' /tmp/crontab.tmp
     sed -i '/.*agsb.*/d' /tmp/crontab.tmp
@@ -3618,25 +3608,30 @@ cleandel() {
     rm -f "/usr/bin/agsb" 2> /dev/null
 
     if has_systemd; then
+        green "  ▸ 停止系统服务..."
         for svc in sb argo singbox-service agsb-singbox; do
-            systemctl stop "$svc" > /dev/null 2>&1
+            timeout 5 systemctl stop "$svc" > /dev/null 2>&1 || true
             systemctl disable "$svc" > /dev/null 2>&1
         done
         rm -f /etc/systemd/system/{sb.service,argo.service,singbox-service.service,agsb-singbox.service}
         systemctl daemon-reload > /dev/null 2>&1
+        green "  ✓ 系统服务已停止并清理"
     elif command -v rc-service > /dev/null 2>&1; then
+        green "  ▸ 停止 OpenRC 服务..."
         for svc in sing-box argo singbox agsb-singbox; do
-            rc-service "$svc" stop > /dev/null 2>&1
+            timeout 5 rc-service "$svc" stop > /dev/null 2>&1 || true
             rc-update del "$svc" default > /dev/null 2>&1
         done
         rm -f /etc/init.d/{sing-box,argo,singbox,agsb-singbox}
+        green "  ✓ OpenRC 服务已停止并清理"
     fi
 
     # 清理 nginx
-    debug_print yellow "开始卸载或者清理nginx流程..."
+    green "  ▸ 清理 Nginx..."
     cleanup_nginx
 
     # 清理文件夹
+    green "  ▸ 清理配置文件..."
     for folder in "${folders_to_clean[@]}"; do
         if [ -d "$folder" ]; then
             if [ "$mode" = "delall" ]; then
@@ -3647,7 +3642,7 @@ cleandel() {
                 for item in "$folder"/*; do
                     [ -e "$item" ] || continue
                     case "$(basename "$item")" in
-                        sing-box|cloudflared) continue ;;
+                        sing-box|cloudflared|logs) continue ;;
                         *) rm -rf "$item" 2>/dev/null ;;
                     esac
                 done
@@ -3656,7 +3651,7 @@ cleandel() {
         fi
     done
 
-    # yellow "开始卸载或者清理快捷方式流程...";
+    green "  ▸ 清理快捷命令..."
     cleanup_sb_shortcut
     cleanup_singbox_shortcut
 
@@ -3664,26 +3659,36 @@ cleandel() {
 
 }
 
+# 旧版日志迁移：doraemon 根目录下的散落日志移动到 logs/ 目录（同分区 mv，systemd 打开的句柄不受影响）
+migrate_logs_dir() {
+    [ -d "$SINGBOX_FOLDER_PATH" ] || return 0
+    mkdir -p "$LOGS_DIR" 2> /dev/null || return 0
+    local f
+    for f in singbox.log argo.log install.log deps_failed.log; do
+        if [ -s "$SINGBOX_FOLDER_PATH/$f" ] && [ ! -s "$LOGS_DIR/$f" ]; then
+            mv -f "$SINGBOX_FOLDER_PATH/$f" "$LOGS_DIR/$f" 2> /dev/null
+        fi
+    done
+}
+
 # Restart sing-box
 sbrestart() {
-    pkill -15 -f "$SINGBOX_FOLDER_PATH/sing-box" 2> /dev/null
-
     if has_systemd; then
+        # systemd 管理：直接 restart，不要手动 pkill
+        # 手动 pkill 会导致进程脱离 cgroup 管理，systemd stop 时找不到进程 → 状态标记 failed → start 被拒绝
         systemctl restart sb
     elif command -v rc-service > /dev/null 2>&1; then
         rc-service sing-box restart
     else
+        pkill -15 -f "$SINGBOX_FOLDER_PATH/sing-box" 2> /dev/null
         nohup "$SINGBOX_FOLDER_PATH/sing-box" run -c "$SINGBOX_FOLDER_PATH/sb.json" > /dev/null 2>&1 &
     fi
 }
 
 # Restart argo
 argorestart() {
-    # 先尽力停止现有 cloudflared 进程（原版行为）
-    pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null
-
     # ===============================
-    # systemd 管理
+    # systemd 管理：直接 restart，不要手动 pkill（同 sbrestart 原理）
     # ===============================
     if has_systemd; then
         systemctl restart argo
@@ -3692,6 +3697,7 @@ argorestart() {
 
     # ===============================
     # openrc 管理
+    # ===============================
     # ===============================
     if command -v rc-service > /dev/null 2>&1; then
         rc-service argo restart
@@ -3702,6 +3708,7 @@ argorestart() {
     # 无 init 系统（nohup 启动）
     # 判断顺序非常重要！
     # ===============================
+    pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null
 
     # 1️⃣ JSON 固定隧道（最高优先级）
     if [ -f "$SINGBOX_FOLDER_PATH/tunnel.yml" ]; then
@@ -3724,12 +3731,88 @@ argorestart() {
 
     # 3️⃣ 临时 Argo（trycloudflare）
     if [ -f "$SINGBOX_FOLDER_PATH/argoport" ]; then
+        mkdir -p "$LOGS_DIR" 2> /dev/null
         nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel \
             --url "http://localhost:$(cat "$SINGBOX_FOLDER_PATH/argoport")" \
             --edge-ip-version auto \
             --no-autoupdate \
-            > "$SINGBOX_FOLDER_PATH/argo.log" 2>&1 &
+            > "$LOGS_DIR/argo.log" 2>&1 &
     fi
+}
+
+# ================== 脚本安装日志（仅保留最近一次安装） ==================
+# 原理：终端输出完全不经过管道/重定向（apt/wget 等子进程照常识别终端，保持原生实时刷新），
+# 由颜色打印函数和 echo 在输出时把纯文本同步追加写入安装日志。
+
+INSTALL_LOGGING=0 # 安装日志记录开关（run_install_logged 安装期间置 1）
+
+# 追加一行纯文本到安装日志（未开启时静默跳过）
+# 用纯 bash 正则剥离可能嵌套进来的 ANSI 颜色码（如 $(green ...) 拼接场景），无外部依赖、各平台行为一致
+_log_write() {
+    [ "${INSTALL_LOGGING}" = "1" ] || return 0
+    local _s="$*" _re=$'\033\\[[0-9;?]*[A-Za-z]'
+    while [[ "$_s" =~ $_re ]]; do
+        _s="${_s/"${BASH_REMATCH[0]}"/}"
+    done
+    printf '%s\n' "$_s" >> "$INSTALL_LOG" 2> /dev/null
+    return 0
+}
+
+# 接管内建 echo：终端照常显示，安装期间同时写入日志
+echo() {
+    case "$1" in
+        -n | -e | -E | -ne | -en)
+            command echo "$@"
+            ;;
+        *)
+            command echo "$@"
+            _log_write "$*"
+            ;;
+    esac
+}
+
+# 清空旧日志并写入头部
+install_log_begin() {
+    mkdir -p "$LOGS_DIR" 2> /dev/null
+    : > "$INSTALL_LOG" 2> /dev/null
+    {
+        echo "==================================================="
+        echo " Sing-box 脚本安装日志（每次安装覆盖重写）"
+        echo " 模式    : $1"
+        echo " 版本    : $VERSION"
+        echo " 开始时间: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "==================================================="
+    } >> "$INSTALL_LOG" 2> /dev/null
+}
+
+# 收尾：终端打印结束标记并写入日志
+install_log_end() {
+    local _rc="$1"
+    INSTALL_LOGGING=0
+    yellow "===== 安装流程结束（退出码 ${_rc}） $(date '+%Y-%m-%d %H:%M:%S') ====="
+    {
+        echo ""
+        echo "===== 安装流程结束（退出码 ${_rc}） $(date '+%Y-%m-%d %H:%M:%S') ====="
+        echo ""
+    } >> "$INSTALL_LOG" 2> /dev/null
+}
+
+# 包装器：run_install_logged <模式说明> <安装函数名>...
+# 直接执行安装函数（无管道无子壳），失败时沿用原行为退出整个脚本
+run_install_logged() {
+    local _label="$1"; shift
+    local _rc
+    INSTALL_LOGGING=0
+    install_log_begin "$_label"
+    INSTALL_LOGGING=1
+    "$@"
+    _rc=$?
+    if [ "$_rc" -ne 0 ]; then
+        install_log_end "$_rc"
+        exit "$_rc"
+    fi
+    green "📜 本次安装日志已保存：$INSTALL_LOG （菜单[10]-4 可查看）"
+    install_log_end 0
 }
 
 install_step() {
@@ -3871,6 +3954,59 @@ menu_pause() {
     reading "按回车返回菜单..." _
 }
 
+# 捕获服务停止原因并写入日志
+# 参数：服务名（sb/argo）+ 可选 "quiet" 静默模式（不打印提示）
+capture_stop_reason() {
+    local svc="${1:-sb}" quiet="${2:-}" stop_log="$LOGS_DIR/stop_reason.log"
+    mkdir -p "$LOGS_DIR" 2>/dev/null
+
+    local ts reason oom_info log_err
+    ts=$(date '+%Y-%m-%d %H:%M:%S')
+
+    # 1) journalctl 最近日志（含 exit code）
+    reason=""
+    if command -v journalctl > /dev/null 2>&1; then
+        reason=$(journalctl -u "$svc" --no-pager -n 20 --since "10 min ago" 2>/dev/null)
+    fi
+
+    # 2) OOM killer
+    oom_info=""
+    if command -v dmesg > /dev/null 2>&1; then
+        oom_info=$(dmesg 2>/dev/null | grep -iE "oom|killed process|out of memory" | tail -5)
+    fi
+
+    # 3) sing-box / argo 自身日志最后的 error/fatal 行
+    log_err=""
+    local _app_log="$LOGS_DIR/singbox.log"
+    [ "$svc" = "argo" ] && _app_log="$LOGS_DIR/argo.log"
+    if [ -s "$_app_log" ]; then
+        log_err=$(grep -iE "fatal|error|panic|fail|segfault" "$_app_log" 2>/dev/null | tail -10)
+    fi
+
+    # 5 分钟内已记录过则跳过（避免每次刷新菜单重复写入）
+    local _dedup="$LOGS_DIR/.stop_reason_${svc}_ts"
+    if [ -f "$_dedup" ]; then
+        local _last _now _diff
+        _last=$(cat "$_dedup" 2>/dev/null)
+        _now=$(date +%s)
+        _diff=$((_now - _last))
+        [ "$_diff" -lt 300 ] && return 0
+    fi
+    date +%s > "$_dedup" 2>/dev/null
+    if [ -n "$reason" ] || [ -n "$oom_info" ] || [ -n "$log_err" ]; then
+        {
+            echo "========================================"
+            echo "检测时间: $ts | 服务: $svc"
+            [ -n "$reason" ]   && echo "--- journalctl -u $svc ---" && echo "$reason"
+            [ -n "$oom_info" ] && echo "--- OOM Killer ---"         && echo "$oom_info"
+            [ -n "$log_err" ]  && echo "--- 应用日志 ---"           && echo "$log_err"
+            echo ""
+        } >> "$stop_log" 2>/dev/null
+
+        [ "$quiet" != "quiet" ] && yellow "⚠️ 已记录 $svc 停止原因 → $stop_log"
+    fi
+}
+
 # 主菜单状态：sing-box / cloudflared / Argo / nginx（状态 + 具体版本）
 # 绿●运行中 / 红■已停止 / 黄○未安装 / 紫○未启用
 menu_status_block() {
@@ -3890,6 +4026,7 @@ menu_status_block() {
         st_sb="$(green "● 运行中")"
     elif [ -n "$v_sb" ]; then
         st_sb="$(red "■ 已停止")"
+        capture_stop_reason sb quiet 2>/dev/null
     else
         st_sb="$(yellow "○ 未安装")"
     fi
@@ -3910,6 +4047,7 @@ menu_status_block() {
             st_cf="$(green "● 运行中")"
         else
             st_cf="$(red "■ 已停止")"
+            capture_stop_reason argo quiet 2>/dev/null
         fi
     else
         st_cf="$(yellow "○ 未安装")"
@@ -4375,9 +4513,12 @@ interactive_install() {
     done
 
     check_port_conflicts_or_exit
-    install_step
-    green "✅ 安装完成！"
-    sleep 2
+    _install_menu_flow() {
+        install_step
+        green "✅ 安装完成！"
+        sleep 2
+    }
+    run_install_logged "菜单[1] 交互式安装" _install_menu_flow
 }
 
 interactive_reinstall() {
@@ -4404,10 +4545,13 @@ interactive_reinstall() {
     done
 
     check_port_conflicts_or_exit
-    cleandel
-    install_step
-    green "✅ 覆盖式安装完成！"
-    sleep 2
+    _reinstall_menu_flow() {
+        cleandel
+        install_step
+        green "✅ 覆盖式安装完成！"
+        sleep 2
+    }
+    run_install_logged "菜单[2] 覆盖式安装(重置)（含卸载清理）" _reinstall_menu_flow
 }
 
 # ========== 服务管理（重启/更新内核/Nginx/状态） ==========
@@ -4790,7 +4934,7 @@ edit_argo_menu() {
             3)
                 pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null
                 [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ] && pkill -15 -f "cloudflared" 2> /dev/null
-                rm -f "$SINGBOX_FOLDER_PATH/tunnel.yml" "$SINGBOX_FOLDER_PATH/tunnel.json" "$SINGBOX_FOLDER_PATH/sbargotoken" "$SINGBOX_FOLDER_PATH/argo_domain" "$SINGBOX_FOLDER_PATH/argo.log"
+                rm -f "$SINGBOX_FOLDER_PATH/tunnel.yml" "$SINGBOX_FOLDER_PATH/tunnel.json" "$SINGBOX_FOLDER_PATH/sbargotoken" "$SINGBOX_FOLDER_PATH/argo_domain" "$LOGS_DIR/argo.log"
                 green "✅ 取消使用 Argo 隧道操作已完成！"
                 menu_pause
                 ;;
@@ -4874,72 +5018,63 @@ node_config_menu() {
     done
 }
 
-interactive_log_menu() {
-    local _ch _log _log_files _f _lines
-    _lines=100
-    reading "显示最近行数 (默认100): " _lines
+# 显示日志文件尾部（剥离 ANSI 颜色码）；参数：文件路径 标题 空文件提示 [行数]
+show_log_file() {
+    local _log="$1" _title="$2" _hint="$3" _lines="${4:-100}" _e
     echo "$_lines" | grep -qE '^[0-9]+$' || _lines=100
+    # 显示时剥离 ANSI 颜色码（兼容安装被中断后日志残留颜色码的情况）
+    _e=$(printf '\033')
+    echo ""
+    green "=== $_title (最近 $_lines 行) ==="
+    if [ -s "$_log" ]; then
+        tail -n "$_lines" "$_log" | sed "s/$_e\[[0-9;?]*[A-Za-z]//g"
+    else
+        yellow "$_hint"
+    fi
+    echo ""
+}
+
+interactive_log_menu() {
+    local _ch _log _title _hint _lines
     while true; do
         clear
         green "========= [10] 查看日志 ========="
         echo ""
-        green "  1) Sing-box 日志 (最近 $_lines 行)"
-        green "  2) Argo (cloudflared) 日志 (最近 $_lines 行)"
-        green "  3) Nginx 日志 (最近 $_lines 行)"
-        green "  4) 实时跟踪所有日志"
+        green "  1) Sing-box 日志"
+        green "  2) Argo (cloudflared) 日志"
+        green "  3) Nginx 日志"
+        green "  4) 脚本安装日志 (最近一次安装)"
+        green "  5) 服务停止原因日志 (排查崩溃用)"
         purple "  0) 返回主菜单"
         reading "请输入选择: " _ch
         case "$_ch" in
             0) return ;;
             1)
-                _log="$SINGBOX_FOLDER_PATH/singbox.log"
-                echo ""
-                green "=== Sing-box 日志 (最近 $_lines 行) ==="
-                if [ -s "$_log" ]; then
-                    tail -n "$_lines" "$_log"
-                else
-                    yellow "暂无日志：$_log"
-                fi
-                echo ""
-                menu_pause ;;
+                _log="$LOGS_DIR/singbox.log"
+                _title="Sing-box 日志"
+                _hint="暂无日志：$_log" ;;
             2)
-                _log="$SINGBOX_FOLDER_PATH/argo.log"
-                echo ""
-                green "=== Argo (cloudflared) 日志 (最近 $_lines 行) ==="
-                if [ -s "$_log" ]; then
-                    tail -n "$_lines" "$_log"
-                else
-                    yellow "暂无日志：$_log"
-                fi
-                echo ""
-                menu_pause ;;
+                _log="$LOGS_DIR/argo.log"
+                _title="Argo (cloudflared) 日志"
+                _hint="暂无日志：$_log" ;;
             3)
                 _log="/var/log/nginx/error.log"
-                echo ""
-                green "=== Nginx 日志 (最近 $_lines 行) ==="
-                if [ -s "$_log" ]; then
-                    tail -n "$_lines" "$_log"
-                else
-                    yellow "暂无日志：$_log"
-                fi
-                echo ""
-                menu_pause ;;
+                _title="Nginx 日志"
+                _hint="暂无日志：$_log" ;;
             4)
-                echo ""
-                yellow "实时跟踪日志 (按 Ctrl+C 退出)..."
-                _log_files=""
-                for _f in "$SINGBOX_FOLDER_PATH/singbox.log" "$SINGBOX_FOLDER_PATH/argo.log" /var/log/nginx/error.log; do
-                    [ -s "$_f" ] && _log_files="$_log_files $_f"
-                done
-                if [ -z "$_log_files" ]; then
-                    yellow "暂无任何日志文件"
-                    menu_pause
-                else
-                    tail -f $_log_files
-                fi
-                ;;
-            *) yellow "无效选项"; sleep 1 ;;
+                _log="$LOGS_DIR/install.log"
+                _title="脚本安装日志（仅保留最近一次安装）"
+                _hint="暂无安装日志：执行 ins/rep 或菜单安装后自动生成" ;;
+            5)
+                _log="$LOGS_DIR/stop_reason.log"
+                _title="服务停止原因日志"
+                _hint="暂无停止记录：服务运行正常时不会产生记录" ;;
+            *) yellow "无效选项"; sleep 1; continue ;;
         esac
+        _lines=100
+        reading "显示最近行数 (默认100): " _lines
+        show_log_file "$_log" "$_title" "$_hint" "$_lines"
+        menu_pause
     done
 }
 
@@ -5847,6 +5982,9 @@ interactive_main() {
 
 main() {
 
+    # 日志目录迁移（老版本散落在 doraemon 根目录的日志归拢到 logs/）
+    migrate_logs_dir
+
     # 命令转小写，支持大小写不敏感
     local _cmd
     _cmd="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
@@ -5895,6 +6033,36 @@ main() {
     # 查看 nginx 状态
     if [ "$_cmd" = "nginx_status" ]; then
         nginx_status
+        exit
+    fi
+
+    # 查看日志菜单
+    if [ "$_cmd" = "logs" ]; then
+        interactive_log_menu
+        exit
+    fi
+
+    # 查看 Sing-box 运行日志（可带行数：sb log_sb 50）
+    if [ "$_cmd" = "log_sb" ]; then
+        show_log_file "$LOGS_DIR/singbox.log" "Sing-box 日志" "暂无日志：$LOGS_DIR/singbox.log" "${2:-100}"
+        exit
+    fi
+
+    # 查看 Argo 隧道日志（可带行数）
+    if [ "$_cmd" = "log_argo" ]; then
+        show_log_file "$LOGS_DIR/argo.log" "Argo (cloudflared) 日志" "暂无日志：$LOGS_DIR/argo.log" "${2:-100}"
+        exit
+    fi
+
+    # 查看脚本安装日志（最近一次安装，可带行数）
+    if [ "$_cmd" = "log_ins" ]; then
+        show_log_file "$LOGS_DIR/install.log" "脚本安装日志（仅保留最近一次安装）" "暂无安装日志：执行 ins/rep 或菜单安装后自动生成" "${2:-100}"
+        exit
+    fi
+
+    # 查看服务停止原因日志
+    if [ "$_cmd" = "log_stop" ]; then
+        show_log_file "$LOGS_DIR/stop_reason.log" "服务停止原因日志" "暂无停止记录：服务运行正常时不会产生记录" "${2:-100}"
         exit
     fi
 
@@ -5953,26 +6121,32 @@ main() {
         exit
     fi
 
-    # 覆盖式安装
+    # 覆盖式安装（全流程记录：geo预取 + 卸载清理 + 安装）
     if [ "$_cmd" = "rep" ]; then
-        geo_prefetch
-        green "开始覆盖式安装流程..."
-        green "1、即将开始清理操作（保留二进制）..."
-        cleandel
-        green "1.1、清理操作完成..."
-        sleep 2
+        _rep_flow_cli() {
+            geo_prefetch
+            green "开始覆盖式安装流程..."
+            green "1、即将开始清理操作（保留二进制）..."
+            cleandel
+            green "1.1、清理操作完成..."
+            sleep 2
 
-        green "2、覆盖式安装开始..."
-        install_step
-        echo "覆盖式安装已完成... 再见👋"
+            green "2、覆盖式安装开始..."
+            install_step
+            echo "覆盖式安装已完成... 再见👋"
+        }
+        run_install_logged "命令行 rep 覆盖式安装（含卸载清理）" _rep_flow_cli
         exit
     fi
 
-    # 只在明确 ins 时才安装；无参数只显示菜单
+    # 只在明确 ins 时才安装；无参数只显示菜单（全流程记录：geo预取 + 安装）
     if [ "$_cmd" = "ins" ]; then
-        geo_prefetch
-        yellow "开始安装流程..."
-        install_step
+        _ins_flow_cli() {
+            geo_prefetch
+            yellow "开始安装流程..."
+            install_step
+        }
+        run_install_logged "命令行 ins 安装" _ins_flow_cli
         exit
     fi
 

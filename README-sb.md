@@ -442,24 +442,30 @@ sing-box 和 cloudflared 启动失败时，可以通过下面命令定位问题�
 
 > 以下 `doraemon` 为默认安装目录，若安装时改了 `sb_dir`，请替换成实际目录。
 
-### sing-box 日志
+### 快捷命令（推荐）
 
 ```bash
-# 实时查看 sing-box 运行日志（推荐，通用所有模式）
-tail -f /root/doraemon/singbox.log
-
-# 查看最新 200 行
-tail -200 /root/doraemon/singbox.log
+sb logs              打开日志菜单（Sing-box / Argo / Nginx / 安装日志）
+sb log_sb 100        查看 Sing-box 运行日志（最近100行）
+sb log_argo 100      查看 Argo 隧道日志（最近100行）
+sb log_ins 100       查看脚本安装日志（最近100行）
+sb log_stop          查看服务停止原因日志（排查崩溃用）
 ```
 
-### cloudflared 日志
+### 手动查看
 
 ```bash
-# 实时查看 cloudflared 运行日志（nohup / 临时隧道模式）
-tail -f /root/doraemon/argo.log
+# 实时查看 sing-box 运行日志（通用所有模式）
+tail -f /root/doraemon/logs/singbox.log
 
 # 查看最新 200 行
-tail -200 /root/doraemon/argo.log
+tail -200 /root/doraemon/logs/singbox.log
+
+# 实时查看 cloudflared 运行日志（nohup / 临时隧道模式）
+tail -f /root/doraemon/logs/argo.log
+
+# 查看最新 200 行
+tail -200 /root/doraemon/logs/argo.log
 ```
 
 ## 感谢
@@ -469,6 +475,31 @@ tail -200 /root/doraemon/argo.log
 
 
 ## 版本变更信息
+
+v1.0.22 (2026-08-25)
+ - 修复 sbrestart/argorestart：systemd 下不再手动 pkill，避免进程脱离 cgroup 导致服务重启后显示"已停止"
+ - 新增 capture_stop_reason()：服务异常停止时自动从 journalctl/dmesg/应用日志捕获原因，写入 `doraemon/logs/stop_reason.log`
+ - 新增 `sb log_stop` 快捷命令 + 菜单项查看停止原因
+ - cleandel 优化：systemctl stop 加 timeout 5 超时保护，清理流程每阶段添加进度提示（▸→✓）
+
+v1.0.21 (2026-08-25)
+ - 新增日志查看快捷命令：`sb logs`（菜单）、`sb log_sb`、`sb log_argo`、`sb log_ins`（可带行数，如 `sb log_sb 100`）
+ - 提取 show_log_file() 公共函数供菜单与 CLI 共用
+ - cleandel 删除冗余 /proc/[0-9]* 遍历循环（每个进程 2 次 fork 导致 ~6s 卡顿），已被 pkill 等效覆盖
+
+v1.0.20 (2026-08-25)
+ - 所有日志归拢到 `doraemon/logs/` 子目录（install.log / singbox.log / argo.log / deps_failed.log / nginx_install.log）
+ - 新增 migrate_logs_dir()：老安装自动将根目录散落日志迁移到 logs/，systemd 句柄无缝衔接
+ - cleandel 保留列表从 `sing-box|cloudflared|install.log` 改为 `sing-box|cloudflared|logs`（整个日志目录保留）
+ - 菜单日志子菜单同步更新
+
+v1.0.19 (2026-08-25)
+ - 新增脚本安装日志系统（ins/rep/菜单安装全流程记录），零管道零终端干扰
+ - 颜色函数钩子 + echo 钩子双写纯文本到 `doraemon/install.log`
+ - 日志菜单重构：支持按时间/行数/关键字过滤查看，支持清空与复制路径
+ - 新增 `DEBUG_FLAG=1` 环境变量开启调试模式，所有调试输出写入 `doraemon/debug.log`
+ - cleandel 保留 install.log 不被清理
+ - install_deps 改为实时逐行输出（去管道化），日志同步记录失败依赖
 
 v1.0.15 (2026-08-08)
  - Argo 隧道协议由 vmess/trojan 二选一升级为 vmess/trojan/vless 三选一
