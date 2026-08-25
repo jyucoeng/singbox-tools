@@ -23,7 +23,7 @@ OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 INSTALL_LOG="$SINGBOX_FOLDER_PATH/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.0.16(2026-08-25)"
+VERSION="1.0.17(2026-08-25)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -4929,68 +4929,49 @@ node_config_menu() {
 }
 
 interactive_log_menu() {
-    local _ch _log _log_files _f _lines
-    _lines=100
-    reading "显示最近行数 (默认100): " _lines
-    echo "$_lines" | grep -qE '^[0-9]+$' || _lines=100
+    local _ch _log _title _hint _lines
     while true; do
         clear
         green "========= [10] 查看日志 ========="
         echo ""
-        green "  1) Sing-box 日志 (最近 $_lines 行)"
-        green "  2) Argo (cloudflared) 日志 (最近 $_lines 行)"
-        green "  3) Nginx 日志 (最近 $_lines 行)"
-        green "  4) 脚本安装日志 (最近一次安装，最近 $_lines 行)"
+        green "  1) Sing-box 日志"
+        green "  2) Argo (cloudflared) 日志"
+        green "  3) Nginx 日志"
+        green "  4) 脚本安装日志 (最近一次安装)"
         purple "  0) 返回主菜单"
         reading "请输入选择: " _ch
         case "$_ch" in
             0) return ;;
             1)
                 _log="$SINGBOX_FOLDER_PATH/singbox.log"
-                echo ""
-                green "=== Sing-box 日志 (最近 $_lines 行) ==="
-                if [ -s "$_log" ]; then
-                    tail -n "$_lines" "$_log"
-                else
-                    yellow "暂无日志：$_log"
-                fi
-                echo ""
-                menu_pause ;;
+                _title="Sing-box 日志"
+                _hint="暂无日志：$_log" ;;
             2)
                 _log="$SINGBOX_FOLDER_PATH/argo.log"
-                echo ""
-                green "=== Argo (cloudflared) 日志 (最近 $_lines 行) ==="
-                if [ -s "$_log" ]; then
-                    tail -n "$_lines" "$_log"
-                else
-                    yellow "暂无日志：$_log"
-                fi
-                echo ""
-                menu_pause ;;
+                _title="Argo (cloudflared) 日志"
+                _hint="暂无日志：$_log" ;;
             3)
                 _log="/var/log/nginx/error.log"
-                echo ""
-                green "=== Nginx 日志 (最近 $_lines 行) ==="
-                if [ -s "$_log" ]; then
-                    tail -n "$_lines" "$_log"
-                else
-                    yellow "暂无日志：$_log"
-                fi
-                echo ""
-                menu_pause ;;
+                _title="Nginx 日志"
+                _hint="暂无日志：$_log" ;;
             4)
                 _log="$SINGBOX_FOLDER_PATH/install.log"
-                echo ""
-                green "=== 脚本安装日志（仅保留最近一次安装，最近 $_lines 行） ==="
-                if [ -s "$_log" ]; then
-                    tail -n "$_lines" "$_log"
-                else
-                    yellow "暂无安装日志：执行 ins/rep 或菜单安装后自动生成"
-                fi
-                echo ""
-                menu_pause ;;
-            *) yellow "无效选项"; sleep 1 ;;
+                _title="脚本安装日志（仅保留最近一次安装）"
+                _hint="暂无安装日志：执行 ins/rep 或菜单安装后自动生成" ;;
+            *) yellow "无效选项"; sleep 1; continue ;;
         esac
+        _lines=100
+        reading "显示最近行数 (默认100): " _lines
+        echo "$_lines" | grep -qE '^[0-9]+$' || _lines=100
+        echo ""
+        green "=== $_title (最近 $_lines 行) ==="
+        if [ -s "$_log" ]; then
+            tail -n "$_lines" "$_log"
+        else
+            yellow "$_hint"
+        fi
+        echo ""
+        menu_pause
     done
 }
 
