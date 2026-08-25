@@ -25,7 +25,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.0.20(2026-08-25)"
+VERSION="1.0.21(2026-08-25)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -825,6 +825,10 @@ print_sb_shortcut_help() {
     green "    sb nginx_stop      停止 Nginx"
     green "    sb nginx_restart   重启 Nginx"
     green "    sb nginx_status    查看 Nginx 状态"
+    green "    sb logs            查看日志菜单（Sing-box/Argo/Nginx/安装日志）"
+    green "    sb log_sb 100      查看 Sing-box 运行日志（最近100行）"
+    green "    sb log_argo 100    查看 Argo 隧道日志（最近100行）"
+    green "    sb log_ins 100     查看脚本安装日志（最近100行）"
 }
 
 # 清理 sb 快捷命令
@@ -3570,21 +3574,7 @@ cleandel() {
         "$OLD_SINGBOX_FOLDER"
     )
 
-    # 继续清理进程
-    for P in /proc/[0-9]*; do
-        if [ -L "$P/exe" ]; then
-            TARGET=$(readlink -f "$P/exe" 2> /dev/null)
-            # 检查是否匹配任何要清理的文件夹
-            for folder in "${folders_to_clean[@]}"; do
-                if echo "$TARGET" | grep -qE "$folder/(cloudflared|sing-box)"; then
-                    kill "$(basename "$P")" 2> /dev/null
-                    break
-                fi
-            done
-        fi
-    done
-
-    # 杀死进程（兼容两个路径）
+    # 杀死进程（兼容两个路径；不再遍历 /proc——pkill 已覆盖全部组合且快得多）
     pkill -15 -f "$SINGBOX_FOLDER_PATH/sing-box" 2> /dev/null
     pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null
     pkill -15 -f "$OLD_SINGBOX_FOLDER/sing-box" 2> /dev/null
@@ -4964,8 +4954,24 @@ node_config_menu() {
     done
 }
 
+# 显示日志文件尾部（剥离 ANSI 颜色码）；参数：文件路径 标题 空文件提示 [行数]
+show_log_file() {
+    local _log="$1" _title="$2" _hint="$3" _lines="${4:-100}" _e
+    echo "$_lines" | grep -qE '^[0-9]+$' || _lines=100
+    # 显示时剥离 ANSI 颜色码（兼容安装被中断后日志残留颜色码的情况）
+    _e=$(printf '\033')
+    echo ""
+    green "=== $_title (最近 $_lines 行) ==="
+    if [ -s "$_log" ]; then
+        tail -n "$_lines" "$_log" | sed "s/$_e\[[0-9;?]*[A-Za-z]//g"
+    else
+        yellow "$_hint"
+    fi
+    echo ""
+}
+
 interactive_log_menu() {
-    local _ch _log _title _hint _lines _e
+    local _ch _log _title _hint _lines
     while true; do
         clear
         green "========= [10] 查看日志 ========="
@@ -4998,17 +5004,7 @@ interactive_log_menu() {
         esac
         _lines=100
         reading "显示最近行数 (默认100): " _lines
-        echo "$_lines" | grep -qE '^[0-9]+$' || _lines=100
-        # 显示时剥离 ANSI 颜色码（兼容安装被中断后日志残留颜色码的情况）
-        _e=$(printf '\033')
-        echo ""
-        green "=== $_title (最近 $_lines 行) ==="
-        if [ -s "$_log" ]; then
-            tail -n "$_lines" "$_log" | sed "s/$_e\[[0-9;?]*[A-Za-z]//g"
-        else
-            yellow "$_hint"
-        fi
-        echo ""
+        show_log_file "$_log" "$_title" "$_hint" "$_lines"
         menu_pause
     done
 }
@@ -5968,6 +5964,30 @@ main() {
     # 查看 nginx 状态
     if [ "$_cmd" = "nginx_status" ]; then
         nginx_status
+        exit
+    fi
+
+    # 查看日志菜单
+    if [ "$_cmd" = "logs" ]; then
+        interactive_log_menu
+        exit
+    fi
+
+    # 查看 Sing-box 运行日志（可带行数：sb log_sb 50）
+    if [ "$_cmd" = "log_sb" ]; then
+        show_log_file "$LOGS_DIR/singbox.log" "Sing-box 日志" "暂无日志：$LOGS_DIR/singbox.log" "${2:-100}"
+        exit
+    fi
+
+    # 查看 Argo 隧道日志（可带行数）
+    if [ "$_cmd" = "log_argo" ]; then
+        show_log_file "$LOGS_DIR/argo.log" "Argo (cloudflared) 日志" "暂无日志：$LOGS_DIR/argo.log" "${2:-100}"
+        exit
+    fi
+
+    # 查看脚本安装日志（最近一次安装，可带行数）
+    if [ "$_cmd" = "log_ins" ]; then
+        show_log_file "$LOGS_DIR/install.log" "脚本安装日志（仅保留最近一次安装）" "暂无安装日志：执行 ins/rep 或菜单安装后自动生成" "${2:-100}"
         exit
     fi
 
