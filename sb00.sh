@@ -4099,10 +4099,18 @@ menu_status_block() {
 
     # nginx
     v_nginx=""
+    local st_nginx=""
     if command -v nginx > /dev/null 2>&1; then
         local _ver
         _ver=$(nginx -v 2>&1 | sed -n 's/.*nginx\/\([0-9.]*\).*/\1/p')
         [ -n "$_ver" ] && v_nginx="V$_ver"
+    fi
+    if ps aux | grep -v grep | grep -q nginx; then
+        st_nginx="$(green "● 运行中")"
+    elif command -v nginx > /dev/null 2>&1; then
+        st_nginx="$(red "■ 已停止")"
+    else
+        st_nginx="$(yellow "○ 未安装")"
     fi
     # 订阅细分：订阅开启/未开启 + 端口
     local sub_desc nginx_port
@@ -4121,7 +4129,8 @@ menu_status_block() {
     local argo_port
     argo_port="${argo_pt:-$ARGO_DEFAULT_PORT}"
     if ! $argo_needed; then
-        green "  Argo        : $(purple "○ 未启用")（当前场景无需 Argo，端口：${argo_port}）"
+        local st_argo_off="$(purple "○ 未启用")"
+        green "  Argo        : ${st_argo_off}（当前场景无需 Argo，端口：${argo_port}）"
     elif [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ] || command -v cloudflared > /dev/null 2>&1; then
         if pgrep -f "$SINGBOX_FOLDER_PATH/cloudflared" > /dev/null 2>&1; then
             green "  Argo        : ${st_cf}（端口：${argo_port}）"
@@ -4129,16 +4138,17 @@ menu_status_block() {
             green "  Argo        : ${st_cf}（已启用 Argo，端口：${argo_port}）"
         fi
     else
-        green "  Argo        : $(yellow "○ 未安装")（已启用 Argo，端口：${argo_port}）"
+        local st_argo_miss="$(yellow "○ 未安装")"
+        green "  Argo        : ${st_argo_miss}（已启用 Argo，端口：${argo_port}）"
     fi
     if ! $argo_needed && ! is_true "$sub_flag"; then
         green "  Nginx       : $(purple "○ 未启用（订阅未开启，无需）")"
     elif ! command -v nginx > /dev/null 2>&1; then
-        green "  Nginx       : $(yellow "○ 未安装")（${sub_desc}，端口：${nginx_port}）"
+        green "  Nginx       : ${st_nginx}（${sub_desc}，端口：${nginx_port}）"
     elif ps aux | grep -v grep | grep -q nginx; then
-        green "  Nginx       : $(green "● 运行中")${v_nginx:+ $v_nginx}（${sub_desc}，端口：${nginx_port}）"
+        green "  Nginx       : ${st_nginx}${v_nginx:+ $v_nginx}（${sub_desc}，端口：${nginx_port}）"
     else
-        green "  Nginx       : $(red "■ 已停止")（${sub_desc}，端口：${nginx_port}）"
+        green "  Nginx       : ${st_nginx}（${sub_desc}，端口：${nginx_port}）"
     fi
 }
 
