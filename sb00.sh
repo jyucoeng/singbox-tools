@@ -4104,8 +4104,8 @@ menu_status_block() {
     nginx_port="${nginx_pt:-$NGINX_DEFAULT_PORT}"
     [ -s "$SINGBOX_FOLDER_PATH/nginx_port" ] && nginx_port="$(cat "$SINGBOX_FOLDER_PATH/nginx_port" 2> /dev/null)"
 
-    green "  $(black "Sing-box    :") $st_sb   $v_sb"
-    green "  $(black "Cloudflared :") $st_cf   $v_cf"
+    green "  $(white "Sing-box    :") $st_sb   $v_sb"
+    green "  $(white "Cloudflared :") $st_cf   $v_cf"
     # Argo 状态行（色值与 Nginx 一致：紫○未启用 / 黄○未安装 / 绿●运行中 / 红■已停止，均带端口）
     local argo_port
     argo_port="${argo_pt:-$ARGO_DEFAULT_PORT}"
