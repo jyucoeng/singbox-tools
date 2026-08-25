@@ -476,6 +476,16 @@ tail -200 /root/doraemon/logs/argo.log
 
 ## 版本变更信息
 
+v1.0.24 (2026-08-25)
+ - **修复 Reality 私钥 base64 编码不兼容导致 sing-box 启动失败**：旧版 reality.key 使用标准 base64（`+`/`/` + `=` 填充），sing-box 1.13+ 期望 URL-safe base64（`-`/`_` + 无填充），密钥中 `+` 字符在解码时被拒绝
+ - 新增 `_to_urlsafe_base64()` 自动转换函数，读取密钥时自动将标准 base64 转为 URL-safe base64
+ - 覆盖所有密钥读取路径：`init_reality_keypair()` / `ensure_and_print_reality_private_for_cip()` / `regenerate_links_and_sub()`
+ - `sbbout()` 启动前预创建 singbox.log，启动后 3 秒检测日志文件是否生成
+
+v1.0.23 (2026-08-25)
+ - sbbout() 启动前预创建 singbox.log，确保 sing-box 启动时文件已存在
+ - 启动后 3 秒检测日志文件是否生成，为空显示黄色警告提示
+
 v1.0.22 (2026-08-25)
  - 修复 sbrestart/argorestart：systemd 下不再手动 pkill，避免进程脱离 cgroup 导致服务重启后显示"已停止"
  - 新增 capture_stop_reason()：服务异常停止时自动从 journalctl/dmesg/应用日志捕获原因，写入 `doraemon/logs/stop_reason.log`
