@@ -3553,13 +3553,13 @@ cleanup_nginx() {
 
     # 禁用 nginx 自启（避免卸载后 nginx 仍然起来）
     if has_systemd; then
-        systemctl stop nginx > /dev/null 2>&1
+        timeout 5 systemctl stop nginx > /dev/null 2>&1 || true
         systemctl disable nginx > /dev/null 2>&1
     elif command -v rc-service > /dev/null 2>&1; then
-        rc-service nginx stop > /dev/null 2>&1
+        timeout 5 rc-service nginx stop > /dev/null 2>&1 || true
         rc-update del nginx default > /dev/null 2>&1
     fi
-    echo "Nginx 已被清理(清理配置文件和禁止自启，nginx 服务已停止)。"
+    green "  ✓ Nginx 已清理（配置已删除，自启已禁用）"
 }
 
 # Remove singbox folder
