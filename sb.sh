@@ -3772,9 +3772,11 @@ argorestart() {
 INSTALL_LOGGING=0 # 安装日志记录开关（run_install_logged 安装期间置 1）
 
 # 追加一行纯文本到安装日志（未开启时静默跳过）
+_SUPPRESS_LOG=0 # 临时抑制日志写入（menu_status_block 等场景）
 # 用纯 bash 正则剥离可能嵌套进来的 ANSI 颜色码（如 $(green ...) 拼接场景），无外部依赖、各平台行为一致
 _log_write() {
     [ "${INSTALL_LOGGING}" = "1" ] || return 0
+    [ "${_SUPPRESS_LOG}" = "1" ] && return 0
     local _s="$*" _re=$'\033\\[[0-9;?]*[A-Za-z]'
     while [[ "$_s" =~ $_re ]]; do
         _s="${_s/"${BASH_REMATCH[0]}"/}"
@@ -4036,6 +4038,8 @@ capture_stop_reason() {
 # 主菜单状态：sing-box / cloudflared / Argo / nginx（状态 + 具体版本）
 # 绿●运行中 / 红■已停止 / 黄○未安装 / 紫○未启用
 menu_status_block() {
+    local _old_suppress="$_SUPPRESS_LOG"
+    _SUPPRESS_LOG=1
     local sub_flag argo_needed st_sb st_cf v_sb v_cf v_nginx
     sub_flag="$(get_subscribe_flag)"
     argo_needed=false
@@ -4121,6 +4125,7 @@ menu_status_block() {
     else
         green "  Nginx       : $(red "■ 已停止")（${sub_desc}，端口：${nginx_port}）"
     fi
+    _SUPPRESS_LOG="$_old_suppress"
 }
 
 # 根据 *pt 环境变量重新推导协议开关与端口变量（交互模式设置环境变量后调用）
