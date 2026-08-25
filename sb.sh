@@ -25,7 +25,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.0.22(2026-08-25)"
+VERSION="1.0.24(2026-08-25)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -1617,6 +1617,15 @@ print_reality_keypair_hint() {
 }
 
 # 初始化 Reality Keypair
+# 标准 base64 → URL-safe base64（兼容旧版 reality.key，sing-box 1.13+ 使用 URL-safe 编码）
+_to_urlsafe_base64() {
+    local k="$1"
+    k="${k//+/-}"      # + → -
+    k="${k//\//_}"     # / → _
+    k="${k//=/}"       # 去掉 = 填充
+    echo "$k"
+}
+
 init_reality_keypair() {
     local key_file="$SINGBOX_FOLDER_PATH/reality.key"
     local file_priv="" file_pub=""
@@ -1631,6 +1640,9 @@ init_reality_keypair() {
     if [ -f "$key_file" ]; then
         file_priv="$(awk -F': ' '/PrivateKey/{print $2; exit}' "$key_file" 2> /dev/null)"
         file_pub="$(awk -F': ' '/PublicKey/{print $2; exit}' "$key_file" 2> /dev/null)"
+        # 兼容旧版：标准 base64 → URL-safe base64（sing-box 1.13+ 使用 URL-safe 编码）
+        file_priv="$(_to_urlsafe_base64 "$file_priv")"
+        file_pub="$(_to_urlsafe_base64 "$file_pub")"
         debug_log "📄 【调试】 init_reality_keypair: 检测到已有 reality.key（priv=${#file_priv} chars, pub=${#file_pub} chars）"
     else
         debug_log "📄 【调试】 init_reality_keypair: 未找到 reality.key（首次安装或文件丢失）"
@@ -1640,6 +1652,8 @@ init_reality_keypair() {
     if [ -n "$env_priv" ]; then
         debug_log "🧩 【调试】 init_reality_keypair: 使用环境变量 reality_private（优先级最高）"
 
+        # 兼容旧版：标准 base64 → URL-safe base64
+        env_priv="$(_to_urlsafe_base64 "$env_priv")"
         priv="$env_priv"
 
         # 如果文件里私钥与传入相同，则优先复用文件里的公钥（避免变化）
@@ -2072,6 +2086,9 @@ sbbout() {
         ' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
         rm -f "$tmpj" 2> /dev/null || true
 
+        # 预创建 singbox.log，确保 sing-box 启动时文件已存在
+        : > "$LOGS_DIR/singbox.log" 2>/dev/null
+
         if has_systemd && [ "$EUID" -eq 0 ]; then
             debug_log "【调试】sbbout：使用 systemd 管理/启动 sb 服务"
             cat > /etc/systemd/system/sb.service << EOF
@@ -2120,6 +2137,14 @@ EOF
             nohup "$SINGBOX_FOLDER_PATH/sing-box" run -c "$SINGBOX_FOLDER_PATH/sb.json" > /dev/null 2>&1 &
             echo ""
             debug_print green "✅  sb 服务已启动, 使用 nohup 模式运行"
+        fi
+
+        # 启动后检测 singbox.log 是否生成
+        sleep 3
+        if [ -s "$LOGS_DIR/singbox.log" ]; then
+            debug_print green "✓ singbox.log 已生成"
+        else
+            yellow "⚠ singbox.log 为空，sing-box 可能启动失败，可用 sb log 查看"
         fi
     fi
 }
@@ -3229,8 +3254,8 @@ ensure_and_print_reality_private_for_cip() {
     [ "$want_print" = "1" ] || return 0
 
     if [ -z "$reality_private" ] && [ -s "$SINGBOX_FOLDER_PATH/reality.key" ]; then
-        reality_private="$(awk '/PrivateKey/{print $NF; exit}' "$SINGBOX_FOLDER_PATH/reality.key" 2> /dev/null)"
-        reality_public="$(awk '/PublicKey/{print $NF; exit}' "$SINGBOX_FOLDER_PATH/reality.key" 2> /dev/null)"
+        reality_private="$(_to_urlsafe_base64 "$(awk '/PrivateKey/{print $NF; exit}' "$SINGBOX_FOLDER_PATH/reality.key" 2> /dev/null)")"
+        reality_public="$(_to_urlsafe_base64 "$(awk '/PublicKey/{print $NF; exit}' "$SINGBOX_FOLDER_PATH/reality.key" 2> /dev/null)")"
     fi
 
     if [ -n "$reality_private" ]; then
@@ -3444,7 +3469,7 @@ regenerate_links_and_sub() {
     # VLESS-Reality-Vision protocol (vless-reality-vision)
     if grep -q "vless-reality-vision-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
         port_vlr=$(cat "$SINGBOX_FOLDER_PATH/port_vlr")
-        public_key=$(sed -n '2p' "$SINGBOX_FOLDER_PATH/reality.key" | awk '{print $2}')
+        public_key="$(_to_urlsafe_base64 "$(sed -n '2p' "$SINGBOX_FOLDER_PATH/reality.key" | awk '{print $2}')")"
         short_id=$(cat "$SINGBOX_FOLDER_PATH/short_id")
         vl_sni=$(cat "$SINGBOX_FOLDER_PATH/vl_sni")
 
@@ -3759,6 +3784,7 @@ _log_write() {
 }
 
 # 接管内建 echo：终端照常显示，安装期间同时写入日志
+# 只在 stdout 为终端时写入日志，避免 echo "$var" > file 产生脏记录
 echo() {
     case "$1" in
         -n | -e | -E | -ne | -en)
@@ -3766,7 +3792,7 @@ echo() {
             ;;
         *)
             command echo "$@"
-            _log_write "$*"
+            [ -t 1 ] && _log_write "$*"
             ;;
     esac
 }
@@ -5062,9 +5088,17 @@ interactive_log_menu() {
                 _title="Nginx 日志"
                 _hint="暂无日志：$_log" ;;
             4)
+                # 安装日志：直接显示全文，不问行数
                 _log="$LOGS_DIR/install.log"
-                _title="脚本安装日志（仅保留最近一次安装）"
-                _hint="暂无安装日志：执行 ins/rep 或菜单安装后自动生成" ;;
+                if [ ! -s "$_log" ]; then
+                    yellow "暂无安装日志：执行 ins/rep 或菜单安装后自动生成"
+                    menu_pause
+                    continue
+                fi
+                green "=== 脚本安装日志（仅保留最近一次安装） ==="
+                cat "$_log"
+                menu_pause
+                continue ;;
             5)
                 _log="$LOGS_DIR/stop_reason.log"
                 _title="服务停止原因日志"
