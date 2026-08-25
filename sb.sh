@@ -3576,7 +3576,7 @@ cleandel() {
     )
 
     # 杀死进程（兼容两个路径）
-    green "  ▸ 终止进程..."
+    white "  ▸ 终止进程..."
     pkill -15 -f "$SINGBOX_FOLDER_PATH/sing-box" 2> /dev/null
     pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null
     pkill -15 -f "$OLD_SINGBOX_FOLDER/sing-box" 2> /dev/null
@@ -3584,7 +3584,7 @@ cleandel() {
     green "  ✓ 进程已终止"
 
     # 处理 crontab，兼容 Debian 和 Alpine
-    green "  ▸ 清理定时任务..."
+    white "  ▸ 清理定时任务..."
     crontab -l > /tmp/crontab.tmp 2> /dev/null || touch /tmp/crontab.tmp
     sed -i '/.*singbox.*/d' /tmp/crontab.tmp
     sed -i '/.*agsb.*/d' /tmp/crontab.tmp
@@ -3608,7 +3608,7 @@ cleandel() {
     rm -f "/usr/bin/agsb" 2> /dev/null
 
     if has_systemd; then
-        green "  ▸ 停止系统服务..."
+        white "  ▸ 停止系统服务..."
         for svc in sb argo singbox-service agsb-singbox; do
             timeout 5 systemctl stop "$svc" > /dev/null 2>&1 || true
             systemctl disable "$svc" > /dev/null 2>&1
@@ -3617,7 +3617,7 @@ cleandel() {
         systemctl daemon-reload > /dev/null 2>&1
         green "  ✓ 系统服务已停止并清理"
     elif command -v rc-service > /dev/null 2>&1; then
-        green "  ▸ 停止 OpenRC 服务..."
+        white "  ▸ 停止 OpenRC 服务..."
         for svc in sing-box argo singbox agsb-singbox; do
             timeout 5 rc-service "$svc" stop > /dev/null 2>&1 || true
             rc-update del "$svc" default > /dev/null 2>&1
@@ -3627,11 +3627,11 @@ cleandel() {
     fi
 
     # 清理 nginx
-    green "  ▸ 清理 Nginx..."
+    white "  ▸ 清理 Nginx..."
     cleanup_nginx
 
     # 清理文件夹
-    green "  ▸ 清理配置文件..."
+    white "  ▸ 清理配置文件..."
     for folder in "${folders_to_clean[@]}"; do
         if [ -d "$folder" ]; then
             if [ "$mode" = "delall" ]; then
@@ -3651,7 +3651,7 @@ cleandel() {
         fi
     done
 
-    green "  ▸ 清理快捷命令..."
+    white "  ▸ 清理快捷命令..."
     cleanup_sb_shortcut
     cleanup_singbox_shortcut
 
