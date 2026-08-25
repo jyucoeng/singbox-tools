@@ -2869,30 +2869,40 @@ EOF
 
     # D) 输出本地 IP 地址
     green "=========当前服务器本地IP情况========="
+    _log_write "=========当前服务器本地IP情况========="
 
     # 输出 IPv4 地址
     if [ -n "$v4_local" ]; then
         echo "$(white "IPV4地址：")$(yellow "${v4_local}")$(white "(服务器地区：")$(green "${v4dq}")$(white ")")"
+        _log_write "IPV4地址：${v4_local}(服务器地区：${v4dq})"
     else
         echo "$(white "IPV4地址：")$(yellow "无IPV4")"
+        _log_write "IPV4地址：无IPV4"
     fi
 
     # 输出 IPv6 地址
     if [ -n "$v6_local" ]; then
         echo "$(white "IPV6地址：")$(purple "${v6_local}")$(white "(服务器地区：")$(green "${v6dq}")$(white ")")"
+        _log_write "IPV6地址：${v6_local}(服务器地区：${v6dq})"
     else
         echo "$(white "IPV6地址：")$(purple "无IPV6")"
+        _log_write "IPV6地址：无IPV6"
     fi
 
     echo
+    _log_write ""
 
-    # E) 打印“当前使用的IP”：
+    # E) 打印"当前使用的IP"：
     if [ -n "$v4_local" ] && [ "$v4_local" = "$current_server_ip" ]; then
         echo "$(green "✅ 当前使用的IP：")$(yellow "${v4_local}")$(white " (IPv4)")"
+        _log_write "✅ 当前使用的IP：${v4_local} (IPv4)"
     fi
     if [ -n "$v6_local" ] && [ "$v6_local" = "$current_server_ip" ]; then
         echo "$(green "✅ 当前使用的IP：")$(purple "${v6_local}")$(white " (IPv6)")"
+        _log_write "✅ 当前使用的IP：${v6_local} (IPv6)"
     fi
+
+    _log_write "*********************************************************"
 
     # F) 如果出口 IP 发生变化，打印变更提示
     if [ -n "$current_server_ip" ] && is_valid_ip_simple "$current_server_ip"; then
@@ -4103,6 +4113,7 @@ menu_status_block() {
     fi
     nginx_port="${nginx_pt:-$NGINX_DEFAULT_PORT}"
     [ -s "$SINGBOX_FOLDER_PATH/nginx_port" ] && nginx_port="$(cat "$SINGBOX_FOLDER_PATH/nginx_port" 2> /dev/null)"
+    _SUPPRESS_LOG="$_old_suppress"
 
     green "  Sing-box    : $st_sb   $v_sb"
     green "  Cloudflared : $st_cf   $v_cf"
@@ -4129,7 +4140,6 @@ menu_status_block() {
     else
         green "  Nginx       : $(red "■ 已停止")（${sub_desc}，端口：${nginx_port}）"
     fi
-    _SUPPRESS_LOG="$_old_suppress"
 }
 
 # 根据 *pt 环境变量重新推导协议开关与端口变量（交互模式设置环境变量后调用）
