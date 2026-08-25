@@ -828,7 +828,7 @@ print_sb_shortcut_help() {
     green "    sb logs            查看日志菜单（Sing-box/Argo/Nginx/安装日志）"
     green "    sb log_sb 100      查看 Sing-box 运行日志（最近100行）"
     green "    sb log_argo 100    查看 Argo 隧道日志（最近100行）"
-    green "    sb log_ins 100     查看脚本安装日志（最近100行）"
+    green "    sb log_ins         查看最近一次安装日志（全文）"
     green "    sb log_stop        查看服务停止原因日志（排查崩溃用）"
 }
 
@@ -6088,9 +6088,15 @@ main() {
         exit
     fi
 
-    # 查看脚本安装日志（最近一次安装，可带行数）
+    # 查看脚本安装日志（直接显示全文）
     if [ "$_cmd" = "log_ins" ]; then
-        show_log_file "$LOGS_DIR/install.log" "脚本安装日志（仅保留最近一次安装）" "暂无安装日志：执行 ins/rep 或菜单安装后自动生成" "${2:-100}"
+        local _log="$LOGS_DIR/install.log"
+        if [ -s "$_log" ]; then
+            green "=== 脚本安装日志（仅保留最近一次安装） ==="
+            cat "$_log"
+        else
+            yellow "暂无安装日志：执行 ins/rep 或菜单安装后自动生成"
+        fi
         exit
     fi
 
