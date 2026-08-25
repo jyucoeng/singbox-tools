@@ -20,9 +20,10 @@ export LANG=en_US.UTF-8
 SB_FOLDER="doraemon"
 SINGBOX_FOLDER_PATH="/root/$SB_FOLDER"
 OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
+INSTALL_LOG="$SINGBOX_FOLDER_PATH/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.0.15(2026-08-08)"
+VERSION="1.0.16(2026-08-25)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -3647,7 +3648,7 @@ cleandel() {
                 for item in "$folder"/*; do
                     [ -e "$item" ] || continue
                     case "$(basename "$item")" in
-                        sing-box|cloudflared) continue ;;
+                        sing-box|cloudflared|install.log) continue ;;
                         *) rm -rf "$item" 2>/dev/null ;;
                     esac
                 done
@@ -3730,6 +3731,59 @@ argorestart() {
             --no-autoupdate \
             > "$SINGBOX_FOLDER_PATH/argo.log" 2>&1 &
     fi
+}
+
+# ================== 脚本安装日志（仅保留最近一次安装） ==================
+# ins / rep / 菜单安装时：清空旧日志重新写入，完整记录安装过程输出，便于失败后排查
+
+# 把输入原样复制到终端（stdout），同时剥离 ANSI 颜色码后追加写入安装日志
+install_log_strip() {
+    awk -v _log="$INSTALL_LOG" '
+        BEGIN { _e = sprintf("%c", 27) }
+        {
+            print; fflush()
+            gsub(_e "\\[[0-9;?]*[A-Za-z]", "")
+            print >> _log
+            close(_log)
+        }'
+}
+
+# 开始记录：清空旧安装日志、写入头部，并把后续 stdout/stderr 同步到终端+日志
+install_log_on() {
+    mkdir -p "$SINGBOX_FOLDER_PATH" 2>/dev/null
+    : > "$INSTALL_LOG" 2>/dev/null
+    {
+        echo "==================================================="
+        echo " Sing-box 脚本安装日志（每次安装覆盖重写）"
+        echo " 模式    : $1"
+        echo " 版本    : $VERSION"
+        echo " 开始时间: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "==================================================="
+    } >> "$INSTALL_LOG" 2>/dev/null
+    exec 3>&1 4>&2 # 备份原始 stdout/stderr
+    exec > >(install_log_strip) 2>&1
+    INSTALL_LOG_ON=1
+}
+
+# 结束记录：恢复原始 stdout/stderr 并等待后台 awk 写完尾部内容
+install_log_off() {
+    [ "${INSTALL_LOG_ON}" = "1" ] || return 0
+    INSTALL_LOG_ON=0
+    exec 1>&3 2>&4 3>&- 4>&-
+    sleep 1
+}
+
+# 包装器：run_install_logged <模式说明> <安装函数名>...
+run_install_logged() {
+    local _label="$1"; shift
+    local _rc
+    install_log_on "$_label"
+    "$@"
+    _rc=$?
+    yellow "===== 安装流程结束（退出码 ${_rc}） $(date '+%Y-%m-%d %H:%M:%S') =====" >&1
+    install_log_off
+    green "📜 本次安装日志已保存：$INSTALL_LOG （菜单[10]-4 可查看）"
+    return $_rc
 }
 
 install_step() {
@@ -4375,7 +4429,7 @@ interactive_install() {
     done
 
     check_port_conflicts_or_exit
-    install_step
+    run_install_logged "菜单[1] 交互式安装" install_step
     green "✅ 安装完成！"
     sleep 2
 }
@@ -4405,7 +4459,7 @@ interactive_reinstall() {
 
     check_port_conflicts_or_exit
     cleandel
-    install_step
+    run_install_logged "菜单[2] 覆盖式安装(重置)" install_step
     green "✅ 覆盖式安装完成！"
     sleep 2
 }
@@ -4886,7 +4940,7 @@ interactive_log_menu() {
         green "  1) Sing-box 日志 (最近 $_lines 行)"
         green "  2) Argo (cloudflared) 日志 (最近 $_lines 行)"
         green "  3) Nginx 日志 (最近 $_lines 行)"
-        green "  4) 实时跟踪所有日志"
+        green "  4) 脚本安装日志 (最近一次安装，最近 $_lines 行)"
         purple "  0) 返回主菜单"
         reading "请输入选择: " _ch
         case "$_ch" in
@@ -4925,19 +4979,16 @@ interactive_log_menu() {
                 echo ""
                 menu_pause ;;
             4)
+                _log="$SINGBOX_FOLDER_PATH/install.log"
                 echo ""
-                yellow "实时跟踪日志 (按 Ctrl+C 退出)..."
-                _log_files=""
-                for _f in "$SINGBOX_FOLDER_PATH/singbox.log" "$SINGBOX_FOLDER_PATH/argo.log" /var/log/nginx/error.log; do
-                    [ -s "$_f" ] && _log_files="$_log_files $_f"
-                done
-                if [ -z "$_log_files" ]; then
-                    yellow "暂无任何日志文件"
-                    menu_pause
+                green "=== 脚本安装日志（仅保留最近一次安装，最近 $_lines 行） ==="
+                if [ -s "$_log" ]; then
+                    tail -n "$_lines" "$_log"
                 else
-                    tail -f $_log_files
+                    yellow "暂无安装日志：执行 ins/rep 或菜单安装后自动生成"
                 fi
-                ;;
+                echo ""
+                menu_pause ;;
             *) yellow "无效选项"; sleep 1 ;;
         esac
     done
@@ -5963,7 +6014,7 @@ main() {
         sleep 2
 
         green "2、覆盖式安装开始..."
-        install_step
+        run_install_logged "命令行 rep 覆盖式安装" install_step
         echo "覆盖式安装已完成... 再见👋"
         exit
     fi
@@ -5972,7 +6023,7 @@ main() {
     if [ "$_cmd" = "ins" ]; then
         geo_prefetch
         yellow "开始安装流程..."
-        install_step
+        run_install_logged "命令行 ins 安装" install_step
         exit
     fi
 
