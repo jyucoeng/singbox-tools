@@ -13,6 +13,7 @@ if [ -z "${BASH_VERSION}" ]; then
   fi
 fi
 
+
 export LANG=en_US.UTF-8
 
 # ================== 文件夹路径配置 ==================
