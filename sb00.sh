@@ -98,6 +98,7 @@ export DEBUG_FLAG=${DEBUG_FLAG:-'0'}
 # 每个打印函数在终端显示的同时，把纯文本同步追加写入脚本安装日志
 # （_log_write 仅在 run_install_logged 安装期间开启，其余时间为空操作）
 white() { printf "\033[1;37m%s\033[0m\n" "$1"; _log_write "$1"; }
+black() { printf "\033[1;30m%s\033[0m\n" "$1"; _log_write "$1"; }
 red() { printf "\e[1;91m%s\e[0m\n" "$1"; _log_write "$1"; }
 green() { printf "\e[1;32m%s\e[0m\n" "$1"; _log_write "$1"; }
 yellow() { printf "\e[1;33m%s\e[0m\n" "$1"; _log_write "$1"; }
@@ -223,7 +224,7 @@ if [ -n "$_cmd0" ] && [ "$_cmd0" != "menu" ]; then
         # 已安装
         if [ "$_cmd0" = "rep" ]; then
             any_proto_enabled || {
-                echo "提示：rep重置协议时，请在脚本前至少设置一个协议变量哦，再见！💣"
+                echo "提示：rep重置协议时，请在脚本前至少设置一个协议变量哦，再见！🎯"
                 exit 1
             }
         fi
@@ -231,7 +232,7 @@ if [ -n "$_cmd0" ] && [ "$_cmd0" != "menu" ]; then
         # 未安装
         if [ "$_cmd0" != "del" ]; then
             any_proto_enabled || {
-                echo "提示：未安装脚本，请在脚本前至少设置一个协议变量哦，再见！💣"
+                echo "提示：未安装脚本，请在脚本前至少设置一个协议变量哦，再见！🎯"
                 exit 1
             }
         fi
@@ -1168,7 +1169,7 @@ case "${1:-}" in
     ""|menu|MENU) : ;;
     *)
         echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-        echo "Sing-box 一键无交互脚本💣 (Sing-box内核版)"
+        echo "Sing-box 一键无交互脚本🎯 (Sing-box内核版)"
         echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
         ;;
 esac
@@ -2839,6 +2840,8 @@ EOF
 # 展示阶段：显示本机 v4/v6 + 地区，并在出口 IP 变更时提示
 # =========================
 show_local_ip_info_with_out_ip_hint() {
+    local _old_suppress="$_SUPPRESS_LOG"
+    _SUPPRESS_LOG=1
     # A) 获取本机 v4/v6
     local v4v6_result v4_local v6_local
     v4v6_result="$(check_ip_connectivity "${v46url:-https://icanhazip.com}")"
@@ -2908,6 +2911,7 @@ EOF
             yellow " ❗ 👉  由于你设置了单独的出口ip,出口IP已变更为：$show_ip   👈"
         fi
     fi
+    _SUPPRESS_LOG="$_old_suppress"
 }
 
 ins() {
@@ -3448,7 +3452,7 @@ regenerate_links_and_sub() {
         hy_sni=$(cat "$SINGBOX_FOLDER_PATH/hy_sni")
         SHA256_hy2=$(openssl x509 -in "$SINGBOX_FOLDER_PATH/cert.pem" -outform DER 2>/dev/null | sha256sum | awk '{print $1}')
         hy2_link="hysteria2://$uuid@$server_ip:$port_hy2/?sni=${hy_sni}&insecure=1&pinSHA256=${SHA256_hy2}&alpn=h3&obfs=none#${sxname}hy2-$hostname"
-        yellow "💣【 Hysteria2 】(直连协议)"
+        yellow "🎯【 Hysteria2 】(直连协议)"
         green "$hy2_link"
         append_jh "$hy2_link"
         echo
@@ -3461,7 +3465,7 @@ regenerate_links_and_sub() {
         password=$uuid
 
         tuic_link="tuic://${uuid}:${password}@${server_ip}:${port_tu}?sni=${tu_sni}&congestion_control=bbr&security=tls&udp_relay_mode=native&alpn=h3&allow_insecure=1#${sxname}tuic-$hostname"
-        yellow "💣【 TUIC 】(直连协议)"
+        yellow "🎯【 TUIC 】(直连协议)"
         green "$tuic_link"
         append_jh "$tuic_link"
         echo
@@ -3476,7 +3480,7 @@ regenerate_links_and_sub() {
         debug_log "【调试】regenerate_links_and_sub函数中的short_id,值为:$short_id"
 
         vless_link="vless://${uuid}@${server_ip}:${port_vlr}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${vl_sni}&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#${sxname}vless-reality-$hostname"
-        yellow "💣【 VLESS-Reality-Vision 】(直连协议)"
+        yellow "🎯【 VLESS-Reality-Vision 】(直连协议)"
         green "$vless_link"
         append_jh "$vless_link"
         echo
@@ -3538,7 +3542,7 @@ regenerate_links_and_sub() {
         fi
 
         green ""
-        green "💣 ${cdn_pt}端口 Argo-TLS 节点 (优选IP可替换):"
+        green "🎯 ${cdn_pt}端口 Argo-TLS 节点 (优选IP可替换):"
         green "${vmatls_link1}${vlessws_link1}${tratls_link1}"
         append_jh "${vmatls_link1}${vlessws_link1}${tratls_link1}"
         yellow "---------------------------------------------------------"
@@ -4100,30 +4104,30 @@ menu_status_block() {
     nginx_port="${nginx_pt:-$NGINX_DEFAULT_PORT}"
     [ -s "$SINGBOX_FOLDER_PATH/nginx_port" ] && nginx_port="$(cat "$SINGBOX_FOLDER_PATH/nginx_port" 2> /dev/null)"
 
-    green "  Sing-box    : $st_sb   $v_sb"
-    green "  Cloudflared : $st_cf   $v_cf"
+    green "  $(black "Sing-box    :") $st_sb   $v_sb"
+    green "  $(black "Cloudflared :") $st_cf   $v_cf"
     # Argo 状态行（色值与 Nginx 一致：紫○未启用 / 黄○未安装 / 绿●运行中 / 红■已停止，均带端口）
     local argo_port
     argo_port="${argo_pt:-$ARGO_DEFAULT_PORT}"
     if ! $argo_needed; then
-        green "  Argo        : $(purple "○ 未启用")（当前场景无需 Argo，端口：${argo_port}）"
+        green "  $(black "Argo        :") $(purple "○ 未启用")（当前场景无需 Argo，端口：${argo_port}）"
     elif [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ] || command -v cloudflared > /dev/null 2>&1; then
         if pgrep -f "$SINGBOX_FOLDER_PATH/cloudflared" > /dev/null 2>&1; then
-            green "  Argo        : ${st_cf}（端口：${argo_port}）"
+            green "  $(black "Argo        :") ${st_cf}（端口：${argo_port}）"
         else
-            green "  Argo        : ${st_cf}（已启用 Argo，端口：${argo_port}）"
+            green "  $(black "Argo        :") ${st_cf}（已启用 Argo，端口：${argo_port}）"
         fi
     else
-        green "  Argo        : $(yellow "○ 未安装")（已启用 Argo，端口：${argo_port}）"
+        green "  $(black "Argo        :") $(yellow "○ 未安装")（已启用 Argo，端口：${argo_port}）"
     fi
     if ! $argo_needed && ! is_true "$sub_flag"; then
-        green "  Nginx       : $(purple "○ 未启用（订阅未开启，无需）")"
+        green "  $(black "Nginx       :") $(purple "○ 未启用（订阅未开启，无需）")"
     elif ! command -v nginx > /dev/null 2>&1; then
-        green "  Nginx       : $(yellow "○ 未安装")（${sub_desc}，端口：${nginx_port}）"
+        green "  $(black "Nginx       :") $(yellow "○ 未安装")（${sub_desc}，端口：${nginx_port}）"
     elif ps aux | grep -v grep | grep -q nginx; then
-        green "  Nginx       : $(green "● 运行中")${v_nginx:+ $v_nginx}（${sub_desc}，端口：${nginx_port}）"
+        green "  $(black "Nginx       :") $(green "● 运行中")${v_nginx:+ $v_nginx}（${sub_desc}，端口：${nginx_port}）"
     else
-        green "  Nginx       : $(red "■ 已停止")（${sub_desc}，端口：${nginx_port}）"
+        green "  $(black "Nginx       :") $(red "■ 已停止")（${sub_desc}，端口：${nginx_port}）"
     fi
     _SUPPRESS_LOG="$_old_suppress"
 }
