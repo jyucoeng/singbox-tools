@@ -2902,8 +2902,6 @@ EOF
         printf '%s\n' "✅ 当前使用的IP：${v6_local} (IPv6)" >> "$INSTALL_LOG" 2>/dev/null
     fi
 
-    printf '%s\n' "*********************************************************" >> "$INSTALL_LOG" 2>/dev/null
-
     # F) 如果出口 IP 发生变化，打印变更提示
     if [ -n "$current_server_ip" ] && is_valid_ip_simple "$current_server_ip"; then
         local local_expected=""
