@@ -25,7 +25,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.0.22(2026-08-25)"
+VERSION="1.0.23(2026-08-25)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -2072,6 +2072,9 @@ sbbout() {
         ' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
         rm -f "$tmpj" 2> /dev/null || true
 
+        # 预创建 singbox.log，确保 sing-box 启动时文件已存在
+        : > "$LOGS_DIR/singbox.log" 2>/dev/null
+
         if has_systemd && [ "$EUID" -eq 0 ]; then
             debug_log "【调试】sbbout：使用 systemd 管理/启动 sb 服务"
             cat > /etc/systemd/system/sb.service << EOF
@@ -2120,6 +2123,14 @@ EOF
             nohup "$SINGBOX_FOLDER_PATH/sing-box" run -c "$SINGBOX_FOLDER_PATH/sb.json" > /dev/null 2>&1 &
             echo ""
             debug_print green "✅  sb 服务已启动, 使用 nohup 模式运行"
+        fi
+
+        # 启动后检测 singbox.log 是否生成
+        sleep 3
+        if [ -s "$LOGS_DIR/singbox.log" ]; then
+            debug_print green "✓ singbox.log 已生成"
+        else
+            yellow "⚠ singbox.log 为空，sing-box 可能启动失败，可用 sb log 查看"
         fi
     fi
 }
@@ -3759,6 +3770,7 @@ _log_write() {
 }
 
 # 接管内建 echo：终端照常显示，安装期间同时写入日志
+# 只在 stdout 为终端时写入日志，避免 echo "$var" > file 产生脏记录
 echo() {
     case "$1" in
         -n | -e | -E | -ne | -en)
@@ -3766,7 +3778,7 @@ echo() {
             ;;
         *)
             command echo "$@"
-            _log_write "$*"
+            [ -t 1 ] && _log_write "$*"
             ;;
     esac
 }
@@ -5062,9 +5074,17 @@ interactive_log_menu() {
                 _title="Nginx 日志"
                 _hint="暂无日志：$_log" ;;
             4)
+                # 安装日志：直接显示全文，不问行数
                 _log="$LOGS_DIR/install.log"
-                _title="脚本安装日志（仅保留最近一次安装）"
-                _hint="暂无安装日志：执行 ins/rep 或菜单安装后自动生成" ;;
+                if [ ! -s "$_log" ]; then
+                    yellow "暂无安装日志：执行 ins/rep 或菜单安装后自动生成"
+                    menu_pause
+                    continue
+                fi
+                green "=== 脚本安装日志（仅保留最近一次安装） ==="
+                cat "$_log"
+                menu_pause
+                continue ;;
             5)
                 _log="$LOGS_DIR/stop_reason.log"
                 _title="服务停止原因日志"
