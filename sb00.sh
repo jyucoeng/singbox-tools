@@ -25,7 +25,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.0.24(2026-08-25)"
+VERSION="1.0.25(2026-08-25)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
