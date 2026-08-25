@@ -25,7 +25,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.0.21(2026-08-25)"
+VERSION="1.0.22(2026-08-25)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -829,6 +829,7 @@ print_sb_shortcut_help() {
     green "    sb log_sb 100      查看 Sing-box 运行日志（最近100行）"
     green "    sb log_argo 100    查看 Argo 隧道日志（最近100行）"
     green "    sb log_ins 100     查看脚本安装日志（最近100行）"
+    green "    sb log_stop        查看服务停止原因日志（排查崩溃用）"
 }
 
 # 清理 sb 快捷命令
@@ -3664,24 +3665,22 @@ migrate_logs_dir() {
 
 # Restart sing-box
 sbrestart() {
-    pkill -15 -f "$SINGBOX_FOLDER_PATH/sing-box" 2> /dev/null
-
     if has_systemd; then
+        # systemd 管理：直接 restart，不要手动 pkill
+        # 手动 pkill 会导致进程脱离 cgroup 管理，systemd stop 时找不到进程 → 状态标记 failed → start 被拒绝
         systemctl restart sb
     elif command -v rc-service > /dev/null 2>&1; then
         rc-service sing-box restart
     else
+        pkill -15 -f "$SINGBOX_FOLDER_PATH/sing-box" 2> /dev/null
         nohup "$SINGBOX_FOLDER_PATH/sing-box" run -c "$SINGBOX_FOLDER_PATH/sb.json" > /dev/null 2>&1 &
     fi
 }
 
 # Restart argo
 argorestart() {
-    # 先尽力停止现有 cloudflared 进程（原版行为）
-    pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null
-
     # ===============================
-    # systemd 管理
+    # systemd 管理：直接 restart，不要手动 pkill（同 sbrestart 原理）
     # ===============================
     if has_systemd; then
         systemctl restart argo
@@ -3690,6 +3689,7 @@ argorestart() {
 
     # ===============================
     # openrc 管理
+    # ===============================
     # ===============================
     if command -v rc-service > /dev/null 2>&1; then
         rc-service argo restart
@@ -3700,6 +3700,7 @@ argorestart() {
     # 无 init 系统（nohup 启动）
     # 判断顺序非常重要！
     # ===============================
+    pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null
 
     # 1️⃣ JSON 固定隧道（最高优先级）
     if [ -f "$SINGBOX_FOLDER_PATH/tunnel.yml" ]; then
@@ -3945,6 +3946,59 @@ menu_pause() {
     reading "按回车返回菜单..." _
 }
 
+# 捕获服务停止原因并写入日志
+# 参数：服务名（sb/argo）+ 可选 "quiet" 静默模式（不打印提示）
+capture_stop_reason() {
+    local svc="${1:-sb}" quiet="${2:-}" stop_log="$LOGS_DIR/stop_reason.log"
+    mkdir -p "$LOGS_DIR" 2>/dev/null
+
+    local ts reason oom_info log_err
+    ts=$(date '+%Y-%m-%d %H:%M:%S')
+
+    # 1) journalctl 最近日志（含 exit code）
+    reason=""
+    if command -v journalctl > /dev/null 2>&1; then
+        reason=$(journalctl -u "$svc" --no-pager -n 20 --since "10 min ago" 2>/dev/null)
+    fi
+
+    # 2) OOM killer
+    oom_info=""
+    if command -v dmesg > /dev/null 2>&1; then
+        oom_info=$(dmesg 2>/dev/null | grep -iE "oom|killed process|out of memory" | tail -5)
+    fi
+
+    # 3) sing-box / argo 自身日志最后的 error/fatal 行
+    log_err=""
+    local _app_log="$LOGS_DIR/singbox.log"
+    [ "$svc" = "argo" ] && _app_log="$LOGS_DIR/argo.log"
+    if [ -s "$_app_log" ]; then
+        log_err=$(grep -iE "fatal|error|panic|fail|segfault" "$_app_log" 2>/dev/null | tail -10)
+    fi
+
+    # 5 分钟内已记录过则跳过（避免每次刷新菜单重复写入）
+    local _dedup="$LOGS_DIR/.stop_reason_${svc}_ts"
+    if [ -f "$_dedup" ]; then
+        local _last _now _diff
+        _last=$(cat "$_dedup" 2>/dev/null)
+        _now=$(date +%s)
+        _diff=$((_now - _last))
+        [ "$_diff" -lt 300 ] && return 0
+    fi
+    date +%s > "$_dedup" 2>/dev/null
+    if [ -n "$reason" ] || [ -n "$oom_info" ] || [ -n "$log_err" ]; then
+        {
+            echo "========================================"
+            echo "检测时间: $ts | 服务: $svc"
+            [ -n "$reason" ]   && echo "--- journalctl -u $svc ---" && echo "$reason"
+            [ -n "$oom_info" ] && echo "--- OOM Killer ---"         && echo "$oom_info"
+            [ -n "$log_err" ]  && echo "--- 应用日志 ---"           && echo "$log_err"
+            echo ""
+        } >> "$stop_log" 2>/dev/null
+
+        [ "$quiet" != "quiet" ] && yellow "⚠️ 已记录 $svc 停止原因 → $stop_log"
+    fi
+}
+
 # 主菜单状态：sing-box / cloudflared / Argo / nginx（状态 + 具体版本）
 # 绿●运行中 / 红■已停止 / 黄○未安装 / 紫○未启用
 menu_status_block() {
@@ -3964,6 +4018,7 @@ menu_status_block() {
         st_sb="$(green "● 运行中")"
     elif [ -n "$v_sb" ]; then
         st_sb="$(red "■ 已停止")"
+        capture_stop_reason sb quiet 2>/dev/null
     else
         st_sb="$(yellow "○ 未安装")"
     fi
@@ -3984,6 +4039,7 @@ menu_status_block() {
             st_cf="$(green "● 运行中")"
         else
             st_cf="$(red "■ 已停止")"
+            capture_stop_reason argo quiet 2>/dev/null
         fi
     else
         st_cf="$(yellow "○ 未安装")"
@@ -4980,6 +5036,7 @@ interactive_log_menu() {
         green "  2) Argo (cloudflared) 日志"
         green "  3) Nginx 日志"
         green "  4) 脚本安装日志 (最近一次安装)"
+        green "  5) 服务停止原因日志 (排查崩溃用)"
         purple "  0) 返回主菜单"
         reading "请输入选择: " _ch
         case "$_ch" in
@@ -5000,6 +5057,10 @@ interactive_log_menu() {
                 _log="$LOGS_DIR/install.log"
                 _title="脚本安装日志（仅保留最近一次安装）"
                 _hint="暂无安装日志：执行 ins/rep 或菜单安装后自动生成" ;;
+            5)
+                _log="$LOGS_DIR/stop_reason.log"
+                _title="服务停止原因日志"
+                _hint="暂无停止记录：服务运行正常时不会产生记录" ;;
             *) yellow "无效选项"; sleep 1; continue ;;
         esac
         _lines=100
@@ -5988,6 +6049,12 @@ main() {
     # 查看脚本安装日志（最近一次安装，可带行数）
     if [ "$_cmd" = "log_ins" ]; then
         show_log_file "$LOGS_DIR/install.log" "脚本安装日志（仅保留最近一次安装）" "暂无安装日志：执行 ins/rep 或菜单安装后自动生成" "${2:-100}"
+        exit
+    fi
+
+    # 查看服务停止原因日志
+    if [ "$_cmd" = "log_stop" ]; then
+        show_log_file "$LOGS_DIR/stop_reason.log" "服务停止原因日志" "暂无停止记录：服务运行正常时不会产生记录" "${2:-100}"
         exit
     fi
 
