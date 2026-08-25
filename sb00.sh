@@ -2869,40 +2869,40 @@ EOF
 
     # D) 输出本地 IP 地址
     green "=========当前服务器本地IP情况========="
-    _log_write "=========当前服务器本地IP情况========="
+    printf '%s\n' "=========当前服务器本地IP情况=========" >> "$INSTALL_LOG" 2>/dev/null
 
     # 输出 IPv4 地址
     if [ -n "$v4_local" ]; then
         echo "$(white "IPV4地址：")$(yellow "${v4_local}")$(white "(服务器地区：")$(green "${v4dq}")$(white ")")"
-        _log_write "IPV4地址：${v4_local}(服务器地区：${v4dq})"
+        printf '%s\n' "IPV4地址：${v4_local}(服务器地区：${v4dq})" >> "$INSTALL_LOG" 2>/dev/null
     else
         echo "$(white "IPV4地址：")$(yellow "无IPV4")"
-        _log_write "IPV4地址：无IPV4"
+        printf '%s\n' "IPV4地址：无IPV4" >> "$INSTALL_LOG" 2>/dev/null
     fi
 
     # 输出 IPv6 地址
     if [ -n "$v6_local" ]; then
         echo "$(white "IPV6地址：")$(purple "${v6_local}")$(white "(服务器地区：")$(green "${v6dq}")$(white ")")"
-        _log_write "IPV6地址：${v6_local}(服务器地区：${v6dq})"
+        printf '%s\n' "IPV6地址：${v6_local}(服务器地区：${v6dq})" >> "$INSTALL_LOG" 2>/dev/null
     else
         echo "$(white "IPV6地址：")$(purple "无IPV6")"
-        _log_write "IPV6地址：无IPV6"
+        printf '%s\n' "IPV6地址：无IPV6" >> "$INSTALL_LOG" 2>/dev/null
     fi
 
     echo
-    _log_write ""
+    printf '%s\n' "" >> "$INSTALL_LOG" 2>/dev/null
 
     # E) 打印"当前使用的IP"：
     if [ -n "$v4_local" ] && [ "$v4_local" = "$current_server_ip" ]; then
         echo "$(green "✅ 当前使用的IP：")$(yellow "${v4_local}")$(white " (IPv4)")"
-        _log_write "✅ 当前使用的IP：${v4_local} (IPv4)"
+        printf '%s\n' "✅ 当前使用的IP：${v4_local} (IPv4)" >> "$INSTALL_LOG" 2>/dev/null
     fi
     if [ -n "$v6_local" ] && [ "$v6_local" = "$current_server_ip" ]; then
         echo "$(green "✅ 当前使用的IP：")$(purple "${v6_local}")$(white " (IPv6)")"
-        _log_write "✅ 当前使用的IP：${v6_local} (IPv6)"
+        printf '%s\n' "✅ 当前使用的IP：${v6_local} (IPv6)" >> "$INSTALL_LOG" 2>/dev/null
     fi
 
-    _log_write "*********************************************************"
+    printf '%s\n' "*********************************************************" >> "$INSTALL_LOG" 2>/dev/null
 
     # F) 如果出口 IP 发生变化，打印变更提示
     if [ -n "$current_server_ip" ] && is_valid_ip_simple "$current_server_ip"; then
