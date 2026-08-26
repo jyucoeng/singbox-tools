@@ -64,6 +64,8 @@ nginx_pt=41007 \
 socks5pt=41017 \
 socks5_username='你的socks5自定义用户名' \
 socks5_password='你的s5密码含特殊字符(!#$等)必须用单引号包裹整个密码串' \
+socks5_wl_flag=true \
+socks5_ips='1.2.3.4,5.6.7.0/24' \
 agn="california.xxxx.xyz" \
 agk='ey开头的那一大串' \
 subscribe=true \
@@ -253,6 +255,25 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
 > **⚠️ 注意：如果 `socks5_password` 含 `!`、`#`、`$` 等特殊字符，必须用单引号 `'...'` 包裹整个密码串。**  
 > 双引号或不加引号会导致 bash 把特殊字符解释掉，最终配置文件里的密码会被截断或出错。
 
+### 12.1、 socks5_wl_flag / socks5_ips —— Socks5 IP白名单（可选）
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `socks5_wl_flag` | 白名单开关，`true`/`1`/`True`/`TRUE` 均可（大小写不敏感），空或其他值=关闭 | 空（关闭） |
+| `socks5_ips` | 允许访问 Socks5 的源 IP 列表，逗号分隔，支持单个 IP 和 CIDR（如 `1.2.3.4,5.6.7.0/24`） | 空 |
+
+- 不传这两个参数 → Socks5 对所有 IP 开放（默认行为）
+- 传了 `socks5_wl_flag=true` 且 `socks5_ips` 非空 → 仅白名单中的 IP 可以连接 Socks5
+- 单个 IP 会自动补 `/32`（IPv4）或 `/128`（IPv6），统一走 `source_ip_cidr` 匹配
+
+> **实现原理**：白名单开启时，脚本在 `sb.json` 的 `route.rules` 最前面插入两条规则：
+> 1. 白名单源 IP 访问 `socks5-sb` 入站 → `direct`（放行）
+> 2. 其余所有源 IP 访问 `socks5-sb` 入站 → `block`（拦截）
+>
+> 关闭白名单时这两条规则被移除，恢复为所有 IP 均可访问。
+
+安装后也可以通过交互菜单管理白名单，见下方「交互菜单」说明。
+
 ## 13、所有的协议都会输出到聚合节点文件中: cat /root/doraemon/jh.txt
 
 ### 这里给列出一些基础变量
@@ -269,6 +290,8 @@ nginx_pt=41007 \
 socks5pt=31017 \
 socks5_username='zhangsan' \
 socks5_password='Zsztm4gdsg!' \
+socks5_wl_flag=true \
+socks5_ips='1.2.3.4,5.6.7.0/24' \
 agn="california.xxxx.xyz" \
 agk='ey开头的那一大串' \
 subscribe=true \
@@ -316,6 +339,8 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 socks5pt=31017 \
 socks5_username='你的s5用户名' \
 socks5_password='你的s5密码' \                       # 含特殊字符(!#$等)必须用单引号包裹
+socks5_wl_flag=true \                               # 可选：开启IP白名单（大小写不敏感）
+socks5_ips='1.2.3.4,5.6.7.0/24' \                  # 可选：白名单IP列表，逗号分隔，支持CIDR
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
@@ -475,6 +500,12 @@ tail -200 /root/doraemon/logs/argo.log
 
 
 ## 版本变更信息
+
+v1.0.26 (2026-08-26)
+ - 新增 Socks5 IP白名单功能：通过 `socks5_wl_flag`（开关）和 `socks5_ips`（IP列表）控制，仅白名单中的源 IP 可访问 Socks5 入站
+ - 白名单基于 sing-box `route.rules` 的 `source_ip_cidr` 字段实现，支持单个 IP 和 CIDR 格式
+ - 安装时通过环境变量传入，安装后可通过交互菜单 `node → Socks5 IP白名单管理` 开关、修改 IP 列表
+ - 大小写不敏感：`true`/`True`/`TRUE`/`1` 均可识别为开启
 
 v1.0.24 (2026-08-25)
  - **修复 Reality 私钥 base64 编码不兼容导致 sing-box 启动失败**：旧版 reality.key 使用标准 base64（`+`/`/` + `=` 填充），sing-box 1.13+ 期望 URL-safe base64（`-`/`_` + 无填充），密钥中 `+` 字符在解码时被拒绝

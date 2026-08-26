@@ -25,7 +25,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.0.25(2026-08-25)"
+VERSION="1.0.26(2026-08-26)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -47,6 +47,8 @@ export port_any=${anypt:-''}
 export port_socks5=${socks5pt:-''}
 export socks5_username=${socks5_username:-''}
 export socks5_password=${socks5_password:-''}
+export socks5_wl_flag=${socks5_wl_flag:-''}  # socks5 IP白名单开关: true/1=开启, 空/其他=关闭(默认)
+export socks5_ips=${socks5_ips:-''}      # socks5 IP白名单列表, 逗号分隔 (如 "1.2.3.4,5.6.7.0/24")
 
 # 获取到的IP和出口ip不一样的时候，优先使用出口ip也就是out_ip
 export out_ip=${out_ip:-''}
@@ -1090,6 +1092,91 @@ init_socks5_credentials() {
     chmod 600 "$SINGBOX_FOLDER_PATH/socks5_user" "$SINGBOX_FOLDER_PATH/socks5_pass" 2> /dev/null || true
 }
 
+# 初始化 socks5 IP白名单配置：从环境变量或文件加载/保存
+init_socks5_whitelist() {
+    # 优先读文件（已安装场景），否则用环境变量
+    if [ -s "$SINGBOX_FOLDER_PATH/socks5_wl_flag" ]; then
+        socks5_wl_flag=$(cat "$SINGBOX_FOLDER_PATH/socks5_wl_flag" | tr -d '\r\n')
+    fi
+    if [ -s "$SINGBOX_FOLDER_PATH/socks5_ips" ]; then
+        socks5_ips=$(cat "$SINGBOX_FOLDER_PATH/socks5_ips" | tr -d '\r\n')
+    fi
+
+    # 环境变量有值时写入文件（覆盖安装场景）
+    if [ -n "${socks5_wl_flag}" ]; then
+        printf '%s\n' "$socks5_wl_flag" > "$SINGBOX_FOLDER_PATH/socks5_wl_flag"
+    fi
+    if [ -n "${socks5_ips}" ]; then
+        printf '%s\n' "$socks5_ips" > "$SINGBOX_FOLDER_PATH/socks5_ips"
+    fi
+}
+
+# 将 socks5 IP白名单规则写入 sb.json 的 route.rules
+# 原理：在 route.rules 最前面插入两条规则
+#   1) 白名单中的源IP访问 socks5-sb → direct（放行）
+#   2) 其余所有源IP访问 socks5-sb → block（拦截）
+# 白名单关闭时不做任何修改，socks5 对所有 IP 开放
+apply_socks5_whitelist() {
+    local sbj="$SINGBOX_FOLDER_PATH/sb.json"
+    local tmpj="$SINGBOX_FOLDER_PATH/.sb.tmp"
+
+    # 未启用白名单则跳过
+    local wl_flag=""
+    [ -s "$SINGBOX_FOLDER_PATH/socks5_wl_flag" ] && wl_flag=$(cat "$SINGBOX_FOLDER_PATH/socks5_wl_flag" | tr -d '\r\n')
+    is_true "$wl_flag" || return 0
+
+    # 无白名单 IP 列表则跳过
+    [ ! -s "$SINGBOX_FOLDER_PATH/socks5_ips" ] && return 0
+    local ips_raw
+    ips_raw=$(cat "$SINGBOX_FOLDER_PATH/socks5_ips" | tr -d '\r\n')
+    [ -z "$ips_raw" ] && return 0
+
+    # sb.json 不存在或没有 socks5-sb 入站则跳过
+    [ ! -s "$sbj" ] && return 0
+    if ! jq -e '.inbounds[]? | select(.tag == "socks5-sb")' "$sbj" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    # 将逗号分隔的 IP/CIDR 转为 JSON 数组
+    # 单个 IP 自动补 /32（IPv4）或 /128（IPv6），统一用 source_ip_cidr 匹配
+    local ip_json
+    ip_json=$(printf '%s' "$ips_raw" | awk -F',' '{
+        for(i=1;i<=NF;i++) {
+            gsub(/^[ \t]+|[ \t]+$/, "", $i)
+            if (length($i) == 0) continue
+            if (index($i, ":") > 0) {
+                if (index($i, "/") == 0) printf "%s/128", $i
+                else printf "%s", $i
+            } else {
+                if (index($i, "/") == 0) printf "%s/32", $i
+                else printf "%s", $i
+            }
+            printf ","
+        }
+    }' | sed 's/,$//')
+
+    [ -z "$ip_json" ] && return 0
+
+    # 确保 block outbound 存在
+    if ! jq -e '.outbounds[]? | select(.tag == "block")' "$sbj" >/dev/null 2>&1; then
+        jq '.outbounds += [{type: "block", tag: "block"}]' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
+    fi
+
+    # 在 route.rules 最前面插入白名单放行 + 默认拦截规则
+    jq --argjson ips "[$ip_json]" '
+        .route.rules = (
+            [
+                {inbound: ["socks5-sb"], source_ip_cidr: $ips, outbound: "direct"},
+                {inbound: ["socks5-sb"], outbound: "block"}
+            ]
+            + (.route.rules // [])
+        )
+    ' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
+    rm -f "$tmpj" 2> /dev/null || true
+
+    green "✅ Socks5 IP白名单已生效（仅允许：${ips_raw}）"
+}
+
 # 用法：
 # prepare_argo_credentials "<ARGO_AUTH>" "<ARGO_DOMAIN>" "<LOCAL_PORT>"
 prepare_argo_credentials() {
@@ -1996,10 +2083,24 @@ installsb() {
         fi
 
         init_socks5_credentials
+        init_socks5_whitelist
         port_socks5=$(cat "$SINGBOX_FOLDER_PATH/port_socks5")
         yellow "Socks5端口：$port_socks5"
         yellow "Socks5用户名：$socks5_username"
         yellow "Socks5密码：$socks5_password"
+        local _wl_flag_val=""
+        [ -s "$SINGBOX_FOLDER_PATH/socks5_wl_flag" ] && _wl_flag_val=$(cat "$SINGBOX_FOLDER_PATH/socks5_wl_flag" | tr -d '\r\n')
+        if is_true "$_wl_flag_val"; then
+            local _wl_ips=""
+            [ -s "$SINGBOX_FOLDER_PATH/socks5_ips" ] && _wl_ips=$(cat "$SINGBOX_FOLDER_PATH/socks5_ips" | tr -d '\r\n')
+            if [ -n "$_wl_ips" ]; then
+                yellow "Socks5白名单：已开启（允许：$_wl_ips）"
+            else
+                yellow "Socks5白名单：已开启（IP列表为空，等同于关闭）"
+            fi
+        else
+            yellow "Socks5白名单：未开启（所有IP均可访问）"
+        fi
 
         jq --arg port "$port_socks5" \
             --arg user "$socks5_username" --arg pass "$socks5_password" '
@@ -2931,6 +3032,7 @@ ins() {
     installsb
     set_sbyx
     sbbout
+    apply_socks5_whitelist
 
     # 把ip写入server_ip
     write_server_ip
@@ -3566,7 +3668,17 @@ regenerate_links_and_sub() {
         socks5_user_enc=$(url_encode_component "$socks5_username")
         socks5_pass_enc=$(url_encode_component "$socks5_password")
         socks5_link="socks5://${socks5_user_enc}:${socks5_pass_enc}@${server_ip}:${port_socks5}#${sxname}socks5-$hostname"
-        yellow "🧦【 Socks5 】(此协议请不要直接在客户端里直连使用)"
+        local _wl_info=""
+        local _wl_flag_val=""
+        [ -s "$SINGBOX_FOLDER_PATH/socks5_wl_flag" ] && _wl_flag_val=$(cat "$SINGBOX_FOLDER_PATH/socks5_wl_flag" | tr -d '\r\n')
+        if is_true "$_wl_flag_val"; then
+            local _wl_ips_val=""
+            [ -s "$SINGBOX_FOLDER_PATH/socks5_ips" ] && _wl_ips_val=$(cat "$SINGBOX_FOLDER_PATH/socks5_ips" | tr -d '\r\n')
+            if [ -n "$_wl_ips_val" ]; then
+                _wl_info=" [白名单: ${_wl_ips_val}]"
+            fi
+        fi
+        yellow "🧦【 Socks5 】(此协议请不要直接在客户端里直连使用)${_wl_info}"
         green "$socks5_link"
         append_jh " "
         append_jh "$socks5_link"
@@ -5045,6 +5157,122 @@ edit_argo_protocol_menu() {
     done
 }
 
+# ================== Socks5 IP白名单管理 ==================
+# 需要一个辅助函数来重建白名单路由规则（先清除旧的白名单规则，再重新插入）
+_rebuild_socks5_whitelist_rules() {
+    local sbj="$SINGBOX_FOLDER_PATH/sb.json"
+    local tmpj="$SINGBOX_FOLDER_PATH/.sb.tmp"
+    [ ! -s "$sbj" ] && return 0
+
+    # 1) 移除已有的 socks5-sb 白名单/拦截规则（保留 sniff/resolve/WARP 等其他规则）
+    jq '
+        .route.rules = [.route.rules[]? |
+            select(
+                (any(.inbound[]?; . == "socks5-sb") | not)
+                or (.outbound != "direct" and .outbound != "block")
+            )
+        ]
+    ' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
+    rm -f "$tmpj" 2> /dev/null || true
+
+    # 2) 重新应用白名单规则
+    apply_socks5_whitelist
+}
+
+edit_socks5_whitelist_menu() {
+    local _ch
+    while true; do
+        clear
+        green "========= Socks5 IP白名单管理 ========="
+        echo ""
+
+        # 显示当前状态
+        local _wl_flag=""
+        local _wl_ips=""
+        [ -s "$SINGBOX_FOLDER_PATH/socks5_wl_flag" ] && _wl_flag=$(cat "$SINGBOX_FOLDER_PATH/socks5_wl_flag" | tr -d '\r\n')
+        [ -s "$SINGBOX_FOLDER_PATH/socks5_ips" ] && _wl_ips=$(cat "$SINGBOX_FOLDER_PATH/socks5_ips" | tr -d '\r\n')
+
+        if [ "$_wl_flag" = "true" ]; then
+            green "  当前状态：✅ 已开启"
+            if [ -n "$_wl_ips" ]; then
+                green "  白名单IP：${_wl_ips}"
+            else
+                yellow "  白名单IP：（空，等同于关闭）"
+            fi
+        else
+            yellow "  当前状态：❌ 未开启（所有IP均可访问）"
+        fi
+        echo ""
+        green "  1) 开启白名单"
+        green "  2) 关闭白名单"
+        green "  3) 修改白名单IP列表"
+        green "  4) 查看当前白名单IP"
+        purple "  0) 返回上级菜单"
+        reading "请输入选择: " _ch
+        case "$_ch" in
+            0) return ;;
+            1)
+                printf '%s\n' "true" > "$SINGBOX_FOLDER_PATH/socks5_wl_flag"
+                if [ -s "$SINGBOX_FOLDER_PATH/socks5_ips" ] && [ -n "$(cat "$SINGBOX_FOLDER_PATH/socks5_ips" | tr -d '\r\n')" ]; then
+                    _rebuild_socks5_whitelist_rules
+                    sbrestart
+                    green "✅ Socks5 IP白名单已开启"
+                else
+                    yellow "⚠️ 白名单已开启，但IP列表为空，请先设置白名单IP"
+                    green "   设置后才会生效"
+                fi
+                menu_pause
+                ;;
+            2)
+                printf '%s\n' "false" > "$SINGBOX_FOLDER_PATH/socks5_wl_flag"
+                _rebuild_socks5_whitelist_rules
+                sbrestart
+                green "✅ Socks5 IP白名单已关闭（所有IP均可访问）"
+                menu_pause
+                ;;
+            3)
+                echo ""
+                yellow "请输入允许访问Socks5的IP地址（支持IP和CIDR）"
+                yellow "多个IP用逗号分隔，如：1.2.3.4,5.6.7.0/24,10.0.0.1"
+                yellow "留空则清除所有白名单IP"
+                local _input=""
+                reading "白名单IP: " _input
+                if [ -n "$_input" ]; then
+                    # 去除首尾空格
+                    _input=$(printf '%s' "$_input" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+                    printf '%s\n' "$_input" > "$SINGBOX_FOLDER_PATH/socks5_ips"
+                    green "✅ 白名单IP已更新：${_input}"
+                    # 自动开启白名单
+                    printf '%s\n' "true" > "$SINGBOX_FOLDER_PATH/socks5_wl_flag"
+                    _rebuild_socks5_whitelist_rules
+                    sbrestart
+                    green "✅ Socks5 IP白名单已生效"
+                else
+                    printf '' > "$SINGBOX_FOLDER_PATH/socks5_ips"
+                    printf '%s\n' "false" > "$SINGBOX_FOLDER_PATH/socks5_wl_flag"
+                    _rebuild_socks5_whitelist_rules
+                    sbrestart
+                    yellow "白名单IP已清空，白名单已关闭"
+                fi
+                menu_pause
+                ;;
+            4)
+                echo ""
+                if [ -s "$SINGBOX_FOLDER_PATH/socks5_ips" ] && [ -n "$(cat "$SINGBOX_FOLDER_PATH/socks5_ips" | tr -d '\r\n')" ]; then
+                    green "当前白名单IP列表："
+                    cat "$SINGBOX_FOLDER_PATH/socks5_ips" | tr ',' '\n' | while read -r _ip; do
+                        [ -n "$_ip" ] && green "  - $_ip"
+                    done
+                else
+                    yellow "白名单IP列表为空"
+                fi
+                menu_pause
+                ;;
+            *) yellow "无效选项"; sleep 1 ;;
+        esac
+    done
+}
+
 # 节点配置修改主菜单
 node_config_menu() {
     local _ch
@@ -5057,6 +5285,15 @@ node_config_menu() {
         green "  3) SNI / CDN 设置修改"
         green "  4) Argo 隧道修改"
         green "  5) 切换 Argo 使用协议 (Vmess-WS-TLS / Trojan-WS-TLS / Vless-WS-TLS)"
+        if grep -q "socks5-sb" "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null; then
+            local _wl_status="未开启"
+            local _wl_menu_flag=""
+            [ -s "$SINGBOX_FOLDER_PATH/socks5_wl_flag" ] && _wl_menu_flag=$(cat "$SINGBOX_FOLDER_PATH/socks5_wl_flag" | tr -d '\r\n')
+            if is_true "$_wl_menu_flag"; then
+                _wl_status="已开启"
+            fi
+            green "  6) Socks5 IP白名单管理 (当前：${_wl_status})"
+        fi
         purple "  0) 返回主菜单"
         reading "请输入选择: " _ch
         case "$_ch" in
@@ -5066,6 +5303,7 @@ node_config_menu() {
             3) edit_snis_menu ;;
             4) edit_argo_menu ;;
             5) edit_argo_protocol_menu ;;
+            6) edit_socks5_whitelist_menu ;;
             *) yellow "无效选项"; sleep 1 ;;
         esac
     done
