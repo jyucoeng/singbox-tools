@@ -25,7 +25,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.0.26(2026-08-26)"
+VERSION="1.0.27(2026-08-26)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -1163,10 +1163,11 @@ apply_socks5_whitelist() {
     fi
 
     # 在 route.rules 最前面插入白名单放行 + 默认拦截规则
-    jq --argjson ips "[$ip_json]" '
+    # 使用 --arg 传逗号分隔字符串，jq 内 split(",") 构建数组（避免 --argjson 解析无引号 IP 失败）
+    jq --arg ips "$ip_json" '
         .route.rules = (
             [
-                {inbound: ["socks5-sb"], source_ip_cidr: $ips, outbound: "direct"},
+                {inbound: ["socks5-sb"], source_ip_cidr: ($ips | split(",")), outbound: "direct"},
                 {inbound: ["socks5-sb"], outbound: "block"}
             ]
             + (.route.rules // [])
@@ -3668,18 +3669,21 @@ regenerate_links_and_sub() {
         socks5_user_enc=$(url_encode_component "$socks5_username")
         socks5_pass_enc=$(url_encode_component "$socks5_password")
         socks5_link="socks5://${socks5_user_enc}:${socks5_pass_enc}@${server_ip}:${port_socks5}#${sxname}socks5-$hostname"
-        local _wl_info=""
+        yellow "🧦【 Socks5 】(此协议请不要直接在客户端里直连使用)"
+        green "$socks5_link"
         local _wl_flag_val=""
         [ -s "$SINGBOX_FOLDER_PATH/socks5_wl_flag" ] && _wl_flag_val=$(cat "$SINGBOX_FOLDER_PATH/socks5_wl_flag" | tr -d '\r\n')
         if is_true "$_wl_flag_val"; then
             local _wl_ips_val=""
             [ -s "$SINGBOX_FOLDER_PATH/socks5_ips" ] && _wl_ips_val=$(cat "$SINGBOX_FOLDER_PATH/socks5_ips" | tr -d '\r\n')
             if [ -n "$_wl_ips_val" ]; then
-                _wl_info=" [白名单: ${_wl_ips_val}]"
+                yellow "   ↳ 入站白名单已开启，仅允许: ${_wl_ips_val}"
+            else
+                yellow "   ↳ 入站白名单已开启（IP列表为空，等同于关闭）"
             fi
+        else
+            yellow "   ↳ 入站白名单未开启，所有IP均可访问"
         fi
-        yellow "🧦【 Socks5 】(此协议请不要直接在客户端里直连使用)${_wl_info}"
-        green "$socks5_link"
         append_jh " "
         append_jh "$socks5_link"
         echo
