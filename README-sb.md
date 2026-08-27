@@ -508,6 +508,72 @@ tail -200 /root/doraemon/logs/argo.log
 - [77160860大佬](https://github.com/77160860/proxy)
 
 
+## 防火墙规则排查（Debian/Ubuntu/Alpine 通用）
+
+### 查看本脚本的规则
+
+脚本通过 `--comment` 标记所有规则，有两种标记：
+
+| 标记 | 说明 |
+|------|------|
+| `doraemon_singbox_rule` | 所有协议端口的 ACCEPT 规则（vmess/trojan/vless/socks5） |
+| `socks5_rule` | Socks5 白名单专用（ACCEPT 放行 + DROP 拦截） |
+
+**IPv4：**
+```bash
+# 查看所有脚本规则
+iptables -S | grep -E "socks5_rule|doraemon_singbox_rule"
+
+# 查看完整规则链（含包数/字节数）
+iptables -L INPUT -n -v --line-numbers | grep -E "socks5_rule|doraemon_singbox_rule"
+
+# 只看 socks5 白名单规则
+iptables -S | grep socks5_rule
+```
+
+**IPv6：**
+```bash
+ip6tables -S | grep -E "socks5_rule|doraemon_singbox_rule"
+ip6tables -L INPUT -n -v --line-numbers | grep -E "socks5_rule|doraemon_singbox_rule"
+```
+
+### 规则正常状态对照
+
+- **未开启白名单时**：所有端口只有 `doraemon_singbox_rule` 标记的 ACCEPT 规则
+  - TCP 协议（vmess/trojan/vless/anytls/socks5）→ TCP 规则
+  - UDP 协议（hy2/tuic）→ UDP 规则
+- **开启白名单后**：
+  - `doraemon_singbox_rule`：其他协议端口的 ACCEPT 规则（不含 socks5 端口）
+  - `socks5_rule`：socks5 端口的 ACCEPT 规则（每个白名单 IP 一条 TCP）+ 一条 DROP 默认规则（TCP）
+
+### 持久化规则检查
+
+重启后规则会由 systemd/OpenRC 自动恢复。检查持久化文件：
+
+```bash
+# Debian/Ubuntu
+cat /etc/iptables/rules.v4
+cat /etc/iptables/rules.v6
+
+# Alpine（同路径）
+cat /etc/iptables/rules.v4
+cat /etc/iptables/rules.v6
+```
+
+### 白名单状态检查
+
+```bash
+# 查看白名单开关
+cat /root/doraemon/socks5_wl_flag
+
+# 查看白名单 IP 列表
+cat /root/doraemon/socks5_ips
+
+# 查看 socks5 端口
+cat /root/doraemon/port_socks5
+```
+
+
 ## 版本变更信息
 
 v1.0.29 (2026-08-27)

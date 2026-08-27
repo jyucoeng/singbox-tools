@@ -1165,27 +1165,42 @@ apply_singbox_iptables_rules() {
     port_socks5=$(jq -r '.inbounds[]? | select(.tag == "socks5-sb") | .listen_port // empty' "$sbj" 2>/dev/null)
     [ -z "$port_socks5" ] && [ -s "$SINGBOX_FOLDER_PATH/port_socks5" ] && port_socks5=$(cat "$SINGBOX_FOLDER_PATH/port_socks5" | tr -d '\r\n')
 
-    # 获取所有协议端口（排除 socks5）
-    local ports=""
-    ports=$(jq -r '.inbounds[]? | select(.tag != "socks5-sb") | .listen_port // empty' "$sbj" 2>/dev/null | sort -un)
+    # 获取所有协议端口和标签（排除 socks5）
+    local _ports_tags=""
+    _ports_tags=$(jq -r '.inbounds[]? | select(.tag != "socks5-sb") | "\(.tag)\t\(.listen_port // empty)"' "$sbj" 2>/dev/null | sort -t$'\t' -k2 -un)
 
     local _has_rule=false
 
-    # 为非 socks5 端口添加 ACCEPT 规则
+    # 根据协议标签判断需要 TCP 还是 UDP
+    # TCP: vmess/trojan/vless/anytls
+    # UDP: hy2/tuic
     local OLD_IFS="$IFS"
     IFS=$'\n'
-    for port in $ports; do
-        [ -z "$port" ] && continue
+    for _pt in $_ports_tags; do
+        [ -z "$_pt" ] && continue
+        local _tag="${_pt%%	*}"
+        local _port="${_pt#*	}"
+        [ -z "$_port" ] && continue
+
+        local _need_tcp=false _need_udp=false
+        case "$_tag" in
+            *hy2*)    _need_udp=true ;;
+            *tuic*)   _need_udp=true ;;
+            *)        _need_tcp=true ;;
+        esac
+
         if command -v iptables > /dev/null 2>&1; then
-            iptables -A INPUT -p tcp --dport "$port" -j ACCEPT -m comment --comment "$IPTABLES_COMMENT_SINGBOX" 2>/dev/null && _has_rule=true
+            $_need_tcp && iptables -A INPUT -p tcp --dport "$_port" -j ACCEPT -m comment --comment "$IPTABLES_COMMENT_SINGBOX" 2>/dev/null && _has_rule=true
+            $_need_udp && iptables -A INPUT -p udp --dport "$_port" -j ACCEPT -m comment --comment "$IPTABLES_COMMENT_SINGBOX" 2>/dev/null && _has_rule=true
         fi
         if command -v ip6tables > /dev/null 2>&1; then
-            ip6tables -A INPUT -p tcp --dport "$port" -j ACCEPT -m comment --comment "$IPTABLES_COMMENT_SINGBOX" 2>/dev/null && _has_rule=true
+            $_need_tcp && ip6tables -A INPUT -p tcp --dport "$_port" -j ACCEPT -m comment --comment "$IPTABLES_COMMENT_SINGBOX" 2>/dev/null && _has_rule=true
+            $_need_udp && ip6tables -A INPUT -p udp --dport "$_port" -j ACCEPT -m comment --comment "$IPTABLES_COMMENT_SINGBOX" 2>/dev/null && _has_rule=true
         fi
     done
     IFS="$OLD_IFS"
 
-    # 为 socks5 端口添加 ACCEPT 规则（仅当无白名单时）
+    # 为 socks5 端口添加 ACCEPT 规则（仅当无白名单时，socks5 只用 TCP）
     if [ -n "$port_socks5" ] && ! is_true "$wl_flag"; then
         if command -v iptables > /dev/null 2>&1; then
             iptables -A INPUT -p tcp --dport "$port_socks5" -j ACCEPT -m comment --comment "$IPTABLES_COMMENT_SINGBOX" 2>/dev/null && _has_rule=true
