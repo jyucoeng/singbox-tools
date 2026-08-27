@@ -586,7 +586,6 @@ v1.0.29 (2026-08-27)
 
 v1.0.26 (2026-08-26)
  - 新增 Socks5 IP白名单功能：通过 `socks5_wl_flag`（开关）和 `socks5_ips`（IP列表）控制，仅白名单中的源 IP 可访问 Socks5 入站
- - 白名单基于 sing-box `route.rules` 的 `source_ip_cidr` 字段实现，支持单个 IP 和 CIDR 格式
  - 安装时通过环境变量传入，安装后可通过交互菜单 `node → Socks5 IP白名单管理` 开关、修改 IP 列表
  - 大小写不敏感：`true`/`True`/`TRUE`/`1` 均可识别为开启
 
