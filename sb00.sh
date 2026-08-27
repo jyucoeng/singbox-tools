@@ -2177,7 +2177,7 @@ installsb() {
             local _wl_ips=""
             [ -s "$SINGBOX_FOLDER_PATH/socks5_ips" ] && _wl_ips=$(cat "$SINGBOX_FOLDER_PATH/socks5_ips" | tr -d '\r\n')
             if [ -n "$_wl_ips" ]; then
-                yellow "Socks5白名单：已开启（允许：$_wl_ips）"
+                yellow "Socks5白名单：已开启(防火墙规则)（允许：$_wl_ips）"
             else
                 yellow "Socks5白名单：已开启（IP列表为空，等同于关闭）"
             fi
@@ -3766,7 +3766,7 @@ regenerate_links_and_sub() {
             local _wl_ips_val=""
             [ -s "$SINGBOX_FOLDER_PATH/socks5_ips" ] && _wl_ips_val=$(cat "$SINGBOX_FOLDER_PATH/socks5_ips" | tr -d '\r\n')
             if [ -n "$_wl_ips_val" ]; then
-                yellow "   ↳ 入站白名单已开启，仅允许: ${_wl_ips_val}"
+                yellow "   ↳ 入站白名单已开启(防火墙规则)，仅允许: ${_wl_ips_val}"
             else
                 yellow "   ↳ 入站白名单已开启（IP列表为空，等同于关闭）"
             fi
