@@ -25,7 +25,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.0.27(2026-08-26)"
+VERSION="1.0.29(2026-08-27)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -63,6 +63,10 @@ export name=${name:-''}
 # 默认端口
 readonly NGINX_DEFAULT_PORT=8080
 readonly ARGO_DEFAULT_PORT=8001
+
+# iptables/ip6tables 规则标记常量（用于精确识别本脚本添加的防火墙规则）
+readonly IPTABLES_COMMENT_SINGBOX="doraemon_singbox_rule"   # 非socks5协议 + 无白名单时的socks5
+readonly IPTABLES_COMMENT_SOCKS5="socks5_rule"              # 有白名单时的socks5
 
 #
 export nginx_pt=${nginx_pt:-$NGINX_DEFAULT_PORT} # 订阅服务端口（Nginx）
@@ -1111,14 +1115,94 @@ init_socks5_whitelist() {
     fi
 }
 
-# 将 socks5 IP白名单规则写入 sb.json 的 route.rules
-# 原理：在 route.rules 最前面插入两条规则
-#   1) 白名单中的源IP访问 socks5-sb → direct（放行）
-#   2) 其余所有源IP访问 socks5-sb → block（拦截）
-# 白名单关闭时不做任何修改，socks5 对所有 IP 开放
+# 清除本脚本添加的所有 iptables/ip6tables 规则（通过 --comment 标记识别）
+flush_singbox_iptables_rules() {
+    local _cmt
+    for _cmt in "$IPTABLES_COMMENT_SINGBOX" "$IPTABLES_COMMENT_SOCKS5"; do
+        if command -v iptables > /dev/null 2>&1; then
+            while iptables -L INPUT -n --line-numbers 2>/dev/null | grep -q "$_cmt"; do
+                local _ln
+                _ln=$(iptables -L INPUT -n --line-numbers 2>/dev/null | grep "$_cmt" | head -1 | awk '{print $1}')
+                [ -n "$_ln" ] && iptables -D INPUT "$_ln" 2>/dev/null || break
+            done
+        fi
+        if command -v ip6tables > /dev/null 2>&1; then
+            while ip6tables -L INPUT -n --line-numbers 2>/dev/null | grep -q "$_cmt"; do
+                local _ln
+                _ln=$(ip6tables -L INPUT -n --line-numbers 2>/dev/null | grep "$_cmt" | head -1 | awk '{print $1}')
+                [ -n "$_ln" ] && ip6tables -D INPUT "$_ln" 2>/dev/null || break
+            done
+        fi
+    done
+}
+
+# 保存 iptables/ip6tables 规则（跨重启持久化）
+_save_iptables_rules() {
+    local os_name=""
+    [ -f /etc/os-release ] && os_name=$(awk -F= '/^NAME/{print $2}' /etc/os-release 2>/dev/null)
+    mkdir -p /etc/iptables 2>/dev/null
+    if command -v iptables-save > /dev/null 2>&1; then
+        iptables-save > /etc/iptables/rules.v4 2>/dev/null
+    fi
+    if command -v ip6tables-save > /dev/null 2>&1; then
+        ip6tables-save > /etc/iptables/rules.v6 2>/dev/null
+    fi
+    if [[ "$os_name" == *"Debian"* || "$os_name" == *"Ubuntu"* ]]; then
+        command -v netfilter-persistent > /dev/null 2>&1 && netfilter-persistent save 2>/dev/null
+    fi
+}
+
+# 为所有 sing-box 协议端口添加 iptables ACCEPT 规则（通过 --comment 标记识别）
+# socks5 无白名单时用 doraemon_singbox_rule，有白名单时由 apply_socks5_whitelist 处理
+apply_singbox_iptables_rules() {
+    local sbj="$SINGBOX_FOLDER_PATH/sb.json"
+    [ ! -s "$sbj" ] && return 0
+
+    # 获取 socks5 端口和白名单状态
+    local port_socks5=""
+    local wl_flag=""
+    [ -s "$SINGBOX_FOLDER_PATH/socks5_wl_flag" ] && wl_flag=$(cat "$SINGBOX_FOLDER_PATH/socks5_wl_flag" | tr -d '\r\n')
+    port_socks5=$(jq -r '.inbounds[]? | select(.tag == "socks5-sb") | .listen_port // empty' "$sbj" 2>/dev/null)
+    [ -z "$port_socks5" ] && [ -s "$SINGBOX_FOLDER_PATH/port_socks5" ] && port_socks5=$(cat "$SINGBOX_FOLDER_PATH/port_socks5" | tr -d '\r\n')
+
+    # 获取所有协议端口（排除 socks5）
+    local ports=""
+    ports=$(jq -r '.inbounds[]? | select(.tag != "socks5-sb") | .listen_port // empty' "$sbj" 2>/dev/null | sort -un)
+
+    local _has_rule=false
+
+    # 为非 socks5 端口添加 ACCEPT 规则
+    local OLD_IFS="$IFS"
+    IFS=$'\n'
+    for port in $ports; do
+        [ -z "$port" ] && continue
+        if command -v iptables > /dev/null 2>&1; then
+            iptables -A INPUT -p tcp --dport "$port" -j ACCEPT -m comment --comment "$IPTABLES_COMMENT_SINGBOX" 2>/dev/null && _has_rule=true
+        fi
+        if command -v ip6tables > /dev/null 2>&1; then
+            ip6tables -A INPUT -p tcp --dport "$port" -j ACCEPT -m comment --comment "$IPTABLES_COMMENT_SINGBOX" 2>/dev/null && _has_rule=true
+        fi
+    done
+    IFS="$OLD_IFS"
+
+    # 为 socks5 端口添加 ACCEPT 规则（仅当无白名单时）
+    if [ -n "$port_socks5" ] && ! is_true "$wl_flag"; then
+        if command -v iptables > /dev/null 2>&1; then
+            iptables -A INPUT -p tcp --dport "$port_socks5" -j ACCEPT -m comment --comment "$IPTABLES_COMMENT_SINGBOX" 2>/dev/null && _has_rule=true
+        fi
+        if command -v ip6tables > /dev/null 2>&1; then
+            ip6tables -A INPUT -p tcp --dport "$port_socks5" -j ACCEPT -m comment --comment "$IPTABLES_COMMENT_SINGBOX" 2>/dev/null && _has_rule=true
+        fi
+    fi
+
+    $_has_rule && _save_iptables_rules
+}
+
+# 用 iptables 在网络层限制 socks5 端口的访问（仅白名单 IP 可连接）
+# 原理：sing-box route rules 的 source_ip_cidr 匹配的是出站流量源IP（服务器自身），
+#       无法过滤客户端连接，因此改用 iptables 在 TCP 层直接拦截非白名单 IP 的连接
 apply_socks5_whitelist() {
     local sbj="$SINGBOX_FOLDER_PATH/sb.json"
-    local tmpj="$SINGBOX_FOLDER_PATH/.sb.tmp"
 
     # 未启用白名单则跳过
     local wl_flag=""
@@ -1131,49 +1215,46 @@ apply_socks5_whitelist() {
     ips_raw=$(cat "$SINGBOX_FOLDER_PATH/socks5_ips" | tr -d '\r\n')
     [ -z "$ips_raw" ] && return 0
 
-    # sb.json 不存在或没有 socks5-sb 入站则跳过
-    [ ! -s "$sbj" ] && return 0
-    if ! jq -e '.inbounds[]? | select(.tag == "socks5-sb")' "$sbj" >/dev/null 2>&1; then
-        return 0
+    # 获取 socks5 端口
+    local port_socks5=""
+    if [ -s "$sbj" ]; then
+        port_socks5=$(jq -r '.inbounds[]? | select(.tag == "socks5-sb") | .listen_port // empty' "$sbj" 2>/dev/null)
     fi
+    [ -z "$port_socks5" ] && [ -s "$SINGBOX_FOLDER_PATH/port_socks5" ] && port_socks5=$(cat "$SINGBOX_FOLDER_PATH/port_socks5" | tr -d '\r\n')
+    [ -z "$port_socks5" ] && return 0
 
-    # 将逗号分隔的 IP/CIDR 转为 JSON 数组
-    # 单个 IP 自动补 /32（IPv4）或 /128（IPv6），统一用 source_ip_cidr 匹配
-    local ip_json
-    ip_json=$(printf '%s' "$ips_raw" | awk -F',' '{
-        for(i=1;i<=NF;i++) {
-            gsub(/^[ \t]+|[ \t]+$/, "", $i)
-            if (length($i) == 0) continue
-            if (index($i, ":") > 0) {
-                if (index($i, "/") == 0) printf "%s/128", $i
-                else printf "%s", $i
-            } else {
-                if (index($i, "/") == 0) printf "%s/32", $i
-                else printf "%s", $i
-            }
-            printf ","
-        }
-    }' | sed 's/,$//')
+    # 逐个 IP 添加 ACCEPT 规则
+    local _has_rule=false
+    local OLD_IFS="$IFS"
+    IFS=','
+    for ip in $ips_raw; do
+        IFS="$OLD_IFS"
+        ip=$(printf '%s' "$ip" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        [ -z "$ip" ] && continue
 
-    [ -z "$ip_json" ] && return 0
+        if printf '%s' "$ip" | grep -q ':'; then
+            # IPv6 → ip6tables
+            if command -v ip6tables > /dev/null 2>&1; then
+                ip6tables -A INPUT -p tcp --dport "$port_socks5" -s "$ip" -j ACCEPT -m comment --comment "$IPTABLES_COMMENT_SOCKS5" 2>/dev/null && _has_rule=true
+            fi
+        else
+            # IPv4 → iptables
+            if command -v iptables > /dev/null 2>&1; then
+                iptables -A INPUT -p tcp --dport "$port_socks5" -s "$ip" -j ACCEPT -m comment --comment "$IPTABLES_COMMENT_SOCKS5" 2>/dev/null && _has_rule=true
+            fi
+        fi
+    done
+    IFS="$OLD_IFS"
 
-    # 确保 block outbound 存在
-    if ! jq -e '.outbounds[]? | select(.tag == "block")' "$sbj" >/dev/null 2>&1; then
-        jq '.outbounds += [{type: "block", tag: "block"}]' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
+    # 有白名单 ACCEPT 规则才添加默认 DROP（拦截其余所有 IP）
+    if $_has_rule; then
+        if command -v iptables > /dev/null 2>&1; then
+            iptables -A INPUT -p tcp --dport "$port_socks5" -j DROP -m comment --comment "$IPTABLES_COMMENT_SOCKS5" 2>/dev/null
+        fi
+        if command -v ip6tables > /dev/null 2>&1; then
+            ip6tables -A INPUT -p tcp --dport "$port_socks5" -j DROP -m comment --comment "$IPTABLES_COMMENT_SOCKS5" 2>/dev/null
+        fi
     fi
-
-    # 在 route.rules 最前面插入白名单放行 + 默认拦截规则
-    # 使用 --arg 传逗号分隔字符串，jq 内 split(",") 构建数组（避免 --argjson 解析无引号 IP 失败）
-    jq --arg ips "$ip_json" '
-        .route.rules = (
-            [
-                {inbound: ["socks5-sb"], source_ip_cidr: ($ips | split(",")), outbound: "direct"},
-                {inbound: ["socks5-sb"], outbound: "block"}
-            ]
-            + (.route.rules // [])
-        )
-    ' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
-    rm -f "$tmpj" 2> /dev/null || true
 
     green "✅ Socks5 IP白名单已生效（仅允许：${ips_raw}）"
 }
@@ -2201,6 +2282,8 @@ After=network.target
 [Service]
 Type=simple
 NoNewPrivileges=yes
+ExecStartPre=/bin/sh -c '[ -f /etc/iptables/rules.v4 ] && iptables-restore < /etc/iptables/rules.v4 2>/dev/null || true'
+ExecStartPre=/bin/sh -c '[ -f /etc/iptables/rules.v6 ] && ip6tables-restore < /etc/iptables/rules.v6 2>/dev/null || true'
 ExecStart=$SINGBOX_FOLDER_PATH/sing-box run -c $SINGBOX_FOLDER_PATH/sb.json
 StandardOutput=append:$LOGS_DIR/singbox.log
 StandardError=append:$LOGS_DIR/singbox.log
@@ -2224,6 +2307,10 @@ command_args="run -c $SINGBOX_FOLDER_PATH/sb.json"
 command_background=yes
 pidfile="/run/sing-box.pid"
 depend() { need net; }
+start_pre() {
+    [ -f /etc/iptables/rules.v4 ] && iptables-restore < /etc/iptables/rules.v4 2>/dev/null || true
+    [ -f /etc/iptables/rules.v6 ] && ip6tables-restore < /etc/iptables/rules.v6 2>/dev/null || true
+}
 EOF
             chmod +x /etc/init.d/sing-box
             if [ "${DEBUG_FLAG:-0}" = "1" ]; then
@@ -3033,6 +3120,7 @@ ins() {
     installsb
     set_sbyx
     sbbout
+    apply_singbox_iptables_rules
     apply_socks5_whitelist
 
     # 把ip写入server_ip
@@ -3984,28 +4072,11 @@ install_step() {
 
     debug_log "【调试】安装各种乱七八糟的依赖完成"
 
-    if command -v iptables > /dev/null 2>&1; then
-        setenforce 0 > /dev/null 2>&1
-        iptables -F
-        iptables -P INPUT ACCEPT
-        iptables -P FORWARD ACCEPT
-        iptables -P OUTPUT ACCEPT
-    fi
+    setenforce 0 > /dev/null 2>&1
+    flush_singbox_iptables_rules
 
-    # 检查是否是Debian/Ubuntu系统
-    if [[ "$os_name" == *"Debian"* || "$os_name" == *"Ubuntu"* ]]; then
-        command -v netfilter-persistent > /dev/null 2>&1 && netfilter-persistent save > /dev/null 2>&1
-        mkdir -p /etc/iptables 2> /dev/null
-        command -v iptables-save > /dev/null 2>&1 && iptables-save > /etc/iptables/rules.v4 2> /dev/null
-        debug_print echo "iptables执行开放所有端口 (Debian/Ubuntu)"
-    elif [[ "$os_name" == *"Alpine"* ]]; then
-        # Alpine没有netfilter-persistent，可以直接保存iptables规则
-        mkdir -p /etc/iptables 2> /dev/null
-        command -v iptables-save > /dev/null 2>&1 && iptables-save > /etc/iptables/rules.v4 2> /dev/null
-        debug_print echo "iptables执行开放所有端口 (Alpine)"
-    else
-        echo "不支持此操作系统"
-    fi
+    _save_iptables_rules
+    debug_print echo "覆盖安装：已清除旧防火墙规则并保存当前状态"
     ins
     green "Singbox脚本安装完成！即将打印节点信息……"
     # 显示节点信息 这里的key是一个定值，为了打印私钥
@@ -5162,25 +5233,15 @@ edit_argo_protocol_menu() {
 }
 
 # ================== Socks5 IP白名单管理 ==================
-# 需要一个辅助函数来重建白名单路由规则（先清除旧的白名单规则，再重新插入）
+# 重建白名单：先清除旧的 iptables 规则，再重新插入
 _rebuild_socks5_whitelist_rules() {
-    local sbj="$SINGBOX_FOLDER_PATH/sb.json"
-    local tmpj="$SINGBOX_FOLDER_PATH/.sb.tmp"
-    [ ! -s "$sbj" ] && return 0
-
-    # 1) 移除已有的 socks5-sb 白名单/拦截规则（保留 sniff/resolve/WARP 等其他规则）
-    jq '
-        .route.rules = [.route.rules[]? |
-            select(
-                (any(.inbound[]?; . == "socks5-sb") | not)
-                or (.outbound != "direct" and .outbound != "block")
-            )
-        ]
-    ' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
-    rm -f "$tmpj" 2> /dev/null || true
-
-    # 2) 重新应用白名单规则
+    # 1) 清除旧的所有脚本防火墙规则
+    flush_singbox_iptables_rules
+    # 2) 重新应用所有协议端口规则 + 白名单规则
+    apply_singbox_iptables_rules
     apply_socks5_whitelist
+    # 3) 确保保存（即使白名单关闭也要保存，确保清除干净）
+    _save_iptables_rules
 }
 
 edit_socks5_whitelist_menu() {

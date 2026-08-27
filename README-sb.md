@@ -260,17 +260,19 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
 | 参数 | 说明 | 默认值 |
 |------|------|--------|
 | `socks5_wl_flag` | 白名单开关，`true`/`1`/`True`/`TRUE` 均可（大小写不敏感），空或其他值=关闭 | 空（关闭） |
-| `socks5_ips` | 允许访问 Socks5 的源 IP 列表，逗号分隔，支持单个 IP 和 CIDR（如 `1.2.3.4,5.6.7.0/24`） | 空 |
+| `socks5_ips` | 允许访问 Socks5 的源 IP 列表，逗号分隔，支持单个 IP 和 CIDR（如 `1.2.3.4,5.6.7.0/24`），IPv4/IPv6 均支持 | 空 |
 
 - 不传这两个参数 → Socks5 对所有 IP 开放（默认行为）
 - 传了 `socks5_wl_flag=true` 且 `socks5_ips` 非空 → 仅白名单中的 IP 可以连接 Socks5
-- 单个 IP 会自动补 `/32`（IPv4）或 `/128`（IPv6），统一走 `source_ip_cidr` 匹配
 
-> **实现原理**：白名单开启时，脚本在 `sb.json` 的 `route.rules` 最前面插入两条规则：
-> 1. 白名单源 IP 访问 `socks5-sb` 入站 → `direct`（放行）
-> 2. 其余所有源 IP 访问 `socks5-sb` 入站 → `block`（拦截）
+> **实现原理**：白名单开启时，脚本通过 iptables/ip6tables 在 INPUT 链添加规则：
+> 1. 白名单 IP 访问 socks5 端口 → ACCEPT（放行），标记 `socks5_rule`
+> 2. 其余所有 IP 访问 socks5 端口 → DROP（拦截），标记 `socks5_rule`
 >
-> 关闭白名单时这两条规则被移除，恢复为所有 IP 均可访问。
+> 同时，其他协议端口（vmess/trojan/vless 等）通过 iptables 添加 ACCEPT 规则，标记 `doraemon_singbox_rule`。
+> 所有规则通过 `--comment` 标记精确识别，卸载/覆盖安装时仅清除本脚本的规则，不影响其他程序的防火墙配置。
+>
+> 关闭白名单时规则被移除，socks5 端口恢复为所有 IP 均可访问。
 
 > 安装后也可以通过交互菜单管理白名单，见下方「交互菜单」说明。
 >
@@ -507,6 +509,14 @@ tail -200 /root/doraemon/logs/argo.log
 
 
 ## 版本变更信息
+
+v1.0.29 (2026-08-27)
+ - **修复覆盖安装会清除所有 iptables 规则的 bug**：旧版 `install_step()` 中 `iptables -F` 会暴力清除所有防火墙规则（包括其他程序添加的），现改为仅清除本脚本标记的规则
+ - 新增 iptables/ip6tables 规则标记体系：所有协议端口标记 `doraemon_singbox_rule`，白名单 socks5 标记 `socks5_rule`，通过 `--comment` 精确识别
+ - 新增 `apply_singbox_iptables_rules()`：为所有协议端口（vmess/trojan/vless/socks5）添加 iptables ACCEPT 规则
+ - 重构 `flush_singbox_iptables_rules()`：统一清除两种标记的所有规则，卸载/覆盖安装时不影响其他程序
+ - 白名单实现从 sing-box `route.rules` 改为 iptables/ip6tables：在 TCP 层直接拦截非白名单 IP 的连接，同时支持 IPv4/IPv6
+ - 版本号推进为 1.0.29
 
 v1.0.26 (2026-08-26)
  - 新增 Socks5 IP白名单功能：通过 `socks5_wl_flag`（开关）和 `socks5_ips`（IP列表）控制，仅白名单中的源 IP 可访问 Socks5 入站
