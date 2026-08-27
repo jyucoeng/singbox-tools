@@ -1254,6 +1254,7 @@ apply_socks5_whitelist() {
         if command -v ip6tables > /dev/null 2>&1; then
             ip6tables -A INPUT -p tcp --dport "$port_socks5" -j DROP -m comment --comment "$IPTABLES_COMMENT_SOCKS5" 2>/dev/null
         fi
+        _save_iptables_rules
     fi
 
     green "✅ Socks5 IP白名单已生效（仅允许：${ips_raw}）"
@@ -3870,6 +3871,12 @@ cleandel() {
     # 清理 nginx
     white "  ▸ 清理 Nginx..."
     cleanup_nginx
+
+    # 清理本脚本添加的 iptables/ip6tables 规则
+    white "  ▸ 清理防火墙规则..."
+    flush_singbox_iptables_rules
+    _save_iptables_rules
+    green "  ✓ 防火墙规则已清理"
 
     # 清理文件夹
     white "  ▸ 清理配置文件..."
