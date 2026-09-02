@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # 当前脚本版本号
-VERSION='v1.3.13 (2026.09.02)'
+VERSION='v1.3.14 (2026.09.02)'
 
 # Github 反代加速代理
 GITHUB_PROXY=('https://hub.glowp.xyz/' 'https://proxy.vvvv.ee/')
@@ -5395,7 +5395,7 @@ for z in ${!ALL_PARAMETER[@]}; do
     --ARGO_AUTH )
       ((z++)); ARGO_AUTH=${ALL_PARAMETER[z]}
       ;;
-    --HY2_PORT_HOPPING_RANGE )
+    --HY2_PORT_HOPPING_RANGE|--PORT_HOPPING_RANGE )
       ((z++)); [[ "${ALL_PARAMETER[z]//:/-}" =~ ^[1-6][0-9]{4}-[1-6][0-9]{4}$ ]] && HY2_PORT_HOPPING_RANGE=${ALL_PARAMETER[z]//-/:} && PORT_HOPPING_START=${ALL_PARAMETER[z]%:*} && PORT_HOPPING_END=${ALL_PARAMETER[z]#*:}
       [[ "$PORT_HOPPING_START" < "$PORT_HOPPING_END" && "$PORT_HOPPING_START" -ge "$MIN_HOPPING_PORT" && "$PORT_HOPPING_END" -le "$MAX_HOPPING_PORT" ]] && IS_HOPPING=is_hopping
       ;;
