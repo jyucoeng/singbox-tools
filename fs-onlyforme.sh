@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # 当前脚本版本号
-VERSION='v1.3.13 (2026.05.18)'
+VERSION='v1.3.13 (2026.09.02)'
 
 # Github 反代加速代理
 GITHUB_PROXY=('https://hub.glowp.xyz/' 'https://proxy.vvvv.ee/')
@@ -3883,7 +3883,7 @@ install_sing-box() {
   fi
   [ ! -d ${WORK_DIR}/logs ] && mkdir -p ${WORK_DIR}/logs
   [ ! -d ${TEMP_DIR} ] && mkdir -p $TEMP_DIR
-  ssl_certificate $TLS_SERVER_DEFAULT
+  ssl_certificate "${TLS_SERVER_DOMAIN:-$TLS_SERVER_DEFAULT}"
   hint "\n $(text 2) " && wait
   sing-box_json
   echo "${L^^}" > ${WORK_DIR}/language
@@ -5407,6 +5407,9 @@ for z in ${!ALL_PARAMETER[@]}; do
       ;;
     --REALITY_PRIVATE )
       ((z++)); REALITY_PRIVATE=${ALL_PARAMETER[z]}
+      ;;
+    --TLS_SERVER_DOMAIN )
+      ((z++)); TLS_SERVER_DOMAIN=${ALL_PARAMETER[z]}
       ;;
   esac
 done
