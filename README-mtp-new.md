@@ -34,16 +34,24 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 PORT=20301 DOMAIN='www.apple.com' IP_MODE='v4' bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp-new.sh) rep
 ```
 
-#### 安装 Telemt 高性能版
+#### 安装 Telemt 高性能版 （注意：请在每一个环境变量之后都加一个\，我下面的demo 没有严格按照这个规则来）
 
 ```
-INSTALL_MODE=telemt PORT=20301 DOMAIN='www.apple.com' IP_MODE='dual' \
-TELEMT_USER='admin' TELEMT_QUOTA=100 TELEMT_EXPIRE='2026-12-31' \
-TELEMT_SPEED_UP=1.5 TELEMT_SPEED_DOWN=5.0 TELEMT_RESET_DAY=1 \
+INSTALL_MODE=telemt  \
+PORT=20301  \
+DOMAIN='www.apple.com'  \
+SECRET='00004ytJOh7C5wwkPtIB7Sp3d3cuYXBwbGUu0000' \
+IP_MODE='dual' \
+TELEMT_USER='admin'  \
+TELEMT_QUOTA=100  \
+TELEMT_EXPIRE='2026-12-31' \
+TELEMT_SPEED_UP=1.5  \
+TELEMT_SPEED_DOWN=5.0  \
+TELEMT_RESET_DAY=1 \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp-new.sh) rep
 ```
 
-#### 更多 Demo 示例
+#### 更多 Demo 示例 （注意：请在每一个环境变量之后都加一个\，我下面的demo 没有严格按照这个规则来）
 
 下面示例统一使用变量 `URL` 指代脚本地址，复制时换成完整地址即可：
 
