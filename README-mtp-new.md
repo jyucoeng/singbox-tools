@@ -51,6 +51,45 @@ TELEMT_RESET_DAY=1 \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp-new.sh) rep
 ```
 
+**MTProxy Telemt版完整创建流程示例**（主账号 + 子用户 + 查看链接）
+
+```
+步骤0：先在 VPS 上生成一个 SECRET，复制后填入步骤1 的 TELEMT_SECRET 变量中
+head -c 16 /dev/urandom | od -A n -t x1 | tr -d ' \n'
+```
+
+```
+步骤1：主账号（管理员）100GB，每月 1 号自动刷新，不限制上传下载速度
+
+INSTALL_MODE=telemt \
+PORT=443 \
+DOMAIN='www.apple.com' \
+TELEMT_SECRET='你的密钥' \
+IP_MODE='v4' \
+TELEMT_USER='admin' \
+TELEMT_QUOTA=100 \
+TELEMT_EXPIRE='2099-12-31' \
+TELEMT_RESET_DAY=1 \
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp-new.sh) rep
+```
+
+```
+步骤2：子用户 doraemon，每月 50GB，1 号自动刷新，不限制上传下载速度
+
+TELEMT_USER=doraemon \
+TELEMT_DEDICATED_PORT=54001 \
+TELEMT_QUOTA=50 \
+TELEMT_EXPIRE="2099-12-31 23:59:59" \
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp-new.sh) adduser
+```
+
+```
+步骤3：查看所有人的 tg 链接
+
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp-new.sh) users
+
+```
+
 #### 更多 Demo 示例 （注意：请在每一个环境变量之后都加一个 \，确保 \ 前没有多余空格）
 
 下面示例统一使用变量 `URL` 指代脚本地址，复制时换成完整地址即可：
