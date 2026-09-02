@@ -34,24 +34,24 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 PORT=20301 DOMAIN='www.apple.com' IP_MODE='v4' bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp-new.sh) rep
 ```
 
-#### 安装 Telemt 高性能版 （注意：请在每一个环境变量之后都加一个\，我下面的demo 没有严格按照这个规则来）
+#### 安装 Telemt 高性能版 （注意：请在每一个环境变量之后都加一个 \，确保每行末尾 \ 前没有多余空格）
 
 ```
-INSTALL_MODE=telemt  \
-PORT=20301  \
-DOMAIN='www.apple.com'  \
-SECRET='00004ytJOh7C5wwkPtIB7Sp3d3cuYXBwbGUu0000' \
+INSTALL_MODE=telemt \
+PORT=20301 \
+DOMAIN='www.apple.com' \
+SECRET='a3f8b2e1c9d04716e5f2a8b3c7d9e0f1' \
 IP_MODE='dual' \
-TELEMT_USER='admin'  \
-TELEMT_QUOTA=100  \
+TELEMT_USER='admin' \
+TELEMT_QUOTA=100 \
 TELEMT_EXPIRE='2026-12-31' \
-TELEMT_SPEED_UP=1.5  \
-TELEMT_SPEED_DOWN=5.0  \
+TELEMT_SPEED_UP=1.5 \
+TELEMT_SPEED_DOWN=5.0 \
 TELEMT_RESET_DAY=1 \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp-new.sh) rep
 ```
 
-#### 更多 Demo 示例 （注意：请在每一个环境变量之后都加一个\，我下面的demo 没有严格按照这个规则来）
+#### 更多 Demo 示例 （注意：请在每一个环境变量之后都加一个 \，确保 \ 前没有多余空格）
 
 下面示例统一使用变量 `URL` 指代脚本地址，复制时换成完整地址即可：
 
@@ -62,15 +62,20 @@ URL='https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mt
 **① Go 版 - 基础安装（自定义密钥，多次安装链接保持一致）**
 
 ```
-PORT=443 DOMAIN='www.apple.com' IP_MODE='v4' \
-SECRET='aabbccdd00112233aabbccdd00112233' \
+PORT=443 \
+DOMAIN='www.apple.com' \
+IP_MODE='v4' \
+SECRET='a3f8b2e1c9d04716e5f2a8b3c7d9e0f1' \
 bash <(curl -Ls $URL) rep
 ```
 
 **② Telemt - 基础安装（单用户，无任何限制）**
 
 ```
-INSTALL_MODE=telemt PORT=443 DOMAIN='www.apple.com' IP_MODE='v4' \
+INSTALL_MODE=telemt \
+PORT=443 \
+DOMAIN='www.apple.com' \
+IP_MODE='v4' \
 TELEMT_USER='admin' \
 bash <(curl -Ls $URL) rep
 ```
@@ -78,25 +83,41 @@ bash <(curl -Ls $URL) rep
 **③ Telemt - 流量限制 Demo（每月 100GB，每月 1 号自动重置）**
 
 ```
-INSTALL_MODE=telemt PORT=443 DOMAIN='www.apple.com' IP_MODE='v4' \
-TELEMT_USER='vip01' TELEMT_QUOTA=100 TELEMT_RESET_DAY=1 \
+INSTALL_MODE=telemt \
+PORT=443 \
+DOMAIN='www.apple.com' \
+IP_MODE='v4' \
+TELEMT_USER='vip01' \
+TELEMT_QUOTA=100 \
+TELEMT_RESET_DAY=1 \
 bash <(curl -Ls $URL) rep
 ```
 
 **④ Telemt - 时间限制 Demo（仅限到 2026-12-31 晚 23:59:59，过后断流）**
 
 ```
-INSTALL_MODE=telemt PORT=443 DOMAIN='www.apple.com' IP_MODE='v4' \
-TELEMT_USER='trial' TELEMT_EXPIRE='2026-12-31 23:59:59' \
+INSTALL_MODE=telemt \
+PORT=443 \
+DOMAIN='www.apple.com' \
+IP_MODE='v4' \
+TELEMT_USER='trial' \
+TELEMT_EXPIRE='2026-12-31 23:59:59' \
 bash <(curl -Ls $URL) rep
 ```
 
 **⑤ Telemt - 流量 + 时间双重限制 Demo（100GB 且 2026-12-31 到期，任一超限即断流）**
 
 ```
-INSTALL_MODE=telemt PORT=443 DOMAIN='www.apple.com' IP_MODE='v4' \
-TELEMT_USER='vip01' TELEMT_QUOTA=100 TELEMT_RESET_DAY=1 \
-TELEMT_EXPIRE='2026-12-31 23:59:59' TELEMT_SPEED_UP=1.5 TELEMT_SPEED_DOWN=5.0 \
+INSTALL_MODE=telemt \
+PORT=443 \
+DOMAIN='www.apple.com' \
+IP_MODE='v4' \
+TELEMT_USER='vip01' \
+TELEMT_QUOTA=100 \
+TELEMT_RESET_DAY=1 \
+TELEMT_EXPIRE='2026-12-31 23:59:59' \
+TELEMT_SPEED_UP=1.5 \
+TELEMT_SPEED_DOWN=5.0 \
 bash <(curl -Ls $URL) rep
 ```
 
