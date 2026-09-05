@@ -1,1 +1,10 @@
 index.js
+
+# macOS
+.DS_Store
+._*
+
+# 日志与本地测试产物
+*.log
+*.bak
+install.log
