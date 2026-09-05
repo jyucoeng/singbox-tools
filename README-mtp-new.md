@@ -378,6 +378,52 @@ alice | 已用 2.00GB / 限额 2.00GB | 2026-08-03 10:00:12
 - Telemt 多用户功能：专属端口、流量配额、到期日、独立限速、月度自动重置（Cron）
 - 流量统计：每小时自动快照 + 本月用量报表 + 各用户流量耗尽时间记录
 
+## 版本更新记录
+
+### v2.0.2 (2026-09-05) — 修复 Telemt v6/dual 模式 IPv6 监听失效
+
+**问题现象**：在纯 IPv6 或双栈服务器上选择 `IP_MODE=v6` / `IP_MODE=dual` 安装后，生成的 `tg://proxy?server=<IPv6>&port=...` 链接无法连通（TCP 连接被直接拒绝 / `Connection refused`）。
+
+**根因**：telemt 的 `[network].ipv6` 默认值是 `false`（源码 `src/config/defaults.rs` 中 `DEFAULT_NETWORK_IPV6 = Some(false)`）。仅仅在配置里写出：
+
+```toml
+[[server.listeners]]
+ip = "::"
+```
+
+并不足以让 telemt 真正监听 IPv6 —— 它会在绑定前直接跳过 IPv6 监听器。旧版脚本生成 `/etc/telemt.toml` 时缺少 `[network] ipv6 = true`，导致：
+
+- `ss -tlnp` 只能看到 `0.0.0.0:<端口>`，没有任何 `[::]:<端口>` 监听；
+- IPv6 客户端连接被内核直接拒绝；
+- 对**纯 IPv6 VPS**（eth0 无公网 IPv4，IPv4 实际走 Cloudflare WARP `172.16.0.2` 私有出口、不可对外入站）而言，代理等价于完全不可用。
+
+**修复**：生成配置时，`IP_MODE=v6` / `IP_MODE=dual` 会自动写入：
+
+```toml
+[network]
+ipv6 = true
+```
+
+使 telemt 正常绑定 `[::]:<端口>`（同时保留 `0.0.0.0:<端口>` 监听）。
+
+**已部署服务器**：不会自动获得此修复，需手动补改配置后重启：
+
+```bash
+sed -i '/^\[server\]/i [network]\nipv6 = true\n' /etc/telemt.toml
+systemctl restart telemt
+```
+
+（脚本在后续 `rep` 重装时会按新逻辑重新生成完整配置。）
+
+**验证方法**：重启后确认两个监听同时存在：
+
+```bash
+ss -tlnp | grep <端口>
+# 应同时出现 0.0.0.0:<端口> 与 [::]:<端口>
+```
+
+**分享链接注意**：telemt 内部探测公网 IP 时可能拿到 WARP 私有地址（`172.16.0.2`）并据此生成分享链接，这类链接**对外不可用**。请务必使用服务器真实公网 IPv6 生成/分享链接。
+
 ## 感谢
 
 本项目魔改自 [0xdabiaoge/MTProxy](https://github.com/0xdabiaoge/MTProxy)，感谢原作者的优秀工作。本脚本在其基础上重写了安装/卸载、服务管理、多用户管理、流量统计、配额重置与 Telegram 推送等逻辑，二进制依赖仍沿用原仓库的编译产物。
