@@ -25,7 +25,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.0.29(2026-08-27)"
+VERSION="1.0.30(2026-09-05)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -226,7 +226,8 @@ _cmd0="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
 
 # 无参数或 menu 命令（交互式菜单）时跳过“必须设置协议变量”的守卫
 if [ -n "$_cmd0" ] && [ "$_cmd0" != "menu" ]; then
-    if pgrep -f 'sing-box' > /dev/null 2>&1; then
+    # 收窄为仅匹配本脚本安装路径的 sing-box 进程，避免误判系统中其他 sing-box
+    if pgrep -f "$SINGBOX_FOLDER_PATH/sing-box" > /dev/null 2>&1; then
         # 已安装
         if [ "$_cmd0" = "rep" ]; then
             any_proto_enabled || {
@@ -404,7 +405,7 @@ install_deps() {
             psmisc
             coreutils
             ca-certificates
-            vim-common # 提供 xxd（大多数 Debian/Ubuntu）
+            xxd vim-common # xxd：Debian 12+ 为独立包，旧版由 vim-common 提供（装不上自动跳过）
         )
 
         local -a APT_CMD=(
@@ -573,12 +574,15 @@ EOF
 
     # openrc (Alpine)
     if command -v rc-service > /dev/null 2>&1 && command -v rc-update > /dev/null 2>&1; then
-        cat > /etc/init.d/${svc} << EOF
+        # ❗ 用 quoted heredoc（<< 'EOF'）写模板，再用 sed 替换占位符 __SB_PATH__。
+        # 避免 bash 在写文件时把 openrc 脚本内部的 ${name}/$command/$pidfile/$command_args/$?
+        # 当成当前 shell 变量展开（旧版 bug：生成文件变成 --exec ""，start/stop 全部失效）。
+        cat > /etc/init.d/${svc} << 'OPENRC_SB00'
 #!/sbin/openrc-run
 name="singbox service"
 description="singbox service"
-command="$SINGBOX_FOLDER_PATH/sing-box"
-command_args="run -c $SINGBOX_FOLDER_PATH/sb.json"
+command="__SB_PATH__/sing-box"
+command_args="run -c __SB_PATH__/sb.json"
 command_background="yes"
 pidfile="/run/singbox.pid"
 
@@ -588,8 +592,8 @@ depend() {
 }
 
 start_pre() {
-  [ -x $SINGBOX_FOLDER_PATH/sing-box ] || return 1
-  [ -s $SINGBOX_FOLDER_PATH/sb.json ] || return 1
+  [ -x __SB_PATH__/sing-box ] || return 1
+  [ -s __SB_PATH__/sb.json ] || return 1
 }
 
 start() {
@@ -604,7 +608,9 @@ stop() {
   start-stop-daemon --stop --pidfile "$pidfile"
   eend $?
 }
-EOF
+OPENRC_SB00
+
+        sed -i "s|__SB_PATH__|${SINGBOX_FOLDER_PATH}|g" "/etc/init.d/${svc}"
 
         chmod +x /etc/init.d/${svc}
         rc-update add "${svc}" default > /dev/null 2>&1
@@ -1031,22 +1037,30 @@ export cdn_pt
 
 # ================== 处理tunnel的json ==================
 
-# 随机端口
+# 随机端口（尽量避开已在监听的端口，最多重试 20 次）
 rand_port() {
-    # 优先用 shuf（最常见）
-    if command -v shuf > /dev/null 2>&1; then
-        shuf -i 10000-65535 -n 1
-        return
-    fi
-
-    # 备选：awk + 随机种子（兼容性很好）
-    if command -v awk > /dev/null 2>&1; then
-        awk -v s="$(od -An -N4 -tu4 /dev/urandom 2>/dev/null)" 'BEGIN{srand(s); print int(10000 + rand()*55535)}'
-        return
-    fi
-
-    # 兜底：用时间戳拼一个（保证有结果）
-    echo $((($(date +%s) % 55535) + 10000))
+    local p="" tries=0
+    while [ "$tries" -lt 20 ]; do
+        # 优先用 shuf（最常见）
+        if command -v shuf > /dev/null 2>&1; then
+            p="$(shuf -i 10000-65535 -n 1)"
+        elif command -v awk > /dev/null 2>&1; then
+            # 备选：awk + 随机种子（兼容性很好）
+            p="$(awk -v s="$(od -An -N4 -tu4 /dev/urandom 2>/dev/null)" 'BEGIN{srand(s); print int(10000 + rand()*55535)}')"
+        else
+            # 兜底：用时间戳拼一个（保证有结果）
+            p=$((($(date +%s) % 55535) + 10000))
+        fi
+        tries=$((tries + 1))
+        # 有 ss 时检查 TCP/UDP 是否已监听；被占用则换下一个
+        if command -v ss > /dev/null 2>&1; then
+            if { ss -ltn 2>/dev/null; ss -uln 2>/dev/null; } | grep -qE "[:.]${p}[[:space:]]"; then
+                continue
+            fi
+        fi
+        break
+    done
+    echo "$p"
 }
 
 # 生成 UUID v4
@@ -1213,6 +1227,39 @@ apply_singbox_iptables_rules() {
     $_has_rule && _save_iptables_rules
 }
 
+# 工具函数：校验 IP/CIDR（IPv4 逐段校验 + 掩码范围；IPv6 宽松校验 + 掩码范围）用于 socks5 白名单
+is_valid_cidr() {
+    local c="${1:-}" ip="" mask=""
+    [ -n "$c" ] || return 1
+    # 拒绝嵌入 CR/LF（同上，防跨行绕过）
+    [ "$c" = "$(printf '%s' "$c" | tr -d '\r\n')" ] || return 1
+    # IPv4（支持 CIDR）
+    if printf '%s' "$c" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$'; then
+        if printf '%s' "$c" | grep -q '/'; then
+            ip="${c%%/*}"
+            mask="${c##*/}"
+            [ "$mask" -ge 0 ] && [ "$mask" -le 32 ] 2>/dev/null || return 1
+        else
+            ip="$c"
+        fi
+        local o1 o2 o3 o4
+        IFS='.' read -r o1 o2 o3 o4 <<< "$ip"
+        [ "${o1:-0}" -ge 0 ] && [ "${o1:-0}" -le 255 ] && [ "${o2:-0}" -ge 0 ] && [ "${o2:-0}" -le 255 ] \
+            && [ "${o3:-0}" -ge 0 ] && [ "${o3:-0}" -le 255 ] && [ "${o4:-0}" -ge 0 ] && [ "${o4:-0}" -le 255 ]
+        return $?
+    fi
+    # IPv6（宽松：含冒号即认为 IPv6；若带掩码校验 1-128）
+    if printf '%s' "$c" | grep -q ':'; then
+        if printf '%s' "$c" | grep -q '/'; then
+            mask="${c##*/}"
+            [ "$mask" -ge 0 ] && [ "$mask" -le 128 ] 2>/dev/null
+            return $?
+        fi
+        return 0
+    fi
+    return 1
+}
+
 # 用 iptables 在网络层限制 socks5 端口的访问（仅白名单 IP 可连接）
 # 原理：sing-box route rules 的 source_ip_cidr 匹配的是出站流量源IP（服务器自身），
 #       无法过滤客户端连接，因此改用 iptables 在 TCP 层直接拦截非白名单 IP 的连接
@@ -1238,14 +1285,19 @@ apply_socks5_whitelist() {
     [ -z "$port_socks5" ] && [ -s "$SINGBOX_FOLDER_PATH/port_socks5" ] && port_socks5=$(cat "$SINGBOX_FOLDER_PATH/port_socks5" | tr -d '\r\n')
     [ -z "$port_socks5" ] && return 0
 
-    # 逐个 IP 添加 ACCEPT 规则
-    local _has_rule=false
+    # 逐个 IP 添加 ACCEPT 规则（非法格式跳过并警告）
+    local _has_rule=false _valid_ip=false
     local OLD_IFS="$IFS"
     IFS=','
     for ip in $ips_raw; do
         IFS="$OLD_IFS"
         ip=$(printf '%s' "$ip" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
         [ -z "$ip" ] && continue
+        if ! is_valid_cidr "$ip"; then
+            red "❗ 白名单 IP 格式非法，已跳过：${ip}"
+            continue
+        fi
+        _valid_ip=true
 
         if printf '%s' "$ip" | grep -q ':'; then
             # IPv6 → ip6tables
@@ -1270,9 +1322,29 @@ apply_socks5_whitelist() {
             ip6tables -A INPUT -p tcp --dport "$port_socks5" -j DROP -m comment --comment "$IPTABLES_COMMENT_SOCKS5" 2>/dev/null
         fi
         _save_iptables_rules
+        green "✅ Socks5 IP白名单已生效（仅允许：${ips_raw}）"
+    elif [ "$_valid_ip" = false ]; then
+        red "❗ 白名单配置无效（IP 全部非法），本次未生效，socks5 仍对所有 IP 开放"
+        red "   请修改 $SINGBOX_FOLDER_PATH/socks5_ips 后重试"
     fi
+}
 
-    green "✅ Socks5 IP白名单已生效（仅允许：${ips_raw}）"
+# 校验域名（用于 Argo 固定隧道 / vless SNI 等，防注入）
+is_valid_domain() {
+    local d="${1:-}"
+    [ -n "$d" ] || return 1
+    # 拒绝嵌入 CR/LF（grep 按行匹配，需先整体校验无换行，防止跨行首行匹配绕过）
+    [ "$d" = "$(printf '%s' "$d" | tr -d '\r\n')" ] || return 1
+    printf '%s' "$d" | grep -qE '^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$'
+}
+
+# 校验 Argo token（cloudflared token 是 base64url + 点分隔，不含空格/引号/换行）
+is_valid_argo_token() {
+    local t="${1:-}"
+    [ -n "$t" ] || return 1
+    # 拒绝嵌入 CR/LF（同 is_valid_domain，防跨行绕过）
+    [ "$t" = "$(printf '%s' "$t" | tr -d '\r\n')" ] || return 1
+    printf '%s' "$t" | grep -qE '^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$'
 }
 
 # 用法：
@@ -1292,6 +1364,13 @@ prepare_argo_credentials() {
         return
     fi
 
+    # ---------- 域名校验（固定隧道必填且必须合法，防止拼进 tunnel.yml/service 造成注入） ----------
+    if [ -n "$domain" ] && ! is_valid_domain "$domain"; then
+        red "❌ Argo 固定隧道域名非法：${domain}"
+        red "   域名只能包含字母/数字/'-'/'.'，如 cdn.example.com"
+        return 1
+    fi
+
     # ---------- JSON 凭据 ----------
     if echo "$auth" | grep -q 'TunnelSecret'; then
         yellow "检测到 Argo JSON 凭据，使用 credentials-file 模式"
@@ -1308,6 +1387,7 @@ prepare_argo_credentials() {
         # 写入 tunnel.json
         #❗ 如果 ARGO_AUTH 里的 JSON 含有 \n、\r、\uXXXX 之类，echo 在某些 shell/实现里可能会解释转义，导致 tunnel.json 内容被破坏。 改法：用 printf 更可靠
         printf '%s' "$auth" > "$SINGBOX_FOLDER_PATH/tunnel.json"
+        chmod 600 "$SINGBOX_FOLDER_PATH/tunnel.json" 2>/dev/null || true
         debug_log "【调试】prepare_argo_credentials：tunnel.json 已写入（大小=$(wc -c "$SINGBOX_FOLDER_PATH/tunnel.json" 2> /dev/null | awk '{print $1}') 字节）"
 
         # 提取 TunnelID
@@ -1334,6 +1414,7 @@ ingress:
       noTLSVerify: true
   - service: http_status:404
 EOF
+        chmod 600 "$SINGBOX_FOLDER_PATH/tunnel.yml" 2>/dev/null || true
         debug_log "【调试】prepare_argo_credentials：tunnel.yml 已生成（回源到 localhost:${local_port}，hostname=${domain:-<空>}）"
 
         ARGO_MODE="json"
@@ -1341,6 +1422,11 @@ EOF
 
     else
         # token 模式
+        if ! is_valid_argo_token "$auth"; then
+            red "❌ Argo token 格式非法：只能包含字母/数字/'-'/'_'/'.'，且不允许空格、引号、换行"
+            red "   请确认你粘贴的是完整的 cloudflared token（形如 ey...-xxx.xxx）"
+            return 1
+        fi
         ARGO_MODE="token"
         debug_log "【调试】prepare_argo_credentials：识别为 token 凭据（ARGO_MODE=token）"
     fi
@@ -1481,6 +1567,8 @@ v4v6() {
 # Set up name for nodes and IP version preference
 set_sbyx() {
     if [ -n "$name" ]; then
+        # 清洗 name：去掉 CR/LF，防止换行/控制符污染节点名与订阅
+        name="$(printf '%s' "$name" | tr -d '\r\n')"
         sxname=$name-
         echo "$sxname" > "$SINGBOX_FOLDER_PATH/name"
         echo
@@ -1552,6 +1640,19 @@ update_singbox() {
         red "❌ 下载失败：${url}"
         exit 1
     fi
+
+    # 完整性校验（运行时）：下载内容不是 HTML 错误页，且是合法 tar.gz 并包含 sing-box 二进制
+    if head -c 256 "$tmp_archive" | grep -qiE '<!DOCTYPE|<html|404: Not Found' 2> /dev/null; then
+        red "❌ 下载内容异常（疑似 HTML 错误页）：${url}"
+        rm -f "$tmp_archive" 2> /dev/null
+        exit 1
+    fi
+    if ! tar -tzf "$tmp_archive" 2> /dev/null | grep -q '/sing-box$'; then
+        red "❌ 下载的压缩包内未找到 sing-box 二进制（可能损坏或被劫持）：${url}"
+        rm -f "$tmp_archive" 2> /dev/null
+        exit 1
+    fi
+
     debug_log "【调试】update_singbox：下载完成，解压中…"
 
     tar -xzf "$tmp_archive" -C /tmp/ 2> /dev/null || {
@@ -1563,7 +1664,13 @@ update_singbox() {
     rm -rf "/tmp/sing-box-${sb_ver}-linux-${cpu}" 2> /dev/null || true
 
     chmod +x "$SINGBOX_FOLDER_PATH/sing-box"
+    # 完整性校验：二进制能运行且版本号必须等于期望版本，防止被替换/损坏
     sbcore=$("$SINGBOX_FOLDER_PATH/sing-box" version 2> /dev/null | head -1 | awk '/version/{print $NF}')
+    if [ -z "$sbcore" ] || [ "$sbcore" != "$sb_ver" ]; then
+        red "❌ sing-box 校验失败：期望 v${sb_ver}，实际 ${sbcore:-无法运行}（二进制可能损坏或被劫持）"
+        rm -f "$SINGBOX_FOLDER_PATH/sing-box" 2> /dev/null
+        exit 1
+    fi
     debug_log "【调试】update_singbox：Sing-box 版本为 $sbcore"
     green "✅  已安装 Sing-box 正式版内核：${sbcore}"
 }
@@ -1576,8 +1683,10 @@ insuuid() {
     if [ -z "$uuid" ] && [ ! -e "$SINGBOX_FOLDER_PATH/uuid" ]; then
         uuid=$("$SINGBOX_FOLDER_PATH/sing-box" generate uuid)
         echo "$uuid" > "$SINGBOX_FOLDER_PATH/uuid"
+        chmod 600 "$SINGBOX_FOLDER_PATH/uuid" 2>/dev/null || true
     elif [ -n "$uuid" ]; then
         echo "$uuid" > "$SINGBOX_FOLDER_PATH/uuid"
+        chmod 600 "$SINGBOX_FOLDER_PATH/uuid" 2>/dev/null || true
     fi
     uuid=$(cat "$SINGBOX_FOLDER_PATH/uuid")
     yellow "UUID密码：$uuid"
@@ -1675,9 +1784,11 @@ derive_reality_public_key() {
     # 私钥为空直接失败
     [ -z "$priv" ] && return 1
 
-    # 1) 优先本地推导（openssl + xxd）
-    if command -v xxd > /dev/null 2>&1 && command -v openssl > /dev/null 2>&1; then
-        debug_log "🔐 【调试】 derive_reality_public_key: 使用【本地推导】(openssl + xxd)"
+    # 1) 本地推导（仅依赖 openssl + base64，不依赖 xxd）
+    #    ❗ Debian 12/13 起 /usr/bin/xxd 归属独立 xxd 包，vim-common 不再提供，因此这里不再用 xxd，
+    #      改用 printf 直接构造 PKCS#8 DER + openssl pkey -inform DER，只要有 openssl 就能推导。
+    if command -v openssl > /dev/null 2>&1; then
+        debug_log "🔐 【调试】 derive_reality_public_key: 使用【本地推导】(openssl)"
 
         local tmp_dir="$SINGBOX_FOLDER_PATH/.tmp_reality"
         mkdir -p "$tmp_dir" 2> /dev/null
@@ -1719,73 +1830,52 @@ derive_reality_public_key() {
                     debug_log "❗ 【调试】 derive_reality_public_key: 本地解码后长度不为 32 bytes（实际=${priv_len}）"
                     rm -f "$tmp_dir/_x25519_priv_raw" 2> /dev/null
                 else
-                    # PKCS#8 DER 前缀（X25519 固定头）
-                    local prefix_hex="302e020100300506032b656e04220420"
-                    local priv_hex
-                    priv_hex="$(xxd -p -c 256 "$tmp_dir/_x25519_priv_raw" 2> /dev/null | tr -d '\n')"
+                    # 用 printf 直接拼 PKCS#8 DER（X25519 固定头 + 32 字节原始私钥），
+                    # 替代 xxd 的 hex 双向转换，任何 bash + openssl 环境都可用
+                    {
+                        printf '\x30\x2e\x02\x01\x00\x30\x05\x06\x03\x2b\x65\x6e\x04\x22\x04\x20'
+                        cat "$tmp_dir/_x25519_priv_raw"
+                    } > "$tmp_dir/_x25519_priv_der"
 
-                    if [ -n "$priv_hex" ]; then
-                        printf "%s%s" "$prefix_hex" "$priv_hex" | xxd -r -p > "$tmp_dir/_x25519_priv_der" 2> /dev/null || true
+                    if openssl pkey -inform DER -in "$tmp_dir/_x25519_priv_der" -pubout -outform DER > "$tmp_dir/_x25519_pub_der" 2> /dev/null \
+                        && tail -c 32 "$tmp_dir/_x25519_pub_der" > "$tmp_dir/_x25519_pub_raw" 2> /dev/null; then
 
-                        if openssl pkcs8 -inform DER -in "$tmp_dir/_x25519_priv_der" -nocrypt -out "$tmp_dir/_x25519_priv_pem" 2> /dev/null \
-                            && openssl pkey -in "$tmp_dir/_x25519_priv_pem" -pubout -outform DER > "$tmp_dir/_x25519_pub_der" 2> /dev/null \
-                            && tail -c 32 "$tmp_dir/_x25519_pub_der" > "$tmp_dir/_x25519_pub_raw" 2> /dev/null; then
-
-                            # raw 公钥 -> base64url（无 padding）
-                            if command -v base64 > /dev/null 2>&1; then
-                                pub="$(base64 < "$tmp_dir/_x25519_pub_raw" 2> /dev/null | tr -d '\n' | tr '+/' '-_' | sed -E 's/=+$//')"
-                            elif command -v openssl > /dev/null 2>&1; then
-                                pub="$(openssl base64 -A < "$tmp_dir/_x25519_pub_raw" 2> /dev/null | tr '+/' '-_' | sed -E 's/=+$//')"
-                            fi
-
-                            if [ -n "$pub" ]; then
-                                debug_log "✅ 【调试】 derive_reality_public_key: 本地推导成功"
-
-                                # 清理临时文件（可选）
-                                rm -f "$tmp_dir/_x25519_priv_raw" "$tmp_dir/_x25519_priv_der" "$tmp_dir/_x25519_priv_pem" \
-                                    "$tmp_dir/_x25519_pub_der" "$tmp_dir/_x25519_pub_raw" 2> /dev/null
-
-                                echo "$pub"
-                                return 0
-                            else
-                                debug_log "❗ 【调试】 derive_reality_public_key: 本地推导成功但编码公钥失败（缺少 base64 工具？）"
-                            fi
+                        # raw 公钥 -> base64url（无 padding）
+                        if command -v base64 > /dev/null 2>&1; then
+                            pub="$(base64 < "$tmp_dir/_x25519_pub_raw" 2> /dev/null | tr -d '\n' | tr '+/' '-_' | sed -E 's/=+$//')"
                         else
-                            debug_log "❗ 【调试】 derive_reality_public_key: openssl 推导公钥失败（pkcs8/pkey/pubout）"
+                            pub="$(openssl base64 -A < "$tmp_dir/_x25519_pub_raw" 2> /dev/null | tr '+/' '-_' | sed -E 's/=+$//')"
+                        fi
+
+                        if [ -n "$pub" ]; then
+                            debug_log "✅ 【调试】 derive_reality_public_key: 本地推导成功"
+
+                            # 清理临时文件
+                            rm -f "$tmp_dir/_x25519_priv_raw" "$tmp_dir/_x25519_priv_der" \
+                                "$tmp_dir/_x25519_pub_der" "$tmp_dir/_x25519_pub_raw" 2> /dev/null
+
+                            echo "$pub"
+                            return 0
+                        else
+                            debug_log "❗ 【调试】 derive_reality_public_key: 本地推导成功但编码公钥失败"
                         fi
                     else
-                        debug_log "❗ 【调试】 derive_reality_public_key: xxd 读取私钥失败"
+                        debug_log "❗ 【调试】 derive_reality_public_key: openssl 推导公钥失败（pkey/pubout）"
                     fi
                 fi
             fi
         fi
 
-        debug_log "❗ 【调试】 derive_reality_public_key: 本地推导失败，准备在线兜底"
+        debug_log "❗ 【调试】 derive_reality_public_key: 本地推导失败"
     else
-        debug_log "❗ 【调试】 derive_reality_public_key: 缺少 openssl 或 xxd，本地推导不可用"
+        debug_log "❗ 【调试】 derive_reality_public_key: 缺少 openssl，本地推导不可用"
     fi
 
-    # 2) 在线兜底推导（curl/wget）
-    debug_log "🌐 【调试】 derive_reality_public_key: 使用【在线推导】(realitykey.cloudflare.now.cc)"
-
-    if command -v curl > /dev/null 2>&1; then
-        pub="$(curl -s --max-time 2 "https://realitykey.cloudflare.now.cc/?privateKey=${priv}" \
-            | awk -F '"' '/publicKey/{print $4; exit}')"
-    elif command -v wget > /dev/null 2>&1; then
-        pub="$(wget --no-check-certificate -qO- --tries=3 --timeout=2 "https://realitykey.cloudflare.now.cc/?privateKey=${priv}" \
-            | awk -F '"' '/publicKey/{print $4; exit}')"
-    else
-        debug_log "❗ 【调试】 derive_reality_public_key: curl/wget 都不存在，在线推导不可用"
-        return 1
-    fi
-
-    if [ -n "$pub" ]; then
-        debug_log "✅ 【调试】 derive_reality_public_key: 在线推导成功"
-        echo "$pub"
-        return 0
-    fi
-
-    debug_log "❗ 【调试】 derive_reality_public_key: 在线推导失败（未获取到 publicKey）"
+    # ❗ 安全考虑：不再提供“在线推导”兜底。
+    # 旧版会把 reality 私钥以 query 参数（?privateKey=...）明文发给第三方
+    # （realitykey.cloudflare.now.cc），等于把私钥外发。这里直接返回失败，
+    # 由调用方 init_reality_keypair 回退为生成一套新的 keypair。
+    debug_log "❌ 【调试】 derive_reality_public_key: 本地推导失败，已拒绝在线推导（私钥不外发），返回失败"
     return 1
 }
 
@@ -1854,6 +1944,8 @@ init_reality_keypair() {
                 debug_log "✅ 【调试】 init_reality_keypair: 推导公钥成功（pub=${#pub} chars）"
             else
                 debug_log "❗ 【调试】 init_reality_keypair: 推导公钥失败，将回退为生成新 keypair（这会覆盖 reality_private）"
+                yellow "⚠️ 你传入的 reality_private 无法本地推导出公钥，已改用新生成的 keypair"
+                yellow "   （若希望固定节点，请用下方打印的新值作为 reality_private）"
 
                 # 推导失败：生成一套新的 keypair（回退）
                 local kp
@@ -2105,6 +2197,7 @@ installsb() {
 
         if [ ! -f "$SINGBOX_FOLDER_PATH/reality.key" ]; then
             "$SINGBOX_FOLDER_PATH/sing-box" generate reality-keypair > "$SINGBOX_FOLDER_PATH/reality.key"
+            chmod 600 "$SINGBOX_FOLDER_PATH/reality.key" 2>/dev/null || true
         fi
 
         # ✅ Reality Keypair：只传私钥即可（自动算公钥/或复用文件），节点输出保持一致
@@ -2211,52 +2304,16 @@ installsb() {
 
     rm -f "$tmpj" 2> /dev/null || true
 
+    # sb.json 内含全部协议口令，收紧权限
+    chmod 600 "$sbj" 2>/dev/null || true
+
     # setup_warp_config   # 大陆外 VPS 不需要 WARP，注释掉
 }
-# Netflix/OpenAI/YouTube 走 WARP 解锁，其余直连 (matching index.js:498-560)
-# 这堆配置只做一件事：Netflix/OpenAI/YouTube 的流量走 WARP 隧道出去（用于解锁区域限制）。去掉后：
-#   - 所有代理协议（tuic/hy2/vless/etc.）照常工作
-#   - 只是 Netflix/OpenAI/YouTube 走直连，不再走 WARP
-#   - 如果你的 VPS 不在受限网络（如国内 VPS 或 Serv00），直连就能访问这些服务，完全不需要这部分。
-setup_warp_config() {
-    local sbj="$SINGBOX_FOLDER_PATH/sb.json"
-    local tmpj="$SINGBOX_FOLDER_PATH/.sb.tmp"
+# Netflix/OpenAI/YouTube 走 WARP 解锁，其余直连
+# ❗ setup_warp_config 已删除（调用点早已被注释掉，大陆外 VPS 不需要 WARP）。
+#    sbbout() 里仍保留对旧 .warp_config 文件的读取逻辑，仅用于兼容历史安装，
+#    该文件现在不会再被生成，因此这段分支实际不生效。
 
-    local need_youtube_warp=false
-    if command -v curl > /dev/null 2>&1; then
-        local yt_test
-        yt_test=$(curl -o /dev/null -m 2 -s -w "%{http_code}" https://www.youtube.com 2> /dev/null)
-        [ "$yt_test" != "200" ] && need_youtube_warp=true
-    fi
-    # 保存检测结果给 sbbout 使用
-    printf '%s\n' "$need_youtube_warp" > "$SINGBOX_FOLDER_PATH/.warp_config"
-
-    jq --argjson need_youtube "$need_youtube_warp" '
-        .endpoints = [{
-            type: "wireguard",
-            tag: "wireguard-out",
-            mtu: 1280,
-            address: ["172.16.0.2/32", "2606:4700:110:8dfe:d141:69bb:6b80:925/128"],
-            private_key: "YFYOAdbw1bKTHlNNi+aEjBM3BO7unuFC5rOkMRAz9XY=",
-            peers: [{
-                address: "engage.cloudflareclient.com",
-                port: 2408,
-                public_key: "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
-                allowed_ips: ["0.0.0.0/0", "::/0"],
-                reserved: [78, 135, 76]
-            }]
-        }]
-        | .route.rule_set = [
-            {tag: "netflix", type: "remote", format: "binary", url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/netflix.srs"},
-            {tag: "openai", type: "remote", format: "binary", url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/openai.srs"}
-        ]
-        | .route.final = "direct"
-        | if $need_youtube then
-            .route.rule_set += [{tag: "youtube", type: "remote", format: "binary", url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/youtube.srs"}]
-          else . end
-    ' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
-    rm -f "$tmpj" 2> /dev/null || true
-}
 #  Generate Sing-box configuration file
 sbbout() {
     if [ -e "$SINGBOX_FOLDER_PATH/sb.json" ]; then
@@ -2285,6 +2342,8 @@ sbbout() {
               end
         ' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
         rm -f "$tmpj" 2> /dev/null || true
+        # sb.json 内含全部协议口令，收紧权限（jq 写 tmp+mv 会重建文件，需重新 chmod）
+        chmod 600 "$sbj" 2>/dev/null || true
 
         # 预创建 singbox.log，确保 sing-box 启动时文件已存在
         : > "$LOGS_DIR/singbox.log" 2>/dev/null
@@ -2638,8 +2697,22 @@ ensure_cloudflared() {
         return 1
     fi
 
+    # 完整性校验（运行时）：确保不是 HTML 错误页 / 截断文件，且版本可解析
+    if head -c 256 "$out" | grep -qiE '<!DOCTYPE|<html|404: Not Found' 2> /dev/null; then
+        red "❌ 下载内容异常（疑似 HTML 错误页）：$out"
+        rm -f "$out" 2> /dev/null
+        return 1
+    fi
+
     debug_log "【调试】ensure_cloudflared：设置 cloudflared 二进制文件权限"
     chmod +x "$out" || return 1
+
+    # 校验二进制能运行且版本格式正确（cloudflared version 2025.11.1）
+    if ! "$out" --version 2> /dev/null | grep -qE '[0-9]{4}\.[0-9]+\.[0-9]+'; then
+        red "❌ cloudflared 二进制校验失败（无法运行或版本异常），可能下载损坏"
+        rm -f "$out" 2> /dev/null
+        return 1
+    fi
 
     debug_log "【调试】ensure_cloudflared：cloudflared 二进制文件权限设置成功"
     return 0
@@ -2654,6 +2727,12 @@ install_argo_service_systemd() {
     if ! command -v systemctl > /dev/null 2>&1; then
         red "系统未检测到 systemd，跳过 systemd 服务安装！"
         return
+    fi
+
+    # 防注入：token 模式必须通过格式校验才能写进 systemd ExecStart
+    if [ "$mode" != "json" ] && ! is_valid_argo_token "$token"; then
+        red "❌ Argo token 格式非法，已中止写入 systemd 服务（防注入）"
+        return 1
     fi
 
     if [ "$mode" = "json" ]; then
@@ -2710,6 +2789,12 @@ install_argo_service_openrc() {
     if ! command -v rc-service > /dev/null 2>&1; then
         red "系统未检测到 openrc，跳过 openrc 服务安装！"
         return
+    fi
+
+    # 防注入：token 会写进 /etc/init.d/argo，由 openrc 当作 shell 脚本执行，必须校验格式
+    if [ "$mode" != "json" ] && ! is_valid_argo_token "$token"; then
+        red "❌ Argo token 格式非法，已中止写入 openrc 服务（防注入）"
+        return 1
     fi
 
     local command_path="$SINGBOX_FOLDER_PATH/cloudflared"
@@ -2807,10 +2892,11 @@ wait_and_check_argo() {
             argodomain="$(tail -n1 "$ym_log" 2> /dev/null | tr -d '\r\n')"
         fi
 
-        # 简单校验：必须像域名（含点号）
-        if [ -n "$argodomain" ] && echo "$argodomain" | grep -q '\.'; then
+        # 校验：必须是通过 is_valid_domain 的合法域名（防注入）
+        if [ -n "$argodomain" ] && is_valid_domain "$argodomain"; then
             export ARGO_DOMAIN="$argodomain"
             echo "$ARGO_DOMAIN" > "$ym_log" 2> /dev/null
+            chmod 600 "$ym_log" 2>/dev/null || true
             purple "✅ 固定 Argo 域名：$ARGO_DOMAIN"
             return 0
         fi
@@ -3213,8 +3299,9 @@ ins() {
 
             # 与原版一致：固定 Argo 域名直接落盘
             echo "$ARGO_DOMAIN" > "$SINGBOX_FOLDER_PATH/argo_domain"
+            chmod 600 "$SINGBOX_FOLDER_PATH/argo_domain" 2>/dev/null || true
             # token 模式下才会有 sbargotoken
-            [ "$ARGO_MODE" = "token" ] && echo "$ARGO_AUTH" > "$SINGBOX_FOLDER_PATH/sbargotoken"
+            [ "$ARGO_MODE" = "token" ] && { echo "$ARGO_AUTH" > "$SINGBOX_FOLDER_PATH/sbargotoken"; chmod 600 "$SINGBOX_FOLDER_PATH/sbargotoken" 2>/dev/null || true; }
         else
             # 临时 Argo（trycloudflare）
             argo_tunnel_type="临时"
@@ -3259,110 +3346,6 @@ write2SingboxFolders() {
 
     # ✅ 订阅开关落盘（默认 false）
     echo "${subscribe}" > "$SINGBOX_FOLDER_PATH/subscribe"
-}
-
-# ⚠️ DEPRECATED（已废弃）：此函数保留供参考/兼容，不再被 cip() 与服务管理菜单调用。
-# 状态显示已统一改用 menu_status_block（主菜单顶部同款：●运行中/■已停止/○未安装/○未启用 + 版本 + 端口）
-singbox_status() {
-    purple "=========当前内核运行状态========="
-
-    debug_log "【调试】进入 singbox_status() 函数，开始判断 sing-box 状态"
-    # 1) sing-box
-    if pgrep -f "$SINGBOX_FOLDER_PATH/sing-box" > /dev/null 2>&1; then
-
-        # sing-box version 1.13.14  → 匹配 1.13.14（只取第一行）
-        local singbox_version
-        singbox_version=$("$SINGBOX_FOLDER_PATH/sing-box" version 2> /dev/null | head -1 | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')
-        echo "Sing-box (版本V${singbox_version:-unknown})：✅ $(green "运行中")"
-    else
-        echo "Sing-box：❌ $(red "未运行")"
-    fi
-
-    # ========= 统一判断：订阅/Argo/Nginx 是否“需要” =========
-    local subscribe_flag argo_needed nginx_needed
-    subscribe_flag="$(get_subscribe_flag)"
-
-    # Argo 是否需要（用 need_argo 函数）
-    argo_needed=false
-    if need_argo; then
-        argo_needed=true
-    fi
-
-    # Nginx 是否需要：订阅开启 或 需要 Argo
-    nginx_needed=false
-    if is_true "$subscribe_flag" || $argo_needed; then
-        nginx_needed=true
-    fi
-
-    debug_log "【调试】进入 singbox_status() 函数，开始判断 cloudflared 状态"
-    # ✅ cloudflared 安装状态（不影响 Argo 是否启用）
-    if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ] || command -v cloudflared > /dev/null 2>&1; then
-        echo "cloudflared：✅ $(green "已安装")"
-    else
-        echo "cloudflared：❌ $(red "未安装")"
-    fi
-
-    # 2) Argo 状态（细分：不需要 / 需要但未运行 / 运行中）
-    if ! $argo_needed; then
-        debug_log "【调试】进入 singbox_status() 函数，当前场景无需 Argo，由于argo_needed=$argo_needed"
-        echo "Argo：✅ $(purple "未启用")（当前场景无需 Argo）"
-    else
-        debug_log "【调试】进入 singbox_status() 函数，开始判断 cloudflared 状态，argo_needed=$argo_needed"
-        if pgrep -f "$SINGBOX_FOLDER_PATH/cloudflared" > /dev/null 2>&1; then
-            # 兼容：cloudflared version 2025.11.1
-            local cloudflared_version
-            cloudflared_version=$("$SINGBOX_FOLDER_PATH/cloudflared" version 2> /dev/null | sed -n 's/.*version \([0-9]\{4\}\.[0-9]\+\.[0-9]\+\).*/\1/p')
-            echo "cloudflared Argo (版本V${cloudflared_version:-unknown})：✅ $(green "运行中")"
-        else
-            echo "Argo：❌ 未运行（已启用 Argo）"
-            yellow "❗ 已启用 Argo，但 cloudflared 未运行"
-
-        fi
-    fi
-
-    # 3) Nginx + subscribe 状态（细分：不需要 / 未安装 / 未运行 / 运行中）
-    debug_log "【调试】进入 singbox_status() 函数，开始判断 Nginx 状态"
-    local nginx_port sub_desc
-    nginx_port="${nginx_pt:-$NGINX_DEFAULT_PORT}"
-    [ -s "$SINGBOX_FOLDER_PATH/nginx_port" ] && nginx_port="$(cat "$SINGBOX_FOLDER_PATH/nginx_port" 2> /dev/null)"
-
-    if is_true "$subscribe_flag"; then
-        sub_desc="✅ $(green "订阅已开启")"
-    else
-        sub_desc="⛔ $(purple "订阅未开启")"
-    fi
-
-    # ✅ 不需要 nginx 的场景：明确说明（既不安装也不启动）
-    if ! $nginx_needed; then
-        echo "Nginx：✅ $(purple "未安装/未启用")（符合 subscribe=false 且未启用 Argo）"
-        return 0
-    fi
-
-    debug_log "【调试】进入 singbox_status() 函数，开始判断 Nginx 状态，进一步区分未安装/未运行/运行中,nginx_needed=$nginx_needed"
-    # ✅ 需要 nginx：进一步区分未安装/未运行/运行中
-    if ! command -v nginx > /dev/null 2>&1; then
-        echo "Nginx：❌ $(red "未安装")（${sub_desc}，端口：${nginx_port}）"
-        if is_true "$subscribe_flag"; then
-            yellow "❗ 订阅已开启，但系统未安装 Nginx：请重新执行安装或手动安装 nginx"
-        fi
-        if $argo_needed; then
-            yellow "❗ 已启用 Argo，但系统未安装 Nginx：cloudflared 回源将无法工作"
-        fi
-        return 0
-    fi
-
-    # Check if Nginx is running
-    if ps aux | grep -v grep | grep -q nginx; then
-        echo "Nginx：✅ $(green "运行中")（${sub_desc}，端口：${nginx_port}）"
-    else
-        echo "Nginx：❌ $(red "未运行")（${sub_desc}，端口：${nginx_port}）"
-        if is_true "$subscribe_flag"; then
-            yellow "❗ 订阅已开启，但 Nginx 未运行：请重启 nginx"
-        fi
-        if $argo_needed; then
-            yellow "❗ 已启用 Argo，但 Nginx 未运行：cloudflared 回源将无法工作"
-        fi
-    fi
 }
 
 # ================== 订阅：生成订阅内容 ==================
@@ -3465,6 +3448,9 @@ show_sub_url() {
         server_ip=$(add_ipv6_brackets "$server_ip") # 确保 IPv6 地址加上中括号
     fi
 
+    # ❗ 安全提示：无 Argo 时订阅只能走明文 HTTP，会暴露订阅 URL（内含所有节点口令）
+    #    只应在可信网络使用；如需公网安全订阅请启用固定/临时 Argo（https）或关闭订阅
+    yellow "⚠️ 订阅走明文 HTTP，且订阅 URL 内含全部节点口令，请勿在不可信网络分享/抓包"
     echo "http://${server_ip}:${port}/sub/${sub_uuid}"
 }
 
@@ -3492,9 +3478,12 @@ print_reality_key() {
 
 append_jh() {
     # 只写纯文本到聚合文件，禁止任何颜色码污染订阅
-    # 用 echo -e 是为了支持变量里自带的 \n 换行
-    echo -e "$1" >> "$SINGBOX_FOLDER_PATH/jh.txt"
+    # ❗ 用 printf '%s\n' 而非 echo -e：防止节点名/域名里带 \n、\x.. 时被解释成转义注入订阅内容
+    printf '%s\n' "$1" >> "$SINGBOX_FOLDER_PATH/jh.txt"
 }
+
+# 节点名称片段统一做 URL 编码（防空格/#/?/& 等特殊字符破坏链接，同时防换行污染订阅）
+node_frag() { url_encode_component "$1"; }
 
 url_encode_component() {
     local s="${1:-}"
@@ -3656,7 +3645,8 @@ regenerate_links_and_sub() {
     rm -rf "$SINGBOX_FOLDER_PATH/jh.txt"
     uuid=$(cat "$SINGBOX_FOLDER_PATH/uuid")
     server_ip=$(cat "$SINGBOX_FOLDER_PATH/server_ip" 2> /dev/null)
-    sxname=$(cat "$SINGBOX_FOLDER_PATH/name" 2> /dev/null)
+    # 清洗 name（去掉 CR/LF，防跨行注入订阅）
+    sxname=$(cat "$SINGBOX_FOLDER_PATH/name" 2> /dev/null | tr -d '\r\n')
 
     echo "*********************************************************"
     purple "Singbox脚本输出节点配置如下："
@@ -3666,7 +3656,7 @@ regenerate_links_and_sub() {
         port_hy2=$(cat "$SINGBOX_FOLDER_PATH/port_hy2")
         hy_sni=$(cat "$SINGBOX_FOLDER_PATH/hy_sni")
         SHA256_hy2=$(openssl x509 -in "$SINGBOX_FOLDER_PATH/cert.pem" -outform DER 2>/dev/null | sha256sum | awk '{print $1}')
-        hy2_link="hysteria2://$uuid@$server_ip:$port_hy2/?sni=${hy_sni}&insecure=1&pinSHA256=${SHA256_hy2}&alpn=h3&obfs=none#${sxname}hy2-$hostname"
+        hy2_link="hysteria2://$uuid@$server_ip:$port_hy2/?sni=${hy_sni}&insecure=1&pinSHA256=${SHA256_hy2}&alpn=h3&obfs=none#$(node_frag "${sxname}hy2-${hostname}")"
         yellow "🎯【 Hysteria2 】(直连协议)"
         green "$hy2_link"
         append_jh "$hy2_link"
@@ -3679,7 +3669,7 @@ regenerate_links_and_sub() {
         tu_sni=$(cat "$SINGBOX_FOLDER_PATH/tu_sni")
         password=$uuid
 
-        tuic_link="tuic://${uuid}:${password}@${server_ip}:${port_tu}?sni=${tu_sni}&congestion_control=bbr&security=tls&udp_relay_mode=native&alpn=h3&allow_insecure=1#${sxname}tuic-$hostname"
+        tuic_link="tuic://${uuid}:${password}@${server_ip}:${port_tu}?sni=${tu_sni}&congestion_control=bbr&security=tls&udp_relay_mode=native&alpn=h3&allow_insecure=1#$(node_frag "${sxname}tuic-${hostname}")"
         yellow "🎯【 TUIC 】(直连协议)"
         green "$tuic_link"
         append_jh "$tuic_link"
@@ -3694,7 +3684,7 @@ regenerate_links_and_sub() {
 
         debug_log "【调试】regenerate_links_and_sub函数中的short_id,值为:$short_id"
 
-        vless_link="vless://${uuid}@${server_ip}:${port_vlr}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${vl_sni}&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#${sxname}vless-reality-$hostname"
+        vless_link="vless://${uuid}@${server_ip}:${port_vlr}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${vl_sni}&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#$(node_frag "${sxname}vless-reality-${hostname}")"
         yellow "🎯【 VLESS-Reality-Vision 】(直连协议)"
         green "$vless_link"
         append_jh "$vless_link"
@@ -3708,7 +3698,7 @@ regenerate_links_and_sub() {
         port_any=$(cat "$SINGBOX_FOLDER_PATH/port_any")
         any_sni=$(cat "$SINGBOX_FOLDER_PATH/any_sni")
 
-        anytls_link="anytls://${uuid}@${server_ip}:${port_any}?security=tls&sni=${any_sni}&fp=firefox&insecure=1&allowInsecure=1&type=tcp#${sxname}anytls-$hostname"
+        anytls_link="anytls://${uuid}@${server_ip}:${port_any}?security=tls&sni=${any_sni}&fp=firefox&insecure=1&allowInsecure=1&type=tcp#$(node_frag "${sxname}anytls-${hostname}")"
         yellow "🔐【 AnyTLS 】(直连协议)"
         green "$anytls_link"
         append_jh "$anytls_link"
@@ -3729,16 +3719,16 @@ regenerate_links_and_sub() {
         vlvm=$(cat "$SINGBOX_FOLDER_PATH/vlvm" 2> /dev/null)
         uuid=$(cat "$SINGBOX_FOLDER_PATH/uuid")
         if [ "$vlvm" = "Vmess" ]; then
-            vmatls_link1="vmess://$(printf '%s' "{\"v\":\"2\",\"ps\":\"${sxname}vmess-ws-tls-argo-$hostname-${cdn_pt}\",\"add\":\"${cdn_host}\",\"port\":\"${cdn_pt}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":\"$argodomain\",\"path\":\"/${uuid}-vm\",\"tls\":\"tls\",\"sni\":\"$argodomain\"}" | base64 | tr -d '\n\r')"
+            vmatls_link1="vmess://$(printf '%s' "{\"v\":\"2\",\"ps\":$(json_escape_string "${sxname}vmess-ws-tls-argo-${hostname}-${cdn_pt}"),\"add\":$(json_escape_string "${cdn_host}"),\"port\":\"${cdn_pt}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":$(json_escape_string "${argodomain}"),\"path\":\"/${uuid}-vm\",\"tls\":\"tls\",\"sni\":$(json_escape_string "${argodomain}")}" | base64 | tr -d '\n\r')"
 
             vlessws_link1=""
             tratls_link1=""
         elif [ "$vlvm" = "Trojan" ]; then
-            tratls_link1="trojan://${uuid}@${cdn_host}:${cdn_pt}?security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-tr&sni=${argodomain}&fp=chrome#${sxname}trojan-ws-tls-argo-$hostname-${cdn_pt}"
+            tratls_link1="trojan://${uuid}@${cdn_host}:${cdn_pt}?security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-tr&sni=${argodomain}&fp=chrome#$(node_frag "${sxname}trojan-ws-tls-argo-${hostname}-${cdn_pt}")"
             vmatls_link1=""
             vlessws_link1=""
         elif [ "$vlvm" = "Vless" ]; then
-            vlessws_link1="vless://${uuid}@${cdn_host}:${cdn_pt}?encryption=none&security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-vl&sni=${argodomain}&fp=chrome#${sxname}vless-ws-tls-argo-$hostname-${cdn_pt}"
+            vlessws_link1="vless://${uuid}@${cdn_host}:${cdn_pt}?encryption=none&security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-vl&sni=${argodomain}&fp=chrome#$(node_frag "${sxname}vless-ws-tls-argo-${hostname}-${cdn_pt}")"
             vmatls_link1=""
             tratls_link1=""
         fi
@@ -3772,7 +3762,7 @@ regenerate_links_and_sub() {
 
         socks5_user_enc=$(url_encode_component "$socks5_username")
         socks5_pass_enc=$(url_encode_component "$socks5_password")
-        socks5_link="socks5://${socks5_user_enc}:${socks5_pass_enc}@${server_ip}:${port_socks5}#${sxname}socks5-$hostname"
+        socks5_link="socks5://${socks5_user_enc}:${socks5_pass_enc}@${server_ip}:${port_socks5}#$(node_frag "${sxname}socks5-${hostname}")"
         yellow "🧦【 Socks5 】(此协议请不要直接在客户端里直连使用)"
         green "$socks5_link"
         local _wl_flag_val=""
@@ -3794,6 +3784,9 @@ regenerate_links_and_sub() {
     fi
 
     update_subscription_file
+
+    # jh.txt 内含全部节点口令，收紧权限
+    chmod 600 "$SINGBOX_FOLDER_PATH/jh.txt" 2>/dev/null || true
 }
 
 # SNI/端口等配置修改后统一调用：先刷新订阅，最后重启 sing-box 使新配置生效
@@ -3842,11 +3835,14 @@ cleandel() {
 
     # 处理 crontab，兼容 Debian 和 Alpine
     white "  ▸ 清理定时任务..."
-    crontab -l > /tmp/crontab.tmp 2> /dev/null || touch /tmp/crontab.tmp
-    sed -i '/.*singbox.*/d' /tmp/crontab.tmp
-    sed -i '/.*agsb.*/d' /tmp/crontab.tmp
-    crontab /tmp/crontab.tmp > /dev/null 2>&1
-    rm /tmp/crontab.tmp
+    # 用 mktemp 避免固定路径 /tmp/crontab.tmp 被本地用户 symlink 劫持
+    local ct_tmp
+    ct_tmp="$(mktemp /tmp/crontab.XXXXXX 2> /dev/null)" || ct_tmp="/tmp/crontab.tmp.$$"
+    crontab -l > "$ct_tmp" 2> /dev/null || : > "$ct_tmp"
+    sed -i '/.*singbox.*/d' "$ct_tmp"
+    sed -i '/.*agsb.*/d' "$ct_tmp"
+    crontab "$ct_tmp" > /dev/null 2>&1
+    rm -f "$ct_tmp"
 
     # 删除快捷命令（兼容两个名称）
     if [ -d "$HOME/bin/singbox" ]; then
@@ -4094,7 +4090,12 @@ install_step() {
 
     debug_log "【调试】安装各种乱七八糟的依赖完成"
 
-    setenforce 0 > /dev/null 2>&1
+    # ⚠️ SELinux 处理：仅在 SELinux 处于 Enforcing 时才临时禁用它，并明确提示用户（不写入配置文件）
+    if command -v getenforce > /dev/null 2>&1 && [ "$(getenforce 2>/dev/null)" = "Enforcing" ]; then
+        yellow "⚠️ 检测到 SELinux 为 Enforcing，为兼容 sing-box 端口绑定，本脚本将临时执行 setenforce 0"
+        yellow "   （仅本次生效，重启后恢复；如不希望关闭请先自行处理 SELinux 策略）"
+        setenforce 0 > /dev/null 2>&1 || red "⚠️ setenforce 0 执行失败，请手动处理 SELinux，否则端口可能被拦截"
+    fi
     flush_singbox_iptables_rules
 
     _save_iptables_rules
@@ -4183,6 +4184,21 @@ check_port_conflicts_or_exit() {
         echo
         exit 1
     fi
+
+    # ⚠️ 系统已监听端口检测（非阻断，仅提示）：ss 可用时，确认端口没被其他进程占用
+    #     本脚本栈自带的 sing-box/cloudflared/nginx 监听不算冲突（rep 覆盖安装前旧实例还在，马上会被清理）
+    if command -v ss > /dev/null 2>&1; then
+        local p_check _tcp _udp
+        for p_check in "${!used[@]}"; do
+            _tcp="$(ss -ltnp 2>/dev/null | grep -E "[:.]${p_check} " | head -n1)"
+            _udp="$(ss -ulnp 2>/dev/null | grep -E "[:.]${p_check} " | head -n1)"
+            [ -z "$_tcp" ] && [ -z "$_udp" ] && continue
+            if [ -n "$_tcp" ] && printf '%s' "$_tcp" | grep -qE 'sing-box|cloudflared|nginx'; then _tcp=""; fi
+            if [ -n "$_udp" ] && printf '%s' "$_udp" | grep -qE 'sing-box|cloudflared|nginx'; then _udp=""; fi
+            [ -z "$_tcp" ] && [ -z "$_udp" ] && continue
+            yellow "⚠️ 端口 ${p_check}（${used[$p_check]}）当前已被其他进程监听，安装后可能无法绑定"
+        done
+    fi
 }
 # ================== 端口冲突检测 END ================
 
@@ -4191,6 +4207,12 @@ check_port_conflicts_or_exit() {
 
 reading() {
     read -r -p "$(yellow "$1")" "$2"
+}
+
+# 静默输入（用于 token / 密码 / 私钥，防终端回显与 shoulder-surfing）
+reading_secret() {
+    read -r -s -p "$(yellow "$1")" "$2"
+    echo >&2
 }
 
 is_installed_sb() {
@@ -4626,7 +4648,7 @@ menu_collect_install() {
             reading "  请输入 Argo 域名: " _ans
             [ -n "$_ans" ] && export ARGO_DOMAIN="$_ans"
             green "  ↳ Argo 域名: ${ARGO_DOMAIN:-未设置}"
-            reading "  请输入 Argo Token 或粘贴 JSON 凭据: " _ans
+            reading_secret "  请输入 Argo Token 或粘贴 JSON 凭据（输入不回显）: " _ans
             [ -n "$_ans" ] && export ARGO_AUTH="$_ans"
             green "  ↳ Argo Token/JSON: 已设置"
         fi
@@ -4652,7 +4674,7 @@ menu_collect_install() {
     # VLESS 才询问 reality_private
     if [ -n "$vlr" ]; then
         echo ""
-        reading "reality_private (回车=自动生成): " _ans
+        reading_secret "reality_private (回车=自动生成): " _ans
         if [ -n "$_ans" ]; then
             export reality_private="$_ans"
             green "  ↳ reality_private: 已输入"
@@ -5173,15 +5195,23 @@ edit_argo_menu() {
             1)
                 reading "请输入 Argo 域名: " _d
                 [ -z "$_d" ] && { red "❌ 域名不能为空"; menu_pause; continue; }
-                reading "请输入 Argo Token 或粘贴 JSON 凭据: " _a
+                if ! is_valid_domain "$_d"; then
+                    red "❌ 域名非法（只能含字母/数字/'-'/'.'）：${_d}"; menu_pause; continue
+                fi
+                reading_secret "请输入 Argo Token 或粘贴 JSON 凭据: " _a
                 [ -z "$_a" ] && { red "❌ Token/JSON 不能为空"; menu_pause; continue; }
-                echo "$_d" > "$SINGBOX_FOLDER_PATH/argo_domain"
                 rm -f "$SINGBOX_FOLDER_PATH/tunnel.yml" "$SINGBOX_FOLDER_PATH/tunnel.json" "$SINGBOX_FOLDER_PATH/sbargotoken"
-                prepare_argo_credentials "$_a" "$_d" "$(cat "$SINGBOX_FOLDER_PATH/argoport" 2>/dev/null)"
+                # 先校验（含域名/凭据格式），通过后再落盘，避免失败时留下不一致状态
+                if ! prepare_argo_credentials "$_a" "$_d" "$(cat "$SINGBOX_FOLDER_PATH/argoport" 2>/dev/null)"; then
+                    red "❌ Argo 凭据校验失败，未切换"; menu_pause; continue
+                fi
+                echo "$_d" > "$SINGBOX_FOLDER_PATH/argo_domain"
+                chmod 600 "$SINGBOX_FOLDER_PATH/argo_domain" 2>/dev/null || true
                 if [ "$ARGO_MODE" = "json" ]; then
                     echo "" > /dev/null
                 elif [ "$ARGO_MODE" = "token" ]; then
                     echo "$_a" > "$SINGBOX_FOLDER_PATH/sbargotoken"
+                    chmod 600 "$SINGBOX_FOLDER_PATH/sbargotoken" 2>/dev/null || true
                 fi
                 argorestart
                 green "✅ 切换固定 Argo 隧道操作已完成！"
@@ -5195,7 +5225,7 @@ edit_argo_menu() {
                 ;;
             3)
                 pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null
-                [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ] && pkill -15 -f "cloudflared" 2> /dev/null
+                [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ] && pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null
                 rm -f "$SINGBOX_FOLDER_PATH/tunnel.yml" "$SINGBOX_FOLDER_PATH/tunnel.json" "$SINGBOX_FOLDER_PATH/sbargotoken" "$SINGBOX_FOLDER_PATH/argo_domain" "$LOGS_DIR/argo.log"
                 green "✅ 取消使用 Argo 隧道操作已完成！"
                 menu_pause
@@ -5461,37 +5491,6 @@ interactive_log_menu() {
         reading "显示最近行数 (默认100): " _lines
         show_log_file "$_log" "$_title" "$_hint" "$_lines"
         menu_pause
-    done
-}
-
-# ⚠️ DEPRECATED（已废弃）：一级菜单已直接提供「卸载全部并清理 (delall)」，此子菜单不再被调用，保留供参考/兼容。
-interactive_uninstall_menu() {
-    local _ch _ans
-    while true; do
-        clear
-        green "========= [8] 卸载 ========="
-        red "  1) 卸载 (保留 sing-box/cloudflared 二进制)"
-        red "  2) 彻底卸载 (全部删除)"
-        purple "  0) 返回主菜单"
-        reading "请输入选择: " _ch
-        case "$_ch" in
-            0) return ;;
-            1)
-                reading "确认卸载? (y/N): " _ans
-                if [ "$_ans" = "y" ] || [ "$_ans" = "Y" ]; then
-                    cleandel
-                    green "✅ 卸载完成"
-                fi
-                menu_pause ;;
-            2)
-                reading "确认彻底卸载? (y/N): " _ans
-                if [ "$_ans" = "y" ] || [ "$_ans" = "Y" ]; then
-                    cleandel delall
-                    green "✅ 已彻底卸载"
-                fi
-                menu_pause ;;
-            *) yellow "无效选项"; sleep 1 ;;
-        esac
     done
 }
 
