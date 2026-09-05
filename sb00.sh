@@ -4187,16 +4187,15 @@ check_port_conflicts_or_exit() {
     fi
 
     # ⚠️ 系统已监听端口检测（非阻断，仅提示）：ss 可用时，确认端口没被其他进程占用
-    #     sing-box 自身监听的端口（rep/重装场景旧实例还在）不算冲突
+    #     本脚本栈自带的 sing-box/cloudflared/nginx 监听不算冲突（rep 覆盖安装前旧实例还在，马上会被清理）
     if command -v ss > /dev/null 2>&1; then
         local p_check _tcp _udp
         for p_check in "${!used[@]}"; do
             _tcp="$(ss -ltnp 2>/dev/null | grep -E "[:.]${p_check} " | head -n1)"
             _udp="$(ss -ulnp 2>/dev/null | grep -E "[:.]${p_check} " | head -n1)"
             [ -z "$_tcp" ] && [ -z "$_udp" ] && continue
-            # sing-box 自身监听不算冲突（rep 覆盖安装前旧实例还在）
-            if [ -n "$_tcp" ] && printf '%s' "$_tcp" | grep -q 'sing-box'; then _tcp=""; fi
-            if [ -n "$_udp" ] && printf '%s' "$_udp" | grep -q 'sing-box'; then _udp=""; fi
+            if [ -n "$_tcp" ] && printf '%s' "$_tcp" | grep -qE 'sing-box|cloudflared|nginx'; then _tcp=""; fi
+            if [ -n "$_udp" ] && printf '%s' "$_udp" | grep -qE 'sing-box|cloudflared|nginx'; then _udp=""; fi
             [ -z "$_tcp" ] && [ -z "$_udp" ] && continue
             yellow "⚠️ 端口 ${p_check}（${used[$p_check]}）当前已被其他进程监听，安装后可能无法绑定"
         done

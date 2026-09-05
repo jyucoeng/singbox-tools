@@ -591,7 +591,7 @@ v1.0.30 (2026-09-05)
  - **Bug 修复**
  - 修复 Alpine(openrc) `sb autostart` 生成损坏的 init 脚本：heredoc 内 `${name}`/`$command`/`$pidfile`/`$command_args`/`$?` 被 bash 提前展开为空，start/stop 全部失效
  - 随机端口避开已在监听的 TCP/UDP 端口（ss 检测 + 最多重试 20 次）
- - 端口冲突检查新增"系统已监听端口"提示（sing-box 自身监听、即 rep 覆盖安装前旧实例，不算冲突）
+ - 端口冲突检查新增"系统已监听端口"提示（本脚本栈自带的 sing-box/cloudflared/nginx 监听不计为冲突，避免 rep 覆盖安装时旧实例被误报）
  - 节点链接 fragment 统一 URL 编码：`name` 中的空格 / `#` / `?` / `&` 不再破坏链接；vmess 节点的 `ps`/`add`/`host`/`sni` 字段做 JSON 转义
  - `append_jh` 改用 `printf` 写订阅文件，防 `\n`/`\x` 转义注入订阅内容；节点名清洗掉 CR/LF
  - 删除死代码：`setup_warp_config` / `singbox_status` / `interactive_uninstall_menu`
