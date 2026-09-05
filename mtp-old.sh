@@ -199,6 +199,11 @@ install_base_deps() {
     # Temporary array to store missing dependencies
     MISSING_DEPS=()
 
+    # apt 在全新 minimal 镜像上必须先 update 索引，否则首个 install 直接失败
+    if [[ "$PACKAGE_MANAGER" == "apt" ]]; then
+        apt-get update -y
+    fi
+
     # Check and install dependencies
     for dep in "${REQUIRED_DEPS[@]}"; do
         if ! command -v "$dep" &> /dev/null; then
