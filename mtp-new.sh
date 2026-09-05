@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_VERSION="2.0.1(2026-08-06)"
+SCRIPT_VERSION="2.0.2(2026-09-05)"
 SCRIPT_AUTHOR="LittleDoraemon"
 
 # 全局配置
@@ -2038,6 +2038,14 @@ use_middle_proxy = false
 classic = false
 secure = false
 tls = true
+
+$(if [ "$IP_MODE" = "dual" ] || [ "$IP_MODE" = "v6" ]; then echo "
+# === IPv6 监听开关 ===
+# telemt 默认禁用 IPv6 (DEFAULT_NETWORK_IPV6=Some(false))，v6/dual 模式下必须显式开启，
+# 否则上面 [[server.listeners]] 中的 \"::\" 会被跳过，IPv6 链接将无法连通。
+[network]
+ipv6 = true
+"; fi)
 
 # === Server Binding ===
 [server]
