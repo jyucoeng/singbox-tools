@@ -1,4 +1,3 @@
-
 #!/bin/bash
 # sing-box socks5 脚本
 # - 固定 sing-box 版本
@@ -144,11 +143,13 @@ handle_params() {
       fi
     fi
 
-    if ! [[ "$PORT" =~ ^[0-9]+$ ]] || ((PORT < 1 || PORT > 65535)); then
+    if ! [[ "$PORT" =~ ^[0-9]+$ ]] || ((10#$PORT < 1 || 10#$PORT > 65535)); then
       red "❌ 端口必须是 1-65535 的数字"
       PORT=""
       continue
     fi
+    # 规范化（去掉前导零，避免 080 之类被当作八进制/写入非法 JSON）
+    PORT=$((10#$PORT))
 
     if ! check_port_free "$PORT"; then
       if [[ "$NON_INTERACTIVE" == "1" ]]; then
@@ -363,6 +364,10 @@ show_node() {
   if [[ -n "$IP_V6" ]]; then
     yellow "IPv6: socks5://[${IP_V6}]:$PORT"
   fi
+
+  echo
+  red "⚠️  安全提示：本服务【无任何认证】且监听所有网卡（含公网），任何人扫到即可白嫖或滥用你的服务器流量，"
+  red "   并可能导致服务器 IP 被第三方拉黑。强烈建议改用带认证的 socks5.sh，或自行配置防火墙仅放行可信 IP。"
 
   print_manage_commands
 }

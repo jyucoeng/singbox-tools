@@ -53,7 +53,9 @@ blue(){ echo -e "\e[1;34m$1\033[0m"; }
 # 工具函数
 ########################
 gen_username() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c 10; }
-gen_password() { tr -dc 'A-Za-z0-9!@#%^_+' </dev/urandom | head -c 12; }
+# 注意：字符集不能含 @ 和 # —— 密码会以 socks5://user:pass@ip:port URI 形式输出，
+# @ 破坏 userinfo 分隔、# 触发 URI fragment 截断，导致展示的节点链接不可用
+gen_password() { tr -dc 'A-Za-z0-9!%^_+' </dev/urandom | head -c 12; }
 
 ########################
 # 端口检测（多方案兜底）
@@ -139,11 +141,13 @@ handle_params() {
       fi
     fi
 
-    if ! [[ "$PORT" =~ ^[0-9]+$ ]] || ((PORT < 1 || PORT > 65535)); then
+    if ! [[ "$PORT" =~ ^[0-9]+$ ]] || ((10#$PORT < 1 || 10#$PORT > 65535)); then
       red "❌ 端口必须是 1-65535 的数字"
       PORT=""
       continue
     fi
+    # 规范化（去掉前导零，避免 080 之类被当作八进制/写入非法 JSON）
+    PORT=$((10#$PORT))
 
     if ! check_port_free "$PORT"; then
       if [[ "$NON_INTERACTIVE" == "1" ]]; then
@@ -255,18 +259,19 @@ install_singbox() {
 ########################
 generate_config() {
   mkdir -p "$INSTALL_DIR"
-  cat > "$CONFIG_FILE" <<EOF
-{
-  "log": { "level": "info", "output": "$LOG_FILE" },
-  "inbounds": [{
-    "type": "socks",
-    "listen": "::",
-    "listen_port": $PORT,
-    "users": [{ "username": "$USERNAME", "password": "$PASSWORD" }]
-  }],
-  "outbounds": [{ "type": "direct" }]
-}
-EOF
+  # 用 jq 生成 JSON：用户名/密码来自用户输入，直接内插进 heredoc 会因引号等特殊字符产生非法 JSON
+  jq -n --arg log "$LOG_FILE" --arg port "$PORT" --arg user "$USERNAME" --arg pass "$PASSWORD" '{
+    log: { level: "info", output: $log },
+    inbounds: [{
+      type: "socks",
+      listen: "::",
+      listen_port: ($port | tonumber),
+      users: [{ username: $user, password: $pass }]
+    }],
+    outbounds: [{ type: "direct" }]
+  }' > "$CONFIG_FILE"
+  # 配置内含 socks5 账号密码，禁止其他用户读取
+  chmod 600 "$CONFIG_FILE" 2>/dev/null || true
 }
 
 ########################
