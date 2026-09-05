@@ -654,6 +654,9 @@ ensure_singbox_shortcut() {
 
     mkdir -p "$SINGBOX_FOLDER_PATH" "$HOME/.local/bin" "$HOME/bin"
 
+    # 确保 wrapper 优先使用的本地脚本副本存在（无副本时 wrapper 只能在线拉取）
+    install_local_script_copy
+
     # ✅ wrapper：优先本地脚本，否则在线拉取脚本（curl/wget 二选一，兼容 Alpine）
     cat > "$wrapper" << EOF
 #!/usr/bin/env bash
@@ -752,10 +755,61 @@ cleanup_singbox_shortcut() {
 }
 
 # 创建 sb 快捷命令（参照 lwsb.sh 的 /usr/bin/sb：本地脚本优先，否则在线拉取）
+# 将当前脚本落盘为本地副本（快捷命令优先执行它，避免每次都以 root 在线 curl|bash 未校验代码）
+# 用法: install_local_script_copy [force]；force=安装/重装时强制刷新副本
+install_local_script_copy() {
+    local force="${1:-}"
+    local dest="$SINGBOX_FOLDER_PATH/sb.sh"
+    mkdir -p "$SINGBOX_FOLDER_PATH" 2>/dev/null
+
+    local marker='SCRIPT_URL='
+    local src=""
+
+    # 1) 优先从磁盘上的脚本文件复制（本地路径运行时），无网络依赖
+    local self_path
+    self_path="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+    if [ -f "$self_path" ] && [ -s "$self_path" ] && grep -q '^SCRIPT_URL=' "$self_path" 2>/dev/null; then
+        src="$self_path"
+    fi
+
+    # 2) 管道方式运行（bash <(curl ...)，$0 为 /dev/fd/*）：从官方地址下载一份
+    if [ -z "$src" ]; then
+        local _tmp="$SINGBOX_FOLDER_PATH/.sb.sh.tmp"
+        if command -v curl >/dev/null 2>&1; then
+            curl -fsSL --connect-timeout 10 -o "$_tmp" "$SCRIPT_URL" 2>/dev/null || rm -f "$_tmp"
+        elif command -v wget >/dev/null 2>&1; then
+            wget -qO "$_tmp" "$SCRIPT_URL" 2>/dev/null || rm -f "$_tmp"
+        fi
+        # 校验下载内容确为本脚本（含关键标记），防止把错误页/半截文件当作脚本
+        if [ -s "$_tmp" ] && grep -q '^SCRIPT_URL=' "$_tmp" 2>/dev/null && grep -q 'SINGBOX_FOLDER_PATH=' "$_tmp" 2>/dev/null; then
+            src="$_tmp"
+        else
+            rm -f "$_tmp" 2>/dev/null
+        fi
+    fi
+
+    if [ -n "$src" ]; then
+        cp -f "$src" "$dest" 2>/dev/null && chmod +x "$dest" 2>/dev/null && {
+            green " ✅ 已保存脚本本地副本：$dest（快捷命令优先使用它，不再每次在线拉取）"
+            return 0
+        }
+    fi
+
+    # 落盘失败时保留已有副本（若有），并明确提示
+    if [ -s "$dest" ] && grep -q "$marker" "$dest" 2>/dev/null; then
+        yellow " ⚠️ 刷新脚本本地副本失败，快捷命令继续使用旧副本：$dest"
+    else
+        yellow " ⚠️ 未能保存脚本本地副本，快捷命令将退化为每次在线拉取模式"
+    fi
+    return 0
+}
+
 ensure_sb_shortcut() {
     local sbw="$SINGBOX_FOLDER_PATH/sb-cmd"
 
     mkdir -p "$SINGBOX_FOLDER_PATH" 2> /dev/null || true
+    # 生成/刷新本地脚本副本（安装与重装时强制刷新，保持与最新安装版本一致）
+    install_local_script_copy force
     cat > "$sbw" << EOF
 #!/usr/bin/env bash
 set -e
@@ -1056,7 +1110,10 @@ gen_uuid() {
     [ -z "$_g" ] && _g="$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]')"
     if [ -z "$_g" ]; then
         _g="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
-        _g="${_g:0:8}-${_g:8:4}-4${_g:13:3}-${_g:17:4}-${_g:21:12}"
+        # 标准 UUID v4：版本位=4，变体位限定为 8/9/a/b；下标必须恰好覆盖 32 个 hex 字符
+        local _v="${_g:16:1}"
+        case "$_v" in 8|9|a|b) ;; *) _v="8" ;; esac
+        _g="${_g:0:8}-${_g:8:4}-4${_g:13:3}-${_v}${_g:17:3}-${_g:20:12}"
     fi
     printf '%s' "$_g"
 }
@@ -1150,6 +1207,47 @@ _save_iptables_rules() {
     if [[ "$os_name" == *"Debian"* || "$os_name" == *"Ubuntu"* ]]; then
         command -v netfilter-persistent > /dev/null 2>&1 && netfilter-persistent save 2>/dev/null
     fi
+    # 生成仅包含本脚本规则的恢复脚本（供 sb.service 开机/重启时调用）
+    _write_iptables_rules_script
+}
+
+# 生成本脚本专属的防火墙规则恢复脚本
+# 说明：sb.service 不再在 ExecStartPre 中整表 iptables-restore（那会把 Docker/ufw/fail2ban 等
+# 安装之后发生的防火墙变更一并回滚），改为只按 --comment 标记精确恢复本脚本自己的规则
+_write_iptables_rules_script() {
+    mkdir -p "$SINGBOX_FOLDER_PATH" 2>/dev/null
+    local _script="$SINGBOX_FOLDER_PATH/apply-iptables.sh"
+    {
+        echo '#!/bin/sh'
+        cat <<'EOS'
+# 由 sb.sh 自动生成：开机/服务重启时仅恢复本脚本添加的防火墙规则（按 --comment 标记识别），
+# 不做整表 iptables-restore，不会影响机器上的其他防火墙规则。
+del_by_cmt() {
+    _cmt="$1"; IPT="iptables"; [ "$2" = "6" ] && IPT="ip6tables"
+    command -v $IPT >/dev/null 2>&1 || return 0
+    while :; do
+        _ln=$($IPT -L INPUT -n --line-numbers 2>/dev/null | grep -w "$_cmt" | head -1 | awk '{print $1}')
+        [ -n "$_ln" ] || break
+        $IPT -D INPUT "$_ln" 2>/dev/null || break
+    done
+}
+EOS
+        echo "del_by_cmt $IPTABLES_COMMENT_SINGBOX ''"
+        echo "del_by_cmt $IPTABLES_COMMENT_SOCKS5 ''"
+        echo "del_by_cmt $IPTABLES_COMMENT_SINGBOX 6"
+        echo "del_by_cmt $IPTABLES_COMMENT_SOCKS5 6"
+        # 回放生成时刻本脚本已添加的规则（与 apply_* 系列函数产出的实时规则一致，幂等）
+        if command -v iptables >/dev/null 2>&1; then
+            iptables -S INPUT 2>/dev/null | grep -F -- "--comment $IPTABLES_COMMENT_SINGBOX" | sed 's/^-A /iptables -A /'
+            iptables -S INPUT 2>/dev/null | grep -F -- "--comment $IPTABLES_COMMENT_SOCKS5"    | sed 's/^-A /iptables -A /'
+        fi
+        if command -v ip6tables >/dev/null 2>&1; then
+            ip6tables -S INPUT 2>/dev/null | grep -F -- "--comment $IPTABLES_COMMENT_SINGBOX" | sed 's/^-A /ip6tables -A /'
+            ip6tables -S INPUT 2>/dev/null | grep -F -- "--comment $IPTABLES_COMMENT_SOCKS5"  | sed 's/^-A /ip6tables -A /'
+        fi
+        echo 'exit 0'
+    } > "$_script" 2>/dev/null
+    chmod +x "$_script" 2>/dev/null || true
 }
 
 # 为所有 sing-box 协议端口添加 iptables ACCEPT 规则（通过 --comment 标记识别）
@@ -1308,6 +1406,7 @@ prepare_argo_credentials() {
         # 写入 tunnel.json
         #❗ 如果 ARGO_AUTH 里的 JSON 含有 \n、\r、\uXXXX 之类，echo 在某些 shell/实现里可能会解释转义，导致 tunnel.json 内容被破坏。 改法：用 printf 更可靠
         printf '%s' "$auth" > "$SINGBOX_FOLDER_PATH/tunnel.json"
+        chmod 600 "$SINGBOX_FOLDER_PATH/tunnel.json" 2>/dev/null || true
         debug_log "【调试】prepare_argo_credentials：tunnel.json 已写入（大小=$(wc -c "$SINGBOX_FOLDER_PATH/tunnel.json" 2> /dev/null | awk '{print $1}') 字节）"
 
         # 提取 TunnelID
@@ -1579,6 +1678,7 @@ insuuid() {
     elif [ -n "$uuid" ]; then
         echo "$uuid" > "$SINGBOX_FOLDER_PATH/uuid"
     fi
+    chmod 600 "$SINGBOX_FOLDER_PATH/uuid" 2>/dev/null || true
     uuid=$(cat "$SINGBOX_FOLDER_PATH/uuid")
     yellow "UUID密码：$uuid"
 }
@@ -1675,9 +1775,10 @@ derive_reality_public_key() {
     # 私钥为空直接失败
     [ -z "$priv" ] && return 1
 
-    # 1) 优先本地推导（openssl + xxd）
-    if command -v xxd > /dev/null 2>&1 && command -v openssl > /dev/null 2>&1; then
-        debug_log "🔐 【调试】 derive_reality_public_key: 使用【本地推导】(openssl + xxd)"
+    # 本地推导（仅需 openssl）。注意：绝不将私钥发送到任何在线服务——
+    # 私钥即节点身份凭据，作为 URL 参数发给第三方会进入其访问日志
+    if command -v openssl > /dev/null 2>&1; then
+        debug_log "🔐 【调试】 derive_reality_public_key: 使用【本地推导】(openssl)"
 
         local tmp_dir="$SINGBOX_FOLDER_PATH/.tmp_reality"
         mkdir -p "$tmp_dir" 2> /dev/null
@@ -1719,73 +1820,43 @@ derive_reality_public_key() {
                     debug_log "❗ 【调试】 derive_reality_public_key: 本地解码后长度不为 32 bytes（实际=${priv_len}）"
                     rm -f "$tmp_dir/_x25519_priv_raw" 2> /dev/null
                 else
-                    # PKCS#8 DER 前缀（X25519 固定头）
-                    local prefix_hex="302e020100300506032b656e04220420"
-                    local priv_hex
-                    priv_hex="$(xxd -p -c 256 "$tmp_dir/_x25519_priv_raw" 2> /dev/null | tr -d '\n')"
+                    # 手工构造 X25519 私钥的 PKCS#8 DER 封装（16 字节固定前缀 + 32 字节私钥），
+                    # 不依赖 xxd（精简系统/Alpine 常缺该命令）
+                    if { printf '\x30\x2e\x02\x01\x00\x30\x05\x06\x03\x2b\x65\x6e\x04\x22\x04\x20'; cat "$tmp_dir/_x25519_priv_raw"; } > "$tmp_dir/_x25519_priv_der" 2> /dev/null \
+                        && openssl pkey -inform DER -in "$tmp_dir/_x25519_priv_der" -pubout -outform DER > "$tmp_dir/_x25519_pub_der" 2> /dev/null \
+                        && tail -c 32 "$tmp_dir/_x25519_pub_der" > "$tmp_dir/_x25519_pub_raw" 2> /dev/null; then
 
-                    if [ -n "$priv_hex" ]; then
-                        printf "%s%s" "$prefix_hex" "$priv_hex" | xxd -r -p > "$tmp_dir/_x25519_priv_der" 2> /dev/null || true
-
-                        if openssl pkcs8 -inform DER -in "$tmp_dir/_x25519_priv_der" -nocrypt -out "$tmp_dir/_x25519_priv_pem" 2> /dev/null \
-                            && openssl pkey -in "$tmp_dir/_x25519_priv_pem" -pubout -outform DER > "$tmp_dir/_x25519_pub_der" 2> /dev/null \
-                            && tail -c 32 "$tmp_dir/_x25519_pub_der" > "$tmp_dir/_x25519_pub_raw" 2> /dev/null; then
-
-                            # raw 公钥 -> base64url（无 padding）
-                            if command -v base64 > /dev/null 2>&1; then
-                                pub="$(base64 < "$tmp_dir/_x25519_pub_raw" 2> /dev/null | tr -d '\n' | tr '+/' '-_' | sed -E 's/=+$//')"
-                            elif command -v openssl > /dev/null 2>&1; then
-                                pub="$(openssl base64 -A < "$tmp_dir/_x25519_pub_raw" 2> /dev/null | tr '+/' '-_' | sed -E 's/=+$//')"
-                            fi
-
-                            if [ -n "$pub" ]; then
-                                debug_log "✅ 【调试】 derive_reality_public_key: 本地推导成功"
-
-                                # 清理临时文件（可选）
-                                rm -f "$tmp_dir/_x25519_priv_raw" "$tmp_dir/_x25519_priv_der" "$tmp_dir/_x25519_priv_pem" \
-                                    "$tmp_dir/_x25519_pub_der" "$tmp_dir/_x25519_pub_raw" 2> /dev/null
-
-                                echo "$pub"
-                                return 0
-                            else
-                                debug_log "❗ 【调试】 derive_reality_public_key: 本地推导成功但编码公钥失败（缺少 base64 工具？）"
-                            fi
+                        # raw 公钥 -> base64url（无 padding）
+                        if command -v base64 > /dev/null 2>&1; then
+                            pub="$(base64 < "$tmp_dir/_x25519_pub_raw" 2> /dev/null | tr -d '\n' | tr '+/' '-_' | sed -E 's/=+$//')"
                         else
-                            debug_log "❗ 【调试】 derive_reality_public_key: openssl 推导公钥失败（pkcs8/pkey/pubout）"
+                            pub="$(openssl base64 -A < "$tmp_dir/_x25519_pub_raw" 2> /dev/null | tr '+/' '-_' | sed -E 's/=+$//')"
+                        fi
+
+                        if [ -n "$pub" ]; then
+                            debug_log "✅ 【调试】 derive_reality_public_key: 本地推导成功"
+
+                            rm -f "$tmp_dir/_x25519_priv_raw" "$tmp_dir/_x25519_priv_der" \
+                                "$tmp_dir/_x25519_pub_der" "$tmp_dir/_x25519_pub_raw" 2> /dev/null
+
+                            echo "$pub"
+                            return 0
+                        else
+                            debug_log "❗ 【调试】 derive_reality_public_key: 本地推导成功但编码公钥失败（缺少 base64 工具？）"
                         fi
                     else
-                        debug_log "❗ 【调试】 derive_reality_public_key: xxd 读取私钥失败"
+                        debug_log "❗ 【调试】 derive_reality_public_key: openssl 推导公钥失败（pkey/pubout）"
                     fi
                 fi
             fi
         fi
-
-        debug_log "❗ 【调试】 derive_reality_public_key: 本地推导失败，准备在线兜底"
     else
-        debug_log "❗ 【调试】 derive_reality_public_key: 缺少 openssl 或 xxd，本地推导不可用"
+        debug_log "❗ 【调试】 derive_reality_public_key: 缺少 openssl，本地推导不可用"
     fi
 
-    # 2) 在线兜底推导（curl/wget）
-    debug_log "🌐 【调试】 derive_reality_public_key: 使用【在线推导】(realitykey.cloudflare.now.cc)"
-
-    if command -v curl > /dev/null 2>&1; then
-        pub="$(curl -s --max-time 2 "https://realitykey.cloudflare.now.cc/?privateKey=${priv}" \
-            | awk -F '"' '/publicKey/{print $4; exit}')"
-    elif command -v wget > /dev/null 2>&1; then
-        pub="$(wget --no-check-certificate -qO- --tries=3 --timeout=2 "https://realitykey.cloudflare.now.cc/?privateKey=${priv}" \
-            | awk -F '"' '/publicKey/{print $4; exit}')"
-    else
-        debug_log "❗ 【调试】 derive_reality_public_key: curl/wget 都不存在，在线推导不可用"
-        return 1
-    fi
-
-    if [ -n "$pub" ]; then
-        debug_log "✅ 【调试】 derive_reality_public_key: 在线推导成功"
-        echo "$pub"
-        return 0
-    fi
-
-    debug_log "❗ 【调试】 derive_reality_public_key: 在线推导失败（未获取到 publicKey）"
+    rm -f "$tmp_dir/_x25519_priv_raw" "$tmp_dir/_x25519_priv_der" \
+        "$tmp_dir/_x25519_pub_der" "$tmp_dir/_x25519_pub_raw" 2> /dev/null
+    debug_log "❗ 【调试】 derive_reality_public_key: 本地推导失败（为保证私钥不外泄，已不再使用在线推导兜底）"
     return 1
 }
 
@@ -2070,14 +2141,16 @@ installsb() {
 
     # 添加vless-ws协议（Argo 本地使用）
     if [ -n "$vlp" ]; then
-        if [ -z "$port_vl_ws" ] && [ ! -e "$SINGBOX_FOLDER_PATH/port_vl_ws" ] && [ ! -e "$SINGBOX_FOLDER_PATH/port_vm_ws" ]; then
-            port_vl_ws=$(rand_port)
+        if [ -n "$port_vl_ws" ]; then
             echo "$port_vl_ws" > "$SINGBOX_FOLDER_PATH/port_vl_ws"
-        elif [ -n "$port_vl_ws" ]; then
-            echo "$port_vl_ws" > "$SINGBOX_FOLDER_PATH/port_vl_ws"
-        elif [ -s "$SINGBOX_FOLDER_PATH/port_vm_ws" ]; then
-            # 兼容旧版本 vmess 端口文件，升级后复用同一端口
-            port_vl_ws=$(cat "$SINGBOX_FOLDER_PATH/port_vm_ws")
+        elif [ ! -e "$SINGBOX_FOLDER_PATH/port_vl_ws" ]; then
+            if [ -z "$vmp" ] && [ -s "$SINGBOX_FOLDER_PATH/port_vm_ws" ]; then
+                # 兼容旧版本 vmess 端口文件：仅在本次未同时启用 vmess-ws 时复用，
+                # 否则两个 inbound 会绑定同一端口导致 sing-box 启动失败
+                port_vl_ws=$(cat "$SINGBOX_FOLDER_PATH/port_vm_ws")
+            else
+                port_vl_ws=$(rand_port)
+            fi
             echo "$port_vl_ws" > "$SINGBOX_FOLDER_PATH/port_vl_ws"
         fi
         port_vl_ws=$(cat "$SINGBOX_FOLDER_PATH/port_vl_ws")
@@ -2298,8 +2371,10 @@ After=network.target
 [Service]
 Type=simple
 NoNewPrivileges=yes
-ExecStartPre=/bin/sh -c '[ -f /etc/iptables/rules.v4 ] && iptables-restore < /etc/iptables/rules.v4 2>/dev/null || true'
-ExecStartPre=/bin/sh -c '[ -f /etc/iptables/rules.v6 ] && ip6tables-restore < /etc/iptables/rules.v6 2>/dev/null || true'
+# 仅恢复本脚本自身的防火墙规则（按 --comment 标记，由 _write_iptables_rules_script 生成）；
+# 不做整表 iptables-restore，避免把 Docker/ufw/fail2ban 等安装之后的防火墙变更一并回滚。
+# 首次启动时该脚本可能尚未生成（规则在 sbbout 之后才应用），前缀 - 表示失败/缺失可忽略。
+ExecStartPre=-$SINGBOX_FOLDER_PATH/apply-iptables.sh
 ExecStart=$SINGBOX_FOLDER_PATH/sing-box run -c $SINGBOX_FOLDER_PATH/sb.json
 StandardOutput=append:$LOGS_DIR/singbox.log
 StandardError=append:$LOGS_DIR/singbox.log
@@ -2324,8 +2399,9 @@ command_background=yes
 pidfile="/run/sing-box.pid"
 depend() { need net; }
 start_pre() {
-    [ -f /etc/iptables/rules.v4 ] && iptables-restore < /etc/iptables/rules.v4 2>/dev/null || true
-    [ -f /etc/iptables/rules.v6 ] && ip6tables-restore < /etc/iptables/rules.v6 2>/dev/null || true
+    # 仅恢复本脚本自身的防火墙规则（按 --comment 标记），不做整表 iptables-restore
+    [ -x "$SINGBOX_FOLDER_PATH/apply-iptables.sh" ] && "$SINGBOX_FOLDER_PATH/apply-iptables.sh" 2>/dev/null
+    return 0
 }
 EOF
             chmod +x /etc/init.d/sing-box
@@ -3214,7 +3290,7 @@ ins() {
             # 与原版一致：固定 Argo 域名直接落盘
             echo "$ARGO_DOMAIN" > "$SINGBOX_FOLDER_PATH/argo_domain"
             # token 模式下才会有 sbargotoken
-            [ "$ARGO_MODE" = "token" ] && echo "$ARGO_AUTH" > "$SINGBOX_FOLDER_PATH/sbargotoken"
+            [ "$ARGO_MODE" = "token" ] && echo "$ARGO_AUTH" > "$SINGBOX_FOLDER_PATH/sbargotoken" && chmod 600 "$SINGBOX_FOLDER_PATH/sbargotoken" 2>/dev/null || true
         else
             # 临时 Argo（trycloudflare）
             argo_tunnel_type="临时"
