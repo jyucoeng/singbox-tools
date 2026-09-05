@@ -576,6 +576,27 @@ cat /root/doraemon/port_socks5
 
 ## 版本变更信息
 
+v1.0.30 (2026-09-05)
+ - **安全加固**
+ - 删除 Reality 私钥在线推导兜底：旧版本地推导失败时会通过 `?privateKey=` 把私钥明文发给第三方（realitykey.cloudflare.now.cc），现改为直接失败并回退生成新 keypair，私钥不再外发
+ - Argo 凭据/域名校验：新增 `is_valid_domain` / `is_valid_argo_token`（含嵌入换行/CR 校验，防 grep 跨行绕过），非法 token/域名拒绝写入 systemd ExecStart / openrc command_args / tunnel.yml（防命令与配置注入）
+ - 二进制下载完整性运行时校验：sing-box（拦截 HTML 错误页、校验归档内含 sing-box 二进制、版本必须等于 1.13.14）、cloudflared（拦截 HTML 错误页、`--version` 必须可解析）
+ - 凭据文件统一 chmod 600：tunnel.json / tunnel.yml / sbargotoken / argo_domain / reality.key / uuid / sb.json / jh.txt
+ - Socks5 白名单 IP/CIDR 格式校验（`is_valid_cidr`）：非法条目跳过并警告；全部非法时报错，不再"显示已开启但实际未生效"
+ - 订阅走明文 HTTP 时打印风险警告（订阅 URL 内含全部节点口令，仅建议可信网络使用）
+ - `setenforce 0` 仅在 SELinux=Enforcing 时执行并打印提示，不再静默关掉 SELinux
+ - 交互输入 Argo token / reality_private 改用 `read -s` 静默输入，防终端回显
+ - pkill/pgrep 匹配收窄到本脚本安装路径，避免误杀系统中其他同名进程
+ - crontab 清理改用 `mktemp` 临时文件，消除固定路径 `/tmp/crontab.tmp` 的符号链接攻击面
+ - **Bug 修复**
+ - 修复 Alpine(openrc) `sb autostart` 生成损坏的 init 脚本：heredoc 内 `${name}`/`$command`/`$pidfile`/`$command_args`/`$?` 被 bash 提前展开为空，start/stop 全部失效
+ - 随机端口避开已在监听的 TCP/UDP 端口（ss 检测 + 最多重试 20 次）
+ - 端口冲突检查新增"系统已监听端口"提示（sing-box 自身监听、即 rep 覆盖安装前旧实例，不算冲突）
+ - 节点链接 fragment 统一 URL 编码：`name` 中的空格 / `#` / `?` / `&` 不再破坏链接；vmess 节点的 `ps`/`add`/`host`/`sni` 字段做 JSON 转义
+ - `append_jh` 改用 `printf` 写订阅文件，防 `\n`/`\x` 转义注入订阅内容；节点名清洗掉 CR/LF
+ - 删除死代码：`setup_warp_config` / `singbox_status` / `interactive_uninstall_menu`
+ - 版本号推进为 1.0.30
+
 v1.0.29 (2026-08-27)
  - **修复覆盖安装会清除所有 iptables 规则的 bug**：旧版 `install_step()` 中 `iptables -F` 会暴力清除所有防火墙规则（包括其他程序添加的），现改为仅清除本脚本标记的规则
  - 新增 iptables/ip6tables 规则标记体系：所有协议端口标记 `doraemon_singbox_rule`，白名单 socks5 标记 `socks5_rule`，通过 `--comment` 精确识别
