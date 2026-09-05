@@ -13,6 +13,9 @@ DATA_DIR="$WORKDIR/exhausteddata"
 # Telegram 统计日报推送时间（北京时间 HH:MM，可用 TELEMT_TG_TIME 环境变量覆盖）
 TG_PUSH_TIME="09:00"
 
+# 本脚本的官方地址（管道方式运行时用于把脚本落盘，保证 Cron 可调用）
+SCRIPT_URL="${SCRIPT_URL:-https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/mtp-new.sh}"
+
 # 获取脚本绝对路径
 SCRIPT_PATH=$(readlink -f "$0" 2>/dev/null)
 if [ -z "$SCRIPT_PATH" ]; then
@@ -21,10 +24,33 @@ fi
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 
 # 自动注册全局快捷命令 mtp（如果尚未注册）
-# 注意：通过 bash <(curl ...) 运行时 $0 是 /dev/fd/*，不能把链接指到临时 fd
-if [ -n "$SCRIPT_PATH" ] && [[ "$SCRIPT_PATH" != /dev/fd/* && "$SCRIPT_PATH" != /dev/stdin* ]]; then
-    if [ ! -L "/usr/local/bin/mtp" ] || [ "$(readlink -f /usr/local/bin/mtp 2>/dev/null)" != "$SCRIPT_PATH" ]; then
-        ln -sf "$SCRIPT_PATH" /usr/local/bin/mtp 2>/dev/null
+# 注意：通过 bash <(curl ...) 运行时 $0 是 /dev/fd/*，不能把链接指到临时 fd；
+# 此时改为把脚本落盘到 /usr/local/bin/mtp，否则三条 Cron（tg_autopush/check_reset/traffic_snapshot）
+# 会因找不到该文件而静默失效
+MTP_BIN="/usr/local/bin/mtp"
+if [ -n "$SCRIPT_PATH" ] && [[ "$SCRIPT_PATH" != /dev/fd/* && "$SCRIPT_PATH" != /dev/stdin* ]] && [ -f "$SCRIPT_PATH" ]; then
+    if [ ! -L "$MTP_BIN" ] || [ "$(readlink -f "$MTP_BIN" 2>/dev/null)" != "$SCRIPT_PATH" ]; then
+        ln -sf "$SCRIPT_PATH" "$MTP_BIN" 2>/dev/null
+    fi
+elif [[ "$SCRIPT_PATH" == /dev/fd/* || "$SCRIPT_PATH" == /dev/stdin* ]] && [ "$(id -u)" -eq 0 ]; then
+    # 管道方式运行（多为安装）：确保固定路径上有一份真实脚本副本
+    if [ ! -s "$MTP_BIN" ] || [ -L "$MTP_BIN" ] || ! grep -q "telemt" "$MTP_BIN" 2>/dev/null; then
+        if command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; then
+            echo "👉 检测到管道方式运行，正在把脚本落盘到 $MTP_BIN（供 Cron 定时任务调用）..."
+            rm -f "$MTP_BIN"
+            if command -v curl >/dev/null 2>&1; then
+                curl -fsSL --connect-timeout 10 "$SCRIPT_URL" -o "$MTP_BIN" 2>/dev/null || rm -f "$MTP_BIN"
+            else
+                wget -qO "$MTP_BIN" "$SCRIPT_URL" 2>/dev/null || rm -f "$MTP_BIN"
+            fi
+            if [ -s "$MTP_BIN" ] && grep -q "telemt" "$MTP_BIN" 2>/dev/null; then
+                chmod +x "$MTP_BIN"
+                echo "✅ 已创建 $MTP_BIN，Cron 定时任务可用"
+            else
+                rm -f "$MTP_BIN"
+                echo "⚠️ 无法下载脚本到 $MTP_BIN，Cron 定时任务（自动重置/TG日报/流量快照）将不可用，请检查网络后重试"
+            fi
+        fi
     fi
 fi
 
@@ -44,6 +70,50 @@ debug_log() {
 
 debug_print() {
     [ "${DEBUG_FLAG:-0}" = "1" ] && "$@"
+}
+
+# 校验到期日期/时间：允许 YYYY-MM-DD 或 YYYY-MM-DD HH:MM[:SS]；空值表示永久，合法返回 0
+# 说明：写坏格式会直接让 telemt 的 TOML 解析失败（全用户断流），必须在校验通过后才允许落盘
+validate_expire_datetime() {
+    local d="$1"
+    [ -z "$d" ] && return 0
+    local date_part="$d" time_part=""
+    if [[ "$d" == *" "* ]]; then
+        date_part="${d%% *}"
+        time_part="${d#* }"
+        case "$time_part" in
+            [0-9][0-9]:[0-9][0-9]|[0-9][0-9]:[0-9][0-9]:[0-9][0-9]) ;;
+            *) return 1 ;;
+        esac
+        local hh=${time_part:0:2} mi=${time_part:3:2} ss="00"
+        [ "${#time_part}" -ge 8 ] && ss=${time_part:6:2}
+        (( 10#$hh <= 23 && 10#$mi <= 59 && 10#$ss <= 59 )) || return 1
+    fi
+    [[ "$date_part" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || return 1
+    local y=${date_part:0:4} m=${date_part:5:2} day=${date_part:8:2}
+    (( 10#$y >= 2000 && 10#$y <= 2100 )) || return 1
+    (( 10#$m >= 1 && 10#$m <= 12 )) || return 1
+    local dim=(31 28 31 30 31 30 31 31 30 31 30 31)
+    local max=${dim[10#$m-1]}
+    local yy=${10#$y}
+    if (( 10#$m == 2 && ( (yy % 4 == 0 && yy % 100 != 0) || yy % 400 == 0 ) )); then
+        max=29
+    fi
+    (( 10#$day >= 1 && 10#$day <= max )) || return 1
+    return 0
+}
+
+# 校验重置日：仅允许 1-28（29-31 在小月份会导致永不重置）
+validate_reset_day() {
+    local d="$1"
+    [[ "$d" =~ ^[0-9]+$ ]] || return 1
+    (( 10#$d >= 1 && 10#$d <= 28 )) || return 1
+    return 0
+}
+
+# 校验用户名：TOML 裸键名，仅允许字母/数字/下划线/中划线
+validate_telemt_username() {
+    [[ "$1" =~ ^[A-Za-z0-9_-]{1,64}$ ]]
 }
 
 # 系统检测
@@ -1966,13 +2036,17 @@ install_telemt() {
         echo ""
         read -p "请输入此用户的月度流量配额 (GB为单位, 直接回车表示不启用限流): " NEW_QUOTA
         NEW_QUOTA=$(echo "$NEW_QUOTA" | tr -d '\r ')
-        if [[ -n "$NEW_QUOTA" && ! "$NEW_QUOTA" =~ ^[0-9.]+$ ]]; then
+        if [[ -n "$NEW_QUOTA" && ! "$NEW_QUOTA" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
             echo -e "${RED}输入有误，配额必须是数字，将默认关闭该用户限流。${PLAIN}"
             NEW_QUOTA=""
         fi
         
-        read -p "请输入此用户的强制到期日期 (格式 2026-10-01 或 2026-10-01 12:00:00, 回车表示永久): " NEW_EXPIRE
-        NEW_EXPIRE=$(echo "$NEW_EXPIRE" | tr -d '\r' | xargs)
+        while :; do
+            read -p "请输入此用户的强制到期日期 (格式 2026-10-01 或 2026-10-01 12:00:00, 回车表示永久): " NEW_EXPIRE
+            NEW_EXPIRE=$(echo "$NEW_EXPIRE" | tr -d '\r' | xargs)
+            validate_expire_datetime "$NEW_EXPIRE" && break
+            echo -e "${RED}日期无效，请重新输入（示例: 2026-10-01 或 2026-10-01 12:00:00），回车表示永久${PLAIN}"
+        done
         NEW_SPEED=""
     fi
     
@@ -1985,13 +2059,17 @@ install_telemt() {
         echo -e "${RED}端口无效: $PORT (必须是 1-65535 之间的数字)${PLAIN}"
         return 1
     fi
-    if ! [[ "$TELEMT_USER" =~ ^[A-Za-z0-9_-]+$ ]]; then
-        echo -e "${RED}用户名只能包含字母、数字、下划线或中划线！${PLAIN}"
+    if ! validate_telemt_username "$TELEMT_USER"; then
+        echo -e "${RED}用户名只能包含字母、数字、下划线或中划线（1-64 位）！${PLAIN}"
         return 1
     fi
-    if [[ -n "$NEW_QUOTA" && ! "$NEW_QUOTA" =~ ^[0-9.]+$ ]]; then
-        echo -e "${RED}输入有误，配额必须是数字，将关闭该用户限流。${PLAIN}"
+    if [[ -n "$NEW_QUOTA" && ! "$NEW_QUOTA" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        echo -e "${RED}输入有误，配额必须是数字（如 10 或 1.5），将关闭该用户限流。${PLAIN}"
         NEW_QUOTA=""
+    fi
+    if ! validate_expire_datetime "$NEW_EXPIRE"; then
+        echo -e "${RED}到期日期无效: $NEW_EXPIRE (格式: 2026-10-01 或 2026-10-01 12:00:00)${PLAIN}"
+        return 1
     fi
     if ! [[ "$SECRET" =~ ^[0-9a-fA-F]{32}$ ]]; then
         echo -e "${RED}SECRET 必须是 32 位 hex 字符 (a-f/0-9)！当前值: $SECRET${PLAIN}"
@@ -2092,6 +2170,9 @@ EOF
         if [ -n "$NON_INTERACTIVE" ]; then
             # 无交互模式：仅在显式指定 TELEMT_RESET_DAY 时启用
             if [ -n "${TELEMT_RESET_DAY:-}" ]; then
+                if ! validate_reset_day "$TELEMT_RESET_DAY"; then
+                    echo -e "${RED}TELEMT_RESET_DAY 无效: $TELEMT_RESET_DAY (必须是 1-28 的数字)，已跳过自动重置配置。${PLAIN}"
+                else
                 reset_day="$TELEMT_RESET_DAY"
                 cat > /etc/telemt_reset.conf <<REOF
 # Telemt 流量配额自动重置配置
@@ -2101,6 +2182,7 @@ ONCE_DATE=
 REOF
                 install_reset_cron
                 echo -e "${GREEN}✅ 已启用每月 ${reset_day} 号零点自动重置活跃用户流量。${PLAIN}"
+                fi
             fi
         else
             echo -e ""
@@ -2109,9 +2191,13 @@ REOF
             enable_reset=$(echo "$enable_reset" | tr -d '\r ' | tr 'Y' 'y')
             [ -z "$enable_reset" ] && enable_reset="y"
             if [ "$enable_reset" == "y" ]; then
-                read -p "请输入每月重置日 (直接回车默认为1号): " reset_day
-                reset_day=$(echo "$reset_day" | tr -d '\r ')
-                [ -z "$reset_day" ] && reset_day=1
+                while :; do
+                    read -p "请输入每月重置日 (直接回车默认为1号): " reset_day
+                    reset_day=$(echo "$reset_day" | tr -d '\r ')
+                    [ -z "$reset_day" ] && reset_day=1
+                    validate_reset_day "$reset_day" && break
+                    echo -e "${RED}重置日无效，请输入 1-28 的数字（29-31 在小月份会导致永不重置）${PLAIN}"
+                done
                 cat > /etc/telemt_reset.conf <<REOF
 # Telemt 流量配额自动重置配置
 MODE=monthly
@@ -2561,20 +2647,30 @@ control_service() {
     # 如果指定了具体服务名，就只操作那一个
     if [[ -n "$1" ]]; then TARGETS="$1"; fi
     debug_log "【调试】control_service: ACTION=$ACTION TARGETS=$TARGETS INIT_SYSTEM=$INIT_SYSTEM"
-    
+
+    local _failed=0
     for SERVICE in $TARGETS; do
         if [[ "$INIT_SYSTEM" == "systemd" ]]; then
              if [ -f "/etc/systemd/system/${SERVICE}.service" ]; then
-                 systemctl $ACTION $SERVICE
-                 echo -e "${BLUE}$SERVICE $ACTION 完成${PLAIN}"
+                 if systemctl $ACTION $SERVICE; then
+                     echo -e "${BLUE}$SERVICE $ACTION 完成${PLAIN}"
+                 else
+                     echo -e "${RED}$SERVICE $ACTION 失败！请执行 journalctl -u $SERVICE -e 查看原因（常见：TOML 配置非法）${PLAIN}"
+                     _failed=1
+                 fi
              fi
         else
              if [ -f "/etc/init.d/${SERVICE}" ]; then
-                 rc-service $SERVICE $ACTION
-                 echo -e "${BLUE}$SERVICE $ACTION 完成${PLAIN}"
+                 if rc-service $SERVICE $ACTION; then
+                     echo -e "${BLUE}$SERVICE $ACTION 完成${PLAIN}"
+                 else
+                     echo -e "${RED}$SERVICE $ACTION 失败！请查看 /var/log/${SERVICE}.log（常见：TOML 配置非法）${PLAIN}"
+                     _failed=1
+                 fi
              fi
         fi
     done
+    return $_failed
 }
 
 delete_all() {
@@ -2749,9 +2845,13 @@ add_telemt_user() {
             echo -e "${RED}TELEMT_SECRET 必须是 32 位 hex 字符 (a-f/0-9)！当前值: $NEW_SECRET${PLAIN}"
             return 2
         fi
-        if [[ -n "$NEW_QUOTA" && ! "$NEW_QUOTA" =~ ^[0-9.]+$ ]]; then
+        if [[ -n "$NEW_QUOTA" && ! "$NEW_QUOTA" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
             echo -e "${RED}TELEMT_QUOTA 必须是数字，已忽略配额限制。${PLAIN}"
             NEW_QUOTA=""
+        fi
+        if ! validate_expire_datetime "$NEW_EXPIRE"; then
+            echo -e "${RED}TELEMT_EXPIRE 无效: $NEW_EXPIRE (格式: 2026-10-01 或 2026-10-01 12:00:00)${PLAIN}"
+            return 2
         fi
         echo -e "${GREEN}为 $NEW_USER 添加用户: 端口=[${NEW_DEDICATED_PORT:-共享}] 配额=[${NEW_QUOTA:-不限}GB] 到期=[${NEW_EXPIRE:-永久}] 限速=[${NEW_SPEED:-不限}]${PLAIN}"
         echo -e "${GREEN}通信密钥: $NEW_SECRET${PLAIN}"
@@ -2797,7 +2897,7 @@ add_telemt_user() {
         echo ""
         read -p "请输入此用户的月度流量配额 (GB为单位, 直接回车表示不启用限流): " NEW_QUOTA
         NEW_QUOTA=$(echo "$NEW_QUOTA" | tr -d '\r ')
-        if [[ -n "$NEW_QUOTA" && ! "$NEW_QUOTA" =~ ^[0-9.]+$ ]]; then
+        if [[ -n "$NEW_QUOTA" && ! "$NEW_QUOTA" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
             echo -e "${RED}输入有误，配额必须是数字，将默认关闭该用户限流。${PLAIN}"
             NEW_QUOTA=""
         fi
@@ -2814,10 +2914,14 @@ add_telemt_user() {
             NEW_SPEED=""
         fi
         
-        read -p "请输入此用户的强制到期日期 (格式 2026-10-01 或 2026-10-01 12:00:00, 回车表示永久): " NEW_EXPIRE
-        NEW_EXPIRE=$(echo "$NEW_EXPIRE" | tr -d '\r' | xargs)
+        while :; do
+            read -p "请输入此用户的强制到期日期 (格式 2026-10-01 或 2026-10-01 12:00:00, 回车表示永久): " NEW_EXPIRE
+            NEW_EXPIRE=$(echo "$NEW_EXPIRE" | tr -d '\r' | xargs)
+            validate_expire_datetime "$NEW_EXPIRE" && break
+            echo -e "${RED}日期无效，请重新输入（示例: 2026-10-01 或 2026-10-01 12:00:00），回车表示永久${PLAIN}"
+        done
     fi
-    
+
     # 插入到 [access.users] 区块的末尾
     sed -i "/^\[access\.users\]/a $NEW_USER = \"$NEW_SECRET\"" /etc/telemt.toml
 
@@ -2870,8 +2974,11 @@ add_telemt_user() {
     fi
     
     echo -e "${BLUE}正在重载配置 ...${PLAIN}"
-    control_service restart telemt >/dev/null 2>&1
-    echo -e "${GREEN}新用户已热生效！${PLAIN}"
+    if control_service restart telemt >/dev/null 2>&1; then
+        echo -e "${GREEN}新用户已热生效！${PLAIN}"
+    else
+        echo -e "${RED}⚠️ 服务重启失败！新用户未生效，请执行 journalctl -u telemt -e 查看原因（常见：TOML 配置非法）。${PLAIN}"
+    fi
 }
 
 # 非交互修改指定 Telemt 用户配置（TELEMT_USER 指定目标，TELEMT_* 为要修改的字段，0 = 解除该限制）
@@ -2945,7 +3052,7 @@ modify_telemt_user() {
             sed -i "/^\[access\.user_data_quota\]/,/^\[/{/^$TARGET_USER *=/d}" /etc/telemt.toml
             echo -e "${GREEN}已解除 $TARGET_USER 的流量配额限制。${PLAIN}"
         else
-            if ! [[ "$TELEMT_QUOTA" =~ ^[0-9.]+$ ]]; then
+            if ! [[ "$TELEMT_QUOTA" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
                 echo -e "${RED}TELEMT_QUOTA 必须是数字 (GB)！${PLAIN}"
                 return 2
             fi
@@ -2968,6 +3075,10 @@ modify_telemt_user() {
     
     # 4. 到期时间 [access.user_expirations]
     if [ -n "${TELEMT_EXPIRE:-}" ]; then
+        if [ "$TELEMT_EXPIRE" != "0" ] && ! validate_expire_datetime "$TELEMT_EXPIRE"; then
+            echo -e "${RED}TELEMT_EXPIRE 无效: $TELEMT_EXPIRE (格式: 2026-10-01 或 2026-10-01 12:00:00)${PLAIN}"
+            return 2
+        fi
         sed -i "/^\[access\.user_expirations\]/,/^\[/{/^$TARGET_USER *=/d}" /etc/telemt.toml
         if [ "$TELEMT_EXPIRE" = "0" ]; then
             echo -e "${GREEN}已解除 $TARGET_USER 的到期限制，恢复为永久有效。${PLAIN}"
@@ -3004,9 +3115,12 @@ modify_telemt_user() {
     fi
     
     echo -e "${BLUE}正在重载配置 ...${PLAIN}"
-    control_service restart telemt >/dev/null 2>&1
     debug_log "【调试】modify_telemt_user: TARGET_USER=$TARGET_USER TELEMT_SECRET=${TELEMT_SECRET:-} TELEMT_DEDICATED_PORT=${TELEMT_DEDICATED_PORT:-} TELEMT_QUOTA=${TELEMT_QUOTA:-} TELEMT_EXPIRE=${TELEMT_EXPIRE:-} TELEMT_SPEED_UP=${TELEMT_SPEED_UP:-}"
-    echo -e "${GREEN}用户 $TARGET_USER 配置修改成功并已热生效！${PLAIN}"
+    if control_service restart telemt >/dev/null 2>&1; then
+        echo -e "${GREEN}用户 $TARGET_USER 配置修改成功并已热生效！${PLAIN}"
+    else
+        echo -e "${RED}⚠️ 服务重启失败！修改未生效，请执行 journalctl -u telemt -e 查看原因（常见：TOML 配置非法）。${PLAIN}"
+    fi
 }
 
 # 查询指定 Telemt 用户的当前配置（TELEMT_USER 指定目标，无交互）
@@ -3181,9 +3295,11 @@ del_telemt_user() {
     clear_exhausted_record "$target_name"
     
     echo -e "${BLUE}正在重载配置注销该用户 ...${PLAIN}"
-    control_service restart telemt >/dev/null 2>&1
-    
-    echo -e "${GREEN}删除用户 [$target_name] 成功并且已将其强制踢下线以及清理全部关联数据！${PLAIN}"
+    if control_service restart telemt >/dev/null 2>&1; then
+        echo -e "${GREEN}删除用户 [$target_name] 成功并且已将其强制踢下线以及清理全部关联数据！${PLAIN}"
+    else
+        echo -e "${RED}⚠️ 服务重启失败！删除未完全生效，请执行 journalctl -u telemt -e 查看原因。${PLAIN}"
+    fi
 }
 
 # 通过 TG 分享链接反查用户（TELEMT_LINK 可非交互指定）
@@ -3255,9 +3371,12 @@ del_telemt_user_by_name() {
     clear_exhausted_record "$target_name"
     
     echo -e "${BLUE}正在重载配置注销该用户 ...${PLAIN}"
-    control_service restart telemt >/dev/null 2>&1
     debug_log "【调试】del_telemt_user_by_name: target_name=$target_name"
-    echo -e "${GREEN}删除用户 [$target_name] 成功并且已将其强制踢下线以及清理全部关联数据！${PLAIN}"
+    if control_service restart telemt >/dev/null 2>&1; then
+        echo -e "${GREEN}删除用户 [$target_name] 成功并且已将其强制踢下线以及清理全部关联数据！${PLAIN}"
+    else
+        echo -e "${RED}⚠️ 服务重启失败！删除未完全生效，请执行 journalctl -u telemt -e 查看原因。${PLAIN}"
+    fi
 }
 
 # 读取 toml 指定段落中指定键的当前值（去首尾引号与 \r，供修改前回显对照）
@@ -3366,8 +3485,12 @@ reset_telemt_user_quota() {
         else
             echo -e "当前到期: ${YELLOW}永久有效${PLAIN}"
         fi
-        read -p "请输入新的强制到期日期 (格式 2026-10-01 或 2026-10-01 12:00:00, 回车表示取消限期): " NEW_EXPIRE
-        NEW_EXPIRE=$(echo "$NEW_EXPIRE" | tr -d '\r' | xargs)
+        while :; do
+            read -p "请输入新的强制到期日期 (格式 2026-10-01 或 2026-10-01 12:00:00, 回车表示取消限期): " NEW_EXPIRE
+            NEW_EXPIRE=$(echo "$NEW_EXPIRE" | tr -d '\r' | xargs)
+            validate_expire_datetime "$NEW_EXPIRE" && break
+            echo -e "${RED}日期无效，请重新输入（示例: 2026-10-01 或 2026-10-01 12:00:00），回车表示取消限期${PLAIN}"
+        done
         sed -i "/^\[access\.user_expirations\]/,/^\[/{/^$target_name *=/d}" /etc/telemt.toml
         if [ -n "$NEW_EXPIRE" ]; then
             if echo "$NEW_EXPIRE" | grep -q " "; then
@@ -3401,7 +3524,7 @@ reset_telemt_user_quota() {
         read -p "请输入此用户的新的总流量配额上限 (GB为单位, 回车则解除配额): " NEW_QUOTA
         NEW_QUOTA=$(echo "$NEW_QUOTA" | tr -d '\r ')
         sed -i "/^\[access\.user_data_quota\]/,/^\[/{/^$target_name *=/d}" /etc/telemt.toml
-        if [[ -n "$NEW_QUOTA" && "$NEW_QUOTA" =~ ^[0-9.]+$ ]]; then
+        if [[ -n "$NEW_QUOTA" && "$NEW_QUOTA" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
             QUOTA_BYTES=$(awk "BEGIN {printf \"%.0f\", $NEW_QUOTA * 1073741824}")
             if ! grep -q "^\[access\.user_data_quota\]" /etc/telemt.toml; then
                 echo "" >> /etc/telemt.toml
@@ -3431,7 +3554,7 @@ reset_telemt_user_quota() {
         read -p "请输入流量配额 (GB为单位, 回车表示解除配额): " NEW_QUOTA
         NEW_QUOTA=$(echo "$NEW_QUOTA" | tr -d '\r ')
         sed -i "/^\[access\.user_data_quota\]/,/^\[/{/^$target_name *=/d}" /etc/telemt.toml
-        if [[ -n "$NEW_QUOTA" && "$NEW_QUOTA" =~ ^[0-9.]+$ ]]; then
+        if [[ -n "$NEW_QUOTA" && "$NEW_QUOTA" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
             QUOTA_BYTES=$(awk "BEGIN {printf \"%.0f\", $NEW_QUOTA * 1073741824}")
             if ! grep -q "^\[access\.user_data_quota\]" /etc/telemt.toml; then
                 echo "" >> /etc/telemt.toml
@@ -3455,8 +3578,12 @@ reset_telemt_user_quota() {
         else
             echo -e "当前到期: ${YELLOW}永久有效${PLAIN}"
         fi
-        read -p "请输入到期日期 (格式 2026-10-01 或 2026-10-01 12:00:00, 回车表示取消限期): " NEW_EXPIRE
-        NEW_EXPIRE=$(echo "$NEW_EXPIRE" | tr -d '\r' | xargs)
+        while :; do
+            read -p "请输入到期日期 (格式 2026-10-01 或 2026-10-01 12:00:00, 回车表示取消限期): " NEW_EXPIRE
+            NEW_EXPIRE=$(echo "$NEW_EXPIRE" | tr -d '\r' | xargs)
+            validate_expire_datetime "$NEW_EXPIRE" && break
+            echo -e "${RED}日期无效，请重新输入（示例: 2026-10-01 或 2026-10-01 12:00:00），回车表示取消限期${PLAIN}"
+        done
         sed -i "/^\[access\.user_expirations\]/,/^\[/{/^$target_name *=/d}" /etc/telemt.toml
         if [ -n "$NEW_EXPIRE" ]; then
             if echo "$NEW_EXPIRE" | grep -q " "; then
@@ -3555,8 +3682,11 @@ reset_telemt_user_quota() {
     fi
     
     echo -e "${BLUE}正在重载配置以释放最新数据 ...${PLAIN}"
-    control_service restart telemt >/dev/null 2>&1
-    echo -e "${GREEN}操作成功！${PLAIN}"
+    if control_service restart telemt >/dev/null 2>&1; then
+        echo -e "${GREEN}操作成功！${PLAIN}"
+    else
+        echo -e "${RED}⚠️ 服务重启失败！本次修改未生效，请执行 journalctl -u telemt -e 查看原因（常见：TOML 配置非法）。${PLAIN}"
+    fi
 }
 
 
@@ -3758,9 +3888,13 @@ setup_quota_reset_cron() {
     
     case $reset_choice in
         1)
-            read -p "请输入每月重置日 (直接回车默认为1号): " reset_day
-            reset_day=$(echo "$reset_day" | tr -d '\r ')
-            [ -z "$reset_day" ] && reset_day=1
+            while :; do
+                read -p "请输入每月重置日 (直接回车默认为1号): " reset_day
+                reset_day=$(echo "$reset_day" | tr -d '\r ')
+                [ -z "$reset_day" ] && reset_day=1
+                validate_reset_day "$reset_day" && break
+                echo -e "${RED}重置日无效，请输入 1-28 的数字（29-31 在小月份会导致永不重置）${PLAIN}"
+            done
             
             # 写入配置
             cat > /etc/telemt_reset.conf <<EOF
