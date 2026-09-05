@@ -578,6 +578,7 @@ cat /root/doraemon/port_socks5
 
 v1.0.30 (2026-09-05)
  - **安全加固**
+ - **修复 reality_private 被忽略的问题**：本地推导公钥不再依赖 `xxd`（Debian 12/13 起 `/usr/bin/xxd` 是独立 `xxd` 包，`vim-common` 不再提供），改用 `openssl pkey -inform DER` 直接读 PKCS#8 DER，只要 openssl 在即可推导。旧版在无 xxd 的环境会推导失败→静默生成新 keypair，导致传了 `reality_private` 却节点不一致
  - 删除 Reality 私钥在线推导兜底：旧版本地推导失败时会通过 `?privateKey=` 把私钥明文发给第三方（realitykey.cloudflare.now.cc），现改为直接失败并回退生成新 keypair，私钥不再外发
  - Argo 凭据/域名校验：新增 `is_valid_domain` / `is_valid_argo_token`（含嵌入换行/CR 校验，防 grep 跨行绕过），非法 token/域名拒绝写入 systemd ExecStart / openrc command_args / tunnel.yml（防命令与配置注入）
  - 二进制下载完整性运行时校验：sing-box（拦截 HTML 错误页、校验归档内含 sing-box 二进制、版本必须等于 1.13.14）、cloudflared（拦截 HTML 错误页、`--version` 必须可解析）

@@ -25,7 +25,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.0.30(2026-09-05)"
+VERSION="1.0.30(2026-09-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -405,7 +405,7 @@ install_deps() {
             psmisc
             coreutils
             ca-certificates
-            vim-common # 提供 xxd（大多数 Debian/Ubuntu）
+            xxd vim-common # xxd：Debian 12+ 为独立包，旧版由 vim-common 提供（装不上自动跳过）
         )
 
         local -a APT_CMD=(
@@ -1784,9 +1784,11 @@ derive_reality_public_key() {
     # 私钥为空直接失败
     [ -z "$priv" ] && return 1
 
-    # 1) 优先本地推导（openssl + xxd）
-    if command -v xxd > /dev/null 2>&1 && command -v openssl > /dev/null 2>&1; then
-        debug_log "🔐 【调试】 derive_reality_public_key: 使用【本地推导】(openssl + xxd)"
+    # 1) 本地推导（仅依赖 openssl + base64，不依赖 xxd）
+    #    ❗ Debian 12/13 起 /usr/bin/xxd 归属独立 xxd 包，vim-common 不再提供，因此这里不再用 xxd，
+    #      改用 printf 直接构造 PKCS#8 DER + openssl pkey -inform DER，只要有 openssl 就能推导。
+    if command -v openssl > /dev/null 2>&1; then
+        debug_log "🔐 【调试】 derive_reality_public_key: 使用【本地推导】(openssl)"
 
         local tmp_dir="$SINGBOX_FOLDER_PATH/.tmp_reality"
         mkdir -p "$tmp_dir" 2> /dev/null
@@ -1828,42 +1830,37 @@ derive_reality_public_key() {
                     debug_log "❗ 【调试】 derive_reality_public_key: 本地解码后长度不为 32 bytes（实际=${priv_len}）"
                     rm -f "$tmp_dir/_x25519_priv_raw" 2> /dev/null
                 else
-                    # PKCS#8 DER 前缀（X25519 固定头）
-                    local prefix_hex="302e020100300506032b656e04220420"
-                    local priv_hex
-                    priv_hex="$(xxd -p -c 256 "$tmp_dir/_x25519_priv_raw" 2> /dev/null | tr -d '\n')"
+                    # 用 printf 直接拼 PKCS#8 DER（X25519 固定头 + 32 字节原始私钥），
+                    # 替代 xxd 的 hex 双向转换，任何 bash + openssl 环境都可用
+                    {
+                        printf '\x30\x2e\x02\x01\x00\x30\x05\x06\x03\x2b\x65\x6e\x04\x22\x04\x20'
+                        cat "$tmp_dir/_x25519_priv_raw"
+                    } > "$tmp_dir/_x25519_priv_der"
 
-                    if [ -n "$priv_hex" ]; then
-                        printf "%s%s" "$prefix_hex" "$priv_hex" | xxd -r -p > "$tmp_dir/_x25519_priv_der" 2> /dev/null || true
+                    if openssl pkey -inform DER -in "$tmp_dir/_x25519_priv_der" -pubout -outform DER > "$tmp_dir/_x25519_pub_der" 2> /dev/null \
+                        && tail -c 32 "$tmp_dir/_x25519_pub_der" > "$tmp_dir/_x25519_pub_raw" 2> /dev/null; then
 
-                        if openssl pkcs8 -inform DER -in "$tmp_dir/_x25519_priv_der" -nocrypt -out "$tmp_dir/_x25519_priv_pem" 2> /dev/null \
-                            && openssl pkey -in "$tmp_dir/_x25519_priv_pem" -pubout -outform DER > "$tmp_dir/_x25519_pub_der" 2> /dev/null \
-                            && tail -c 32 "$tmp_dir/_x25519_pub_der" > "$tmp_dir/_x25519_pub_raw" 2> /dev/null; then
-
-                            # raw 公钥 -> base64url（无 padding）
-                            if command -v base64 > /dev/null 2>&1; then
-                                pub="$(base64 < "$tmp_dir/_x25519_pub_raw" 2> /dev/null | tr -d '\n' | tr '+/' '-_' | sed -E 's/=+$//')"
-                            elif command -v openssl > /dev/null 2>&1; then
-                                pub="$(openssl base64 -A < "$tmp_dir/_x25519_pub_raw" 2> /dev/null | tr '+/' '-_' | sed -E 's/=+$//')"
-                            fi
-
-                            if [ -n "$pub" ]; then
-                                debug_log "✅ 【调试】 derive_reality_public_key: 本地推导成功"
-
-                                # 清理临时文件（可选）
-                                rm -f "$tmp_dir/_x25519_priv_raw" "$tmp_dir/_x25519_priv_der" "$tmp_dir/_x25519_priv_pem" \
-                                    "$tmp_dir/_x25519_pub_der" "$tmp_dir/_x25519_pub_raw" 2> /dev/null
-
-                                echo "$pub"
-                                return 0
-                            else
-                                debug_log "❗ 【调试】 derive_reality_public_key: 本地推导成功但编码公钥失败（缺少 base64 工具？）"
-                            fi
+                        # raw 公钥 -> base64url（无 padding）
+                        if command -v base64 > /dev/null 2>&1; then
+                            pub="$(base64 < "$tmp_dir/_x25519_pub_raw" 2> /dev/null | tr -d '\n' | tr '+/' '-_' | sed -E 's/=+$//')"
                         else
-                            debug_log "❗ 【调试】 derive_reality_public_key: openssl 推导公钥失败（pkcs8/pkey/pubout）"
+                            pub="$(openssl base64 -A < "$tmp_dir/_x25519_pub_raw" 2> /dev/null | tr '+/' '-_' | sed -E 's/=+$//')"
+                        fi
+
+                        if [ -n "$pub" ]; then
+                            debug_log "✅ 【调试】 derive_reality_public_key: 本地推导成功"
+
+                            # 清理临时文件
+                            rm -f "$tmp_dir/_x25519_priv_raw" "$tmp_dir/_x25519_priv_der" \
+                                "$tmp_dir/_x25519_pub_der" "$tmp_dir/_x25519_pub_raw" 2> /dev/null
+
+                            echo "$pub"
+                            return 0
+                        else
+                            debug_log "❗ 【调试】 derive_reality_public_key: 本地推导成功但编码公钥失败"
                         fi
                     else
-                        debug_log "❗ 【调试】 derive_reality_public_key: xxd 读取私钥失败"
+                        debug_log "❗ 【调试】 derive_reality_public_key: openssl 推导公钥失败（pkey/pubout）"
                     fi
                 fi
             fi
@@ -1871,7 +1868,7 @@ derive_reality_public_key() {
 
         debug_log "❗ 【调试】 derive_reality_public_key: 本地推导失败"
     else
-        debug_log "❗ 【调试】 derive_reality_public_key: 缺少 openssl 或 xxd，本地推导不可用"
+        debug_log "❗ 【调试】 derive_reality_public_key: 缺少 openssl，本地推导不可用"
     fi
 
     # ❗ 安全考虑：不再提供“在线推导”兜底。
@@ -1947,6 +1944,8 @@ init_reality_keypair() {
                 debug_log "✅ 【调试】 init_reality_keypair: 推导公钥成功（pub=${#pub} chars）"
             else
                 debug_log "❗ 【调试】 init_reality_keypair: 推导公钥失败，将回退为生成新 keypair（这会覆盖 reality_private）"
+                yellow "⚠️ 你传入的 reality_private 无法本地推导出公钥，已改用新生成的 keypair"
+                yellow "   （若希望固定节点，请用下方打印的新值作为 reality_private）"
 
                 # 推导失败：生成一套新的 keypair（回退）
                 local kp
