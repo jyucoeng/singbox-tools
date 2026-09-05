@@ -783,7 +783,9 @@ change_config() {
 # 创建 Argo Tunnel API
 create_argo_tunnel() {
   local CLOUDFLARE_API_TOKEN="$1"
-  local ARGO_DOMAIN="$2"
+  # 注意：这里不使用 local —— 用户在"隧道已存在"提示中改用新域名时，
+  # 新域名必须回传到全局，否则 tunnel.yml / 订阅等后续流程仍使用旧域名（本地 ingress 与 CF 侧错位）
+  ARGO_DOMAIN="$2"
   local SERVICE_PORT="$3"
   local TUNNEL_NAME=${ARGO_DOMAIN%%.*}
   local ROOT_DOMAIN=${ARGO_DOMAIN#*.}
@@ -3041,7 +3043,7 @@ EOF
   }
 
   if [[ "${#REALITY_PRIVATE}" = 43 && "${#REALITY_PUBLIC}" = 0 ]]; then
-    if command -v xxd >/dev/null 2>&1; then
+    if command -v openssl >/dev/null 2>&1; then
       until [ -n "$REALITY_PUBLIC" ]; do
         # convert base64url -> base64 (standard), add padding
         local B64=$(printf '%s' "$REALITY_PRIVATE" | tr '_-' '/+')
@@ -3061,28 +3063,24 @@ EOF
         local PRIV_LEN=$(stat -c%s $TEMP_DIR/_X25519_PRIV_RAW 2>/dev/null || stat -f%z $TEMP_DIR/_X25519_PRIV_RAW)
         [ "$PRIV_LEN" -ne 32 ] && { generate_reality_keypair convert_error; continue; }
 
-        # DER prefix for PKCS#8 private key with OID 1.3.101.110 (X25519)
-        # Hex: 30 2e 02 01 00 30 05 06 03 2b 65 6e 04 22 04 20
-        local PREFIX_HEX="302e020100300506032b656e04220420"
+        # 手工构造 X25519 私钥的 PKCS#8 DER 封装（16 字节固定前缀 + 32 字节私钥），不依赖 xxd
+        # 注意：绝不将私钥发送到任何在线服务推导公钥（私钥即节点身份凭据）
+        if { printf '\x30\x2e\x02\x01\x00\x30\x05\x06\x03\x2b\x65\x6e\x04\x22\x04\x20'; cat $TEMP_DIR/_X25519_PRIV_RAW; } > $TEMP_DIR/_X25519_PRIV_DER \
+          && openssl pkey -inform DER -in $TEMP_DIR/_X25519_PRIV_DER -pubout -outform DER > $TEMP_DIR/_X25519_PUB_DER 2>/dev/null; then
+          # last 32 bytes are the raw public key
+          tail -c 32 $TEMP_DIR/_X25519_PUB_DER > $TEMP_DIR/_X25519_PUB_RAW
 
-        # append raw private key hex and create DER
-        local PRIV_HEX=$(xxd -p -c 256 $TEMP_DIR/_X25519_PRIV_RAW | tr -d '\n')
-        printf "%s%s" "$PREFIX_HEX" "$PRIV_HEX" | xxd -r -p > $TEMP_DIR/_X25519_PRIV_DER
-
-        # convert DER PKCS8 -> PEM private key
-        openssl pkcs8 -inform DER -in $TEMP_DIR/_X25519_PRIV_DER -nocrypt -out $TEMP_DIR/_X25519_PRIV_PEM 2>/dev/null
-
-        # extract public key in DER
-        openssl pkey -in $TEMP_DIR/_X25519_PRIV_PEM -pubout -outform DER > $TEMP_DIR/_X25519_PUB_DER 2>/dev/null
-
-        # last 32 bytes are the raw public key
-        tail -c 32 $TEMP_DIR/_X25519_PUB_DER > $TEMP_DIR/_X25519_PUB_RAW
-
-        # encode to base64url (no padding)
-        REALITY_PUBLIC=$(base64 -w0 $TEMP_DIR/_X25519_PUB_RAW | tr '+/' '-_' | sed -E 's/=+$//')
+          # encode to base64url (no padding)
+          REALITY_PUBLIC=$(base64 -w0 $TEMP_DIR/_X25519_PUB_RAW | tr '+/' '-_' | sed -E 's/=+$//')
+        else
+          generate_reality_keypair convert_error
+          continue
+        fi
       done
     else
-      REALITY_PUBLIC=$(wget --no-check-certificate -qO- --tries=3 --timeout=2 https://realitykey.cloudflare.now.cc/?privateKey=$REALITY_PRIVATE | awk -F '"' '/publicKey/{print $4}')
+      # 系统缺少 openssl：为保证私钥不外泄，不使用在线推导，直接本地重新生成 keypair
+      hint " $(text 116) "
+      generate_reality_keypair new_keypair
     fi
   elif [[ "${#REALITY_PRIVATE[@]}" = 0 && "${#REALITY_PUBLIC[@]}" = 0 ]]; then
     generate_reality_keypair new_keypair
@@ -4332,7 +4330,10 @@ v2rayn://naive/$(echo -n "{\"ConfigType\":12,\"CoreType\":24,\"ConfigVersion\":4
 ----------------------------
 v2rayn://naive/$(echo -n "{\"ConfigType\":12,\"CoreType\":24,\"ConfigVersion\":4,\"Remarks\":\"${NODE_NAME[22]} ${NODE_TAG[11]} quic\",\"Address\":\"${SERVER_IP_1}\",\"Port\":${PORT_NAIVE},\"Password\":\"${UUID[22]}\",\"Username\":\"${UUID[22]}\",\"StreamSecurity\":\"tls\",\"AllowInsecure\":\"false\",\"Sni\":\"${TLS_SERVER}\",\"Cert\":\"${CERT_200_URL_2}\",\"ProtoExtraObj\":{\"CongestionControl\":\"bbr\",\"NaiveQuic\":true}}" | base64 -w0 | tr '+/' '-_' | tr -d '=')"
 
-  echo -n "$V2RAYN_SUBSCRIBE" | sed '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/d' | sed -E '/^[ ]*#|^[ ]+|^\{|^\}/d' | sed '/^$/d' | base64 -w0 > ${WORK_DIR}/subscribe/v2rayn
+  # 生成 V2rayN 订阅文件
+  # 注意：只剥离 PEM 证书块/注释行/空行；不能删除缩进行和花括号行，
+  # 否则 ShadowTLS 的多行 sing-box JSON 配置会被整体删掉，订阅中该协议为空
+  echo -n "$V2RAYN_SUBSCRIBE" | sed '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/d' | sed -E '/^[ ]*#/d' | sed '/^$/d' | base64 -w0 > ${WORK_DIR}/subscribe/v2rayn
 
   # 生成 Throne 订阅文件
   [ -n "$PORT_XTLS_REALITY" ] && local THRONE_SUBSCRIBE+="
