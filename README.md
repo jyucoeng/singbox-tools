@@ -1,5 +1,7 @@
 #  singbox一键安装脚本、socks5一键脚本、mtp一键脚本
 
+> 在线体验：https://singbox.dingdang.de5.net/
+
 ## 请点击跳转对应的readme
 
 - [singbox一键安装脚本](https://github.com/jyucoeng/singbox-tools/blob/main/README-sb.md#仅socks5-协议)（含 socks5 协议及 IP白名单）
