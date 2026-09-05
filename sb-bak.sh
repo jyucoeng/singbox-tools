@@ -1,4 +1,14 @@
 #!/bin/sh
+# ============================================================
+# ⚠️  废弃存档（FROZEN ARCHIVE）—— 请勿用于新安装
+#
+# 本文件是 v1.0.25(2026-08-25) 的历史备份，自提交 7a9bebb 后已冻结不再维护：
+#   1. 自更新 URL 指向本冻结文件，无法获得任何后续修复；
+#   2. 缺少 sb.sh 中的 Socks5 IP 白名单与 iptables 防火墙框架；
+#   3. 保留着已被 sb.sh 修复的缺陷：覆盖安装会 `iptables -F` 清空整机规则
+#      并把"全开放"状态持久化到 /etc/iptables/rules.v4。
+# 请使用主线脚本： https://github.com/jyucoeng/singbox-tools#readme
+# ============================================================
 # 若没有 bash 则自动安装
 if [ -z "${BASH_VERSION}" ]; then
   if command -v apk >/dev/null 2>&1; then
@@ -11,6 +21,15 @@ if [ -z "${BASH_VERSION}" ]; then
     echo "错误：需要 bash 运行此脚本，请先安装 bash。" >&2
     exit 1
   fi
+fi
+
+# 已废弃脚本默认拒绝执行；确有需要请显式 ALLOW_FROZEN_SBBAK=1
+if [ "${ALLOW_FROZEN_SBBAK:-0}" != "1" ]; then
+  echo "❌ sb-bak.sh 是已停止维护的历史存档（v1.0.25），包含已知安全缺陷，默认禁止执行。"
+  echo "   请使用主线脚本 sb.sh："
+  echo "     bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)"
+  echo "   如确需运行本存档（自担风险），请使用：ALLOW_FROZEN_SBBAK=1 bash sb-bak.sh"
+  exit 1
 fi
 
 
