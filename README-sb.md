@@ -581,6 +581,24 @@ cat /root/doraemon/port_socks5
 
 ## 版本变更信息
 
+v2.0.2 (2026-09-07)
+ - **安全加固**
+ - 新增 root 权限检查：非 root 运行直接拒绝（脚本会写 /root、/etc/systemd、(openrc) init.d、/etc/iptables 等系统目录）
+ - 安装日志权限收紧：`logs/` 目录 700、`install.log` 600（日志内含 UUID / reality 私钥 / socks5 口令，旧版默认 644 世界可读）
+ - 修复维护命令污染安装日志：`list`/`cip` 等场景直写 `install.log` 改由 `INSTALL_LOGGING` 控制，不再破坏"仅保留最近一次安装"
+ - Argo token 落盘权限收紧：systemd `/etc/systemd/system/argo.service` / openrc `/etc/init.d/argo` 现在 chmod 600，旧版 644 任何本地用户可窃取隧道 token
+ - **修复 `sb.json` 改写后权限回落 644**：分流管理 / 改端口 / 改 SNI / 增删代理等 25+ 处 `jq > tmp && mv` 写回统一走新增的 `sbj_save()`（校验 tmp 为合法 JSON + 强制 chmod 600），`sb.json` 内含全部协议口令
+ - uuid 增加字符集校验（仅允许 `[0-9a-fA-F-]`）：用户传入 uuid 会拼进 nginx location 与订阅路径，防换行/控制符配置注入
+ - 快捷命令 wrapper 加固（`gen_online_wrapper()`）：执行前校验被拉取脚本含 `VERSION` 声明（拦截错误页/被篡改内容）、版本与生成时不一致给出提示（发现 raw.githubusercontent CDN 缓存 / 拉取异常）；顺带修复 `singbox` wrapper 依赖未导出 `SINGBOX_FOLDER_PATH` 导致永远走在线拉取的 bug
+ - 移除"把含账号密码的代理 URL 发给第三方检测 API（check.socks5.cmliussss.net）"的逻辑，改本机 curl 穿代理自测，凭据只到达代理本身
+ - 新增可选下载校验和：设置 `SINGBOX_ARCHIVE_SHA256` / `CLOUDFLARED_SHA256` 环境变量可强制校验 sing-box / cloudflared 下载文件（未设置则维持原有 内容嗅探 + 结构 + 版本号 校验）
+ - 地区查询（ip-api.com）改为 https 优先、失败回退 http
+ - **功能 / Bug 修复**
+ - nginx 订阅端口加入防火墙：`apply_singbox_iptables_rules` 在 subscribe=true 或启用 Argo 时为 nginx_pt 添加 ACCEPT；新增统一 `refresh_firewall_rules()`（flush + 重放 + 白名单 + 保存），`ins`、端口修改菜单、订阅端口修改菜单统一调用，修复「改端口后防火墙不刷新、新端口被挡旧端口仍放行」的问题
+ - 端口占用检测内存化：`SB_TAKEN_PORTS` 改用关联数组 O(1) 查重；`rand_port` 用启动时 ss 快照预筛 + 实时 ss 兜底（安装等集中分配流程省去重复 fork，交互菜单等长停留场景仍实时检测保证准确）
+ - 修复未安装时 `list`/`sub`/`node`/`rt`/`logs` 等维护命令被"至少设置一个协议变量"守卫误拦的问题（仅 ins/rep 强制要求）
+ - 修复 vless-ws 端口复用在 `port_vm_ws` 为空文件时端口为空、jq `tonumber("")` 失败导致 vless-ws 入站静默丢失的边界 bug
+
 v2.0.1 (2026-09-06)
  - argo 取值变更为 `vmess / vless / trojan`（三选一，统一转小写）；旧值 `vmpt/trpt/vlpt` 彻底废弃，不再读取
  - 外部传入非法 argo（含旧值）在安装/覆盖安装时直接提示并退出；已落盘配置（vlvm）依然认可
