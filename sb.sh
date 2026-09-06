@@ -25,7 +25,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.0.30(2026-09-05)"
+VERSION="2.0.1(2026-09-06)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -37,9 +37,12 @@ export any_sni=${any_sni:-"www.apple.com"}  # Default SNI for anytls protocol
 
 # Environment variables for ports and other settings
 export uuid=${uuid:-''}
-export port_vm_ws=${vmpt:-''}
-export port_vl_ws=${vlpt:-''}
-export port_tr=${trpt:-''}
+# ⚠️ Argo 三协议（vmess/trojan/vless）由 argo=vmess/trojan/vless 决定启用，
+#    本地回源端口不接受外部指定：旧变量 trpt/vmpt/vlpt 已彻底废弃（不再读取），
+#    端口一律由脚本随机分配（或复用已落盘 port_* 文件），避免 NAT/端口冲突问题。
+export port_vm_ws=''
+export port_vl_ws=''
+export port_tr=''
 export port_hy2=${hypt:-''}
 export port_vlr=${vlrt:-''}
 export port_tu=${tupt:-''}
@@ -54,7 +57,14 @@ export socks5_ips=${socks5_ips:-''}      # socks5 IP白名单列表, 逗号分�
 export out_ip=${out_ip:-''}
 
 # Argo 相关环境变量
-export argo=${argo:-''}
+# argo 取值：vmess / vless / trojan（三选一），不传=不启用 Argo
+# 外部传入值统一转小写；旧值 vmpt/trpt/vlpt 已废弃，外界传入会被判非法
+# ⚠️ 合法校验只作用于“安装/覆盖安装(ins/rep)”时外界传入的 argo；
+#    已落盘的配置（vlvm 文件）依然认可，维护命令与菜单不受影响
+_normalize_argo() {
+    printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]'
+}
+export argo="$(_normalize_argo "${argo:-}")"
 export ARGO_DOMAIN=${agn:-''}
 export ARGO_AUTH=${agk:-''}
 export ippz=${ippz:-''}
@@ -149,25 +159,18 @@ get_subscribe_flag() {
 is_yes() { [ "${1:-}" = "yes" ]; }
 
 # 这些变量是你脚本外部用来“开启协议”的标记：
-# trpt / hypt / vmpt / vlpt / vlrt / tupt / anypt / socks5pt
+# hypt / vlrt / tupt / anypt / socks5pt
 # 只要标记存在，就启用对应协议
-if [ -n "${trpt+x}" ]; then
-    trp=yes
-    vmag=yes
-fi
+# ⚠️ vmess/trojan/vless 这三个协议完全由 argo=vmess/trojan/vless 决定，
+#    旧变量 trpt/vmpt/vlpt 已彻底废弃（脚本不再读取），本地回源端口由脚本随机/复用文件
+case "${argo:-}" in
+    trojan) trp=yes;  vmag=yes ;;
+    vmess)  vmp=yes;  vmag=yes ;;
+    vless)  vlp=yes;  vmag=yes ;;
+esac
 
 if [ -n "${hypt+x}" ]; then
     hyp=yes
-fi
-
-if [ -n "${vmpt+x}" ]; then
-    vmp=yes
-    vmag=yes
-fi
-
-if [ -n "${vlpt+x}" ]; then
-    vlp=yes
-    vmag=yes
 fi
 
 if [ -n "${vlrt+x}" ]; then
@@ -200,7 +203,7 @@ need_argo() {
     if [ -n "${argo:-}" ]; then
         argo_src="env"
         argo_val="$argo"
-        if [ "$argo_val" = "vmpt" ] || [ "$argo_val" = "trpt" ] || [ "$argo_val" = "vlpt" ]; then
+        if [ "$argo_val" = "vmess" ] || [ "$argo_val" = "vless" ] || [ "$argo_val" = "trojan" ]; then
             argo_needed=1
         fi
     elif [ -s "$SINGBOX_FOLDER_PATH/vlvm" ]; then
@@ -223,6 +226,20 @@ need_argo() {
 # 已安装/未安装的参数规则检查
 # 命令参数转小写，供顶层 guard 大小写不敏感比对
 _cmd0="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
+
+# argo 合法性校验：仅安装/覆盖安装(ins/rep)时拦截“外界传入”的非法值；
+# 已落盘配置（vlvm 文件）依然认可，维护命令(list/node/sub/res/del/logs 等)与菜单不校验、不受影响
+if [ "$_cmd0" = "ins" ] || [ "$_cmd0" = "rep" ]; then
+    case "${argo:-}" in
+        ""|vmess|vless|trojan) : ;;
+        *)
+            echo "❌ argo 参数非法：${argo}"
+            echo "   argo 仅支持以下取值之一（vmess / vless / trojan），或留空=不启用 Argo"
+            echo "   （旧值 vmpt/trpt/vlpt 已废弃，外界传入也不再支持）"
+            exit 1
+            ;;
+    esac
+fi
 
 # 无参数或 menu 命令（交互式菜单）时跳过“必须设置协议变量”的守卫
 if [ -n "$_cmd0" ] && [ "$_cmd0" != "menu" ]; then
@@ -1037,10 +1054,56 @@ export cdn_pt
 
 # ================== 处理tunnel的json ==================
 
-# 随机端口（尽量避开已在监听的端口，最多重试 20 次）
+# ================== 端口占用登记（避免各协议随机端口互相冲突） ==================
+# 全局数组：记录本脚本运行期间所有已被占用的本地端口
+declare -a SB_TAKEN_PORTS=()
+
+# 登记一个端口为“已占用”（幂等；非法/越界端口忽略）
+sb_take_port() {
+    local p="$1"
+    [ -z "$p" ] && return 0
+    # 只接受有效端口号（1-65535）
+    printf '%s' "$p" | grep -qE '^[0-9]+$' || return 0
+    { [ "$p" -ge 1 ] && [ "$p" -le 65535 ]; } || return 0
+    local x
+    for x in "${SB_TAKEN_PORTS[@]}"; do
+        [ "$x" = "$p" ] && return 0
+    done
+    SB_TAKEN_PORTS+=("$p")
+    return 0
+}
+
+# 判断端口是否已被登记占用
+sb_port_taken() {
+    local p="$1" x
+    for x in "${SB_TAKEN_PORTS[@]}"; do
+        [ "$x" = "$p" ] && return 0
+    done
+    return 1
+}
+
+# 登记所有已知端口：环境变量 / 服务端口 / 已落盘的端口文件
+# 这样 rand_port 随机时会主动避开，避免与其他协议/服务端口冲突
+sb_take_known_ports() {
+    local p f
+    for p in "$port_vm_ws" "$port_vl_ws" "$port_tr" "$port_hy2" "$port_vlr" "$port_tu" "$port_any" "$port_socks5"; do
+        sb_take_port "$p"
+    done
+    sb_take_port "${nginx_pt:-$NGINX_DEFAULT_PORT}"
+    sb_take_port "${argo_pt:-$ARGO_DEFAULT_PORT}"
+    # 已落盘的端口文件（覆盖安装时这些端口仍会被复用，同样算已占用）
+    for f in "$SINGBOX_FOLDER_PATH"/port_*; do
+        [ -s "$f" ] && sb_take_port "$(tr -d '\r\n' < "$f" 2>/dev/null)"
+    done
+}
+
+# 脚本启动时先登记已知端口（CLI 无交互模式在此就位）
+sb_take_known_ports
+
+# 随机端口（避开已在监听的端口 + 本脚本已登记的端口，最多重试 40 次）
 rand_port() {
     local p="" tries=0
-    while [ "$tries" -lt 20 ]; do
+    while [ "$tries" -lt 40 ]; do
         # 优先用 shuf（最常见）
         if command -v shuf > /dev/null 2>&1; then
             p="$(shuf -i 10000-65535 -n 1)"
@@ -1052,7 +1115,11 @@ rand_port() {
             p=$((($(date +%s) % 55535) + 10000))
         fi
         tries=$((tries + 1))
-        # 有 ss 时检查 TCP/UDP 是否已监听；被占用则换下一个
+        # 1) 避开本脚本已登记的端口（其他协议/服务端口，含本次运行内已随机出的端口）
+        if sb_port_taken "$p"; then
+            continue
+        fi
+        # 2) 有 ss 时检查 TCP/UDP 是否已监听；被占用则换下一个
         if command -v ss > /dev/null 2>&1; then
             if { ss -ltn 2>/dev/null; ss -uln 2>/dev/null; } | grep -qE "[:.]${p}[[:space:]]"; then
                 continue
@@ -1060,6 +1127,8 @@ rand_port() {
         fi
         break
     done
+    # 随机成功后自动登记，避免本次运行内后续随机端口重复
+    sb_take_port "$p"
     echo "$p"
 }
 
@@ -1192,8 +1261,8 @@ apply_singbox_iptables_rules() {
     IFS=$'\n'
     for _pt in $_ports_tags; do
         [ -z "$_pt" ] && continue
-        local _tag="${_pt%%	*}"
-        local _port="${_pt#*	}"
+        local _tag="${_pt%% *}"
+        local _port="${_pt#*    }"
         [ -z "$_port" ] && continue
 
         local _need_tcp=false _need_udp=false
@@ -2072,6 +2141,10 @@ installsb() {
     local sbj="$SINGBOX_FOLDER_PATH/sb.json"
     local tmpj="$SINGBOX_FOLDER_PATH/.sb.tmp"
 
+    # 登记本次安装所有已知端口（环境变量 + 服务端口 + 旧端口文件），
+    # 让后续 rand_port 随机端口避开，防止多个协议随机/显式端口互相冲突
+    sb_take_known_ports
+
     # Initialize JSON with log config (matching index.js generateSingBoxConfig style)
     jq -n --arg logfile "$LOGS_DIR/singbox.log" '{log: {disabled: false, level: "info", timestamp: true, output: $logfile}, inbounds: []}' > "$sbj"
 
@@ -2087,6 +2160,7 @@ installsb() {
         fi
         port_tu=$(cat "$SINGBOX_FOLDER_PATH/port_tu")
         yellow "Tuic端口：$port_tu"
+        debug_log " [调试] Tuic端口已写入文件：$SINGBOX_FOLDER_PATH/port_tu"
 
         jq --arg port "$port_tu" --arg uuid "$uuid" \
             --arg cert "$SINGBOX_FOLDER_PATH/cert.pem" --arg key "$SINGBOX_FOLDER_PATH/private.key" '
@@ -2109,6 +2183,7 @@ installsb() {
         fi
         port_hy2=$(cat "$SINGBOX_FOLDER_PATH/port_hy2")
         yellow "Hysteria2端口：$port_hy2"
+        debug_log " [调试] Hysteria2端口已写入文件：$SINGBOX_FOLDER_PATH/port_hy2"
 
         jq --arg port "$port_hy2" --arg uuid "$uuid" \
             --arg cert "$SINGBOX_FOLDER_PATH/cert.pem" --arg key "$SINGBOX_FOLDER_PATH/private.key" '
@@ -2130,6 +2205,7 @@ installsb() {
         fi
         port_tr=$(cat "$SINGBOX_FOLDER_PATH/port_tr")
         yellow "Trojan端口(Argo本地使用)：$port_tr"
+        debug_log " [调试] Trojan端口已写入文件：$SINGBOX_FOLDER_PATH/port_tr"
 
         jq --arg port "$port_tr" --arg uuid "$uuid" '
             .inbounds += [{
@@ -2150,6 +2226,7 @@ installsb() {
         fi
         port_vm_ws=$(cat "$SINGBOX_FOLDER_PATH/port_vm_ws")
         yellow "Vmess-ws端口 (Argo本地使用)：$port_vm_ws"
+        debug_log " [调试] Vmess-ws端口已写入文件：$SINGBOX_FOLDER_PATH/port_vm_ws"
 
         jq --arg port "$port_vm_ws" --arg uuid "$uuid" '
             .inbounds += [{
@@ -2174,6 +2251,7 @@ installsb() {
         fi
         port_vl_ws=$(cat "$SINGBOX_FOLDER_PATH/port_vl_ws")
         yellow "Vless-ws端口 (Argo本地使用)：$port_vl_ws"
+        debug_log " [调试] Vless-ws端口已写入文件：$SINGBOX_FOLDER_PATH/port_vl_ws"
 
         jq --arg port "$port_vl_ws" --arg uuid "$uuid" '
             .inbounds += [{
@@ -2194,6 +2272,7 @@ installsb() {
         fi
         port_vlr=$(cat "$SINGBOX_FOLDER_PATH/port_vlr")
         yellow "VLESS-Reality-Vision端口：$port_vlr"
+        debug_log " [调试] VLESS-Reality-Vision端口已写入文件：$SINGBOX_FOLDER_PATH/port_vlr"
 
         if [ ! -f "$SINGBOX_FOLDER_PATH/reality.key" ]; then
             "$SINGBOX_FOLDER_PATH/sing-box" generate reality-keypair > "$SINGBOX_FOLDER_PATH/reality.key"
@@ -2245,6 +2324,7 @@ installsb() {
 
         port_any=$(cat "$SINGBOX_FOLDER_PATH/port_any")
         yellow "AnyTLS端口：$port_any"
+        debug_log " [调试] AnyTLS端口已写入文件：$SINGBOX_FOLDER_PATH/port_any"
 
         # 确保证书存在（如果 hy2/tuic 未启用，anytls 需要自己生成）
         if [ ! -s "$SINGBOX_FOLDER_PATH/cert.pem" ] || [ ! -s "$SINGBOX_FOLDER_PATH/private.key" ]; then
@@ -2277,6 +2357,7 @@ installsb() {
         init_socks5_whitelist
         port_socks5=$(cat "$SINGBOX_FOLDER_PATH/port_socks5")
         yellow "Socks5端口：$port_socks5"
+        debug_log " [调试] Socks5端口已写入文件：$SINGBOX_FOLDER_PATH/port_socks5"
         yellow "Socks5用户名：$socks5_username"
         yellow "Socks5密码：$socks5_password"
         local _wl_flag_val=""
@@ -2641,9 +2722,9 @@ nginx_status() {
 
 # 确保 cloudflared 如果需要
 ensure_cloudflared_if_needed() {
-    # ✅ 仅当启用 argo=vmpt/trpt/vlpt 且 vmag 存在时才需要 cloudflared
+    # ✅ 仅当启用 argo=vmess/trojan/vless 且 vmag 存在时才需要 cloudflared
     debug_log "【调试】ensure_cloudflared_if_needed：检查是否需要 cloudflared"
-    if { [ "${argo:-}" != "vmpt" ] && [ "${argo:-}" != "trpt" ] && [ "${argo:-}" != "vlpt" ]; } || [ -z "${vmag:-}" ]; then
+    if { [ "${argo:-}" != "vmess" ] && [ "${argo:-}" != "trojan" ] && [ "${argo:-}" != "vless" ]; } || [ -z "${vmag:-}" ]; then
         debug_log "【调试】ensure_cloudflared_if_needed：未启用 Argo（或未启用 vmess/trojan/vless），跳过 cloudflared 下载/安装"
         purple "ℹ️ 未启用 Argo（或未启用 vmess/trojan/vless），跳过 cloudflared 下载/安装"
         return 0
@@ -2951,7 +3032,7 @@ post_install_finalize_legacy() {
 ensure_nginx_if_needed() {
     # ✅ 需要 Nginx 的条件：
     # 1) 订阅开启 subscribe=true
-    # 2) 启用 argo（vmpt/trpt/vlpt）
+    # 2) 启用 argo（vmess/trojan/vless；旧值 vmpt/trpt/vlpt 已废弃）
     local need_nginx=false
 
     if is_true "$(get_subscribe_flag)"; then
@@ -3240,6 +3321,7 @@ ins() {
         debug_log "【调试】已进入 Argo 启动分支（argo=${argo}，vmag=${vmag}）"
         echo
         echo "=========启用Cloudflared-argo内核========="
+        yellow "Argo协议: ${argo}"
 
         # ✅ 3.1 仅在需要 argo 时才确保 cloudflared 存在
         ensure_cloudflared_if_needed || {
@@ -3254,11 +3336,11 @@ ins() {
         echo "$argoport" > "$SINGBOX_FOLDER_PATH/argoport"
 
         # 仍然记录 Argo 输出节点类型（给 cip 用）
-        if [ "$argo" = "vmpt" ]; then
+        if [ "$argo" = "vmess" ]; then
             echo "Vmess" > "$SINGBOX_FOLDER_PATH/vlvm"
-        elif [ "$argo" = "trpt" ]; then
+        elif [ "$argo" = "trojan" ]; then
             echo "Trojan" > "$SINGBOX_FOLDER_PATH/vlvm"
-        elif [ "$argo" = "vlpt" ]; then
+        elif [ "$argo" = "vless" ]; then
             echo "Vless" > "$SINGBOX_FOLDER_PATH/vlvm"
         fi
 
@@ -4137,7 +4219,8 @@ check_port_conflicts_or_exit() {
     fi
 
     # 固定检查协议端口；subscribe=true 时才额外检查 nginx_pt
-    local vars="vmpt vlpt trpt vlrt hypt tupt anypt socks5pt"
+    # 注：vmpt/vlpt/trpt 已彻底废弃（不再读取），不参与端口冲突检查
+    local vars="vlrt hypt tupt anypt socks5pt"
     if $need_nginx; then
         vars="$vars argo_pt nginx_pt"
     fi
@@ -4384,19 +4467,25 @@ menu_status_block() {
 # 根据 *pt 环境变量重新推导协议开关与端口变量（交互模式设置环境变量后调用）
 menu_reload_proto_flags() {
     trp=; vmag=; hyp=; vmp=; vlp=; vlr=; tup=; anyp=; socksp=
-    [ -n "${trpt+x}" ] && { trp=yes; vmag=yes; }
     [ -n "${hypt+x}" ] && hyp=yes
-    [ -n "${vmpt+x}" ] && { vmp=yes; vmag=yes; }
-    [ -n "${vlpt+x}" ] && { vlp=yes; vmag=yes; }
     [ -n "${vlrt+x}" ] && vlr=yes
     [ -n "${tupt+x}" ] && tup=yes
     [ -n "${anypt+x}" ] && anyp=yes
     [ -n "${socks5pt+x}" ] && socksp=yes
+    # vmess/trojan/vless 由 argo 驱动（三选一；旧变量 trpt/vmpt/vlpt 已废弃）
+    case "${argo:-}" in
+        trojan) trp=yes; vmag=yes ;;
+        vmess)  vmp=yes; vmag=yes ;;
+        vless)  vlp=yes; vmag=yes ;;
+    esac
     export trp hyp vmp vlp vlr tup anyp socksp vmag
     # 重新绑定端口变量（与文件顶部一致）
-    export port_vm_ws=${vmpt:-''} port_vl_ws=${vlpt:-''} port_tr=${trpt:-''} port_hy2=${hypt:-''} \
+    # 注：vmpt/vlpt/trpt 已彻底废弃（不再读取），端口由脚本随机/复用落盘文件
+    export port_vm_ws='' port_vl_ws='' port_tr='' port_hy2=${hypt:-''} \
            port_vlr=${vlrt:-''} port_tu=${tupt:-''} port_any=${anypt:-''} \
            port_socks5=${socks5pt:-''}
+    # 交互模式端口确定后重新登记，让后续随机端口避开已选定的端口
+    sb_take_known_ports
 }
 
 # 读取端口；空则返回空（表示随机生成）
@@ -4557,10 +4646,10 @@ menu_collect_install() {
     reading "输入选项 (回车=不选): " _ans
     _ans="$(printf '%s' "$_ans" | tr '[:upper:]' '[:lower:]')"
     case "$_ans" in
-        *g*) _ch="$_ch g"; green "  ↳ Argo 协议: Trojan-WS-TLS" ;;
-        *v*) _ch="$_ch v"; green "  ↳ Argo 协议: Vless-WS-TLS" ;;
-        *f*) _ch="$_ch f"; green "  ↳ Argo 协议: Vmess-WS-TLS" ;;
-        *) : ; green "  ↳ Argo 协议: 不选 (默认)" ;;
+        *g*) export argo=trojan; green "  ↳ Argo 协议: Trojan-WS-TLS" ;;
+        *v*) export argo=vless;  green "  ↳ Argo 协议: Vless-WS-TLS" ;;
+        *f*) export argo=vmess;  green "  ↳ Argo 协议: Vmess-WS-TLS" ;;
+        *)   export argo="";     green "  ↳ Argo 协议: 不选 (默认)" ;;
     esac
 
     # Socks5 协议：可要可不要
@@ -4579,9 +4668,6 @@ menu_collect_install() {
             c) export hypt="" ;;
             d) export tupt="" ;;
             e) export anypt="" ;;
-            f) export vmpt="" ;;
-            g) export trpt="" ;;
-            v) export vlpt="" ;;
             h) export socks5pt="" ;;
             *) yellow "  跳过未知选项: $_sel" ;;
         esac
@@ -4597,9 +4683,8 @@ menu_collect_install() {
     reading "输入选择 (回车默认=2): " _ans
     if [ -z "$_ans" ] || [ "$_ans" = "2" ]; then
         green "  ↳ 端口: 逐个自定义 (默认)"
-        [ -n "$trp" ] && export trpt="$(menu_ask_port "Trojan-WS (Argo)")"
-        [ -n "$vmp" ] && export vmpt="$(menu_ask_port "Vmess-WS (Argo)")"
-        [ -n "$vlp" ] && export vlpt="$(menu_ask_port "Vless-WS (Argo)")"
+        # Argo 三协议本地回源端口不接受外部指定，一律随机；仅直连协议才询问端口
+        [ -n "$trp$vmp$vlp" ] && green "  ↳ Argo (vmess/trojan/vless) 本地回源端口：自动随机（不接受外部指定）"
         for _sel in vlr hyp tup anyp; do
             case "$_sel" in
                 vlr)  [ -n "$vlr" ]  && export vlrt="$(menu_ask_port "VLESS-Reality")" ;;
@@ -4611,9 +4696,8 @@ menu_collect_install() {
         [ -n "$trp$vmp$vlp" ] && export argo_pt="$(menu_ask_port "Argo" 8001)"
     else
         green "  ↳ 端口: 全部随机生成"
-        [ -n "$trp" ] && { trpt="$(rand_port)"; export trpt; green "  ↳ Trojan-WS (Argo) 端口: ${trpt} (随机)"; }
-        [ -n "$vmp" ] && { vmpt="$(rand_port)"; export vmpt; green "  ↳ Vmess-WS (Argo) 端口: ${vmpt} (随机)"; }
-        [ -n "$vlp" ] && { vlpt="$(rand_port)"; export vlpt; green "  ↳ Vless-WS (Argo) 端口: ${vlpt} (随机)"; }
+        # Argo 三协议本地回源端口不接受外部指定，一律随机；仅直连协议走随机
+        [ -n "$trp$vmp$vlp" ] && green "  ↳ Argo (vmess/trojan/vless) 本地回源端口：自动随机（不接受外部指定）"
         [ -n "$vlr" ] && { vlrt="$(rand_port)"; export vlrt; green "  ↳ VLESS-Reality 端口: ${vlrt} (随机)"; }
         [ -n "$hyp" ] && { hypt="$(rand_port)"; export hypt; green "  ↳ Hysteria2 端口: ${hypt} (随机)"; }
         [ -n "$tup" ] && { tupt="$(rand_port)"; export tupt; green "  ↳ TUIC 端口: ${tupt} (随机)"; }
@@ -4623,17 +4707,7 @@ menu_collect_install() {
 
     menu_reload_proto_flags
 
-    # Argo 隧道配置（vmess/trojan/vless 已强制三选一，这里最多启用一个）
-    if [ -n "$vmp" ]; then
-        export argo=vmpt
-    elif [ -n "$trp" ]; then
-        export argo=trpt
-    elif [ -n "$vlp" ]; then
-        export argo=vlpt
-    else
-        export argo=""
-    fi
-
+    # Argo 隧道配置（argo 已在“选择 Argo 隧道协议”处设置，这里直接使用）
     if [ -n "$argo" ]; then
         echo ""
         purple "===== Argo 隧道配置 ====="
