@@ -152,6 +152,30 @@ read_valid_port() {
     done
 }
 
+# --- 伪装域名选择（下拉框 1-6 选择，或直接自定义输入） ---
+# 用法: select_display_domain [留空时使用的默认值]，默认为 www.apple.com
+select_display_domain() {
+    local def="${1:-www.apple.com}"
+    echo -e "请选择伪装域名 (输入 1-6 选择，或直接输入自定义域名):" >&2
+    echo -e "1. ${GREEN}www.apple.com${PLAIN}" >&2
+    echo -e "2. ${YELLOW}www.microsoft.com${PLAIN}" >&2
+    echo -e "3. ${YELLOW}www.amazon.com${PLAIN}" >&2
+    echo -e "4. ${YELLOW}www.bing.com${PLAIN}" >&2
+    echo -e "5. ${YELLOW}www.mozilla.org${PLAIN}" >&2
+    echo -e "6. ${YELLOW}www.wikipedia.org${PLAIN}" >&2
+    read -p "请选择 [1-6] 或输入自定义域名 (留空使用默认 $def): " _domain
+    [ -z "$_domain" ] && _domain="$def"
+    case $_domain in
+        1) echo "www.apple.com" ;;
+        2) echo "www.microsoft.com" ;;
+        3) echo "www.amazon.com" ;;
+        4) echo "www.bing.com" ;;
+        5) echo "www.mozilla.org" ;;
+        6) echo "www.wikipedia.org" ;;
+        *) echo "$_domain" ;;
+    esac
+}
+
 # --- 服务状态检测 ---
 get_service_status_str() {
     local SERVICE=$1

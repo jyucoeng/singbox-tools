@@ -53,12 +53,10 @@ tu_sni='www.apple.com' \
 uuid=0631a7f3-09f8-4144-acf2-a4f5bd9ed200 \
 ippz=4 \
 out_ip='你的特殊出口ip(仅当你的出口ip和服务器ip不一致时有效，需配合ipzz使用，一般情况下留空或者不传值)' \
-trpt=41002(备注：pt为 port的简写) \
-vlpt=41008(备注：pt为 port的简写，vless argo 用) \
 vlrt=41003(备注：rt为 reality port的简写) \
 hypt=41004 \
 tupt=41005 \
-argo="trpt" \
+argo="trojan" \
 anypt=41006 \
 nginx_pt=41007 \
 socks5pt=41017 \
@@ -179,19 +177,17 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
  ## 5、 各种端口
 
    ```bash
-   trpt=41003 \
    hypt=41001 \
    vlrt=41002 \
-   vlpt=41008 \
-   vmpt=41004 \
    tupt=41005 \
    anypt=41006 \
    socks5pt=31017 \
    nginx_pt=31007 \
    ```
-   这些分别为trojan、hy2、vless-reality、vless-argo、tuic、anytls、vmess、socks5、nginx订阅地址的端口.
+   这些分别为hy2、vless-reality、tuic、anytls、socks5、nginx订阅地址的端口.
    - pt为 port的简写
    - rt为 reality port的简写
+   - ⚠️ vmess/trojan/vless 这三个协议的启用由 argo=vmess/trojan/vless 决定，其本地回源端口不接受指定（旧变量 trpt/vmpt/vlpt 已废弃），端口由脚本自动随机或复用落盘文件。
 
 ## 6、 nginx_pt=? nginx订阅端口，默认值为 8080。
 
@@ -200,22 +196,40 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
 
 ❗注意：nginx_pt与argo_pt的值不能同时为8001，不然会导致监听混乱(换句人话：如果你不改argo_pt的值，nginx_pt就不能设置为8001)。
 
+### 6.1、 什么时候会安装 Nginx（速查）
+
+Nginx 只在以下任一情况满足时才安装/配置：
+
+| 场景 | subscribe 订阅 | argo | 是否安装 Nginx |
+|---|---|---|---|
+| 纯直连（hy2/vless-reality/tuic/anytls/socks5） | 关 | 关 | ❌ 不安装 |
+| 只开 Argo（argo=vmess/trojan/vless） | 关 | 开 | ✅ 安装（argo 回源走 Nginx 反代） |
+| 只开订阅 | 开 | 关 | ✅ 安装（对外提供订阅地址） |
+| Argo + 订阅都有 | 开 | 开 | ✅ 安装 |
+
+> 即使不开启订阅，只要启用 Argo 就会安装 Nginx：因为 Argo 的数据链路是
+> `cloudflared → 127.0.0.1:8001(Nginx) → sing-box 对应 ws 端口`，Nginx 负责按路径反代。
+
 ## 7、 subscribe 订阅开关，默认值为false，即不需要nginx订阅。
 
-- false → 默认 不生成订阅（也不会安装nginx）
+- false → 默认 不生成订阅；但若启用了 Argo，Nginx 仍会因回源反代被安装
 - true →  会生成订阅。当设置为true时，需要同时设置nginx的订阅端口参数：nginx_pt=?
 
 
 ## 8、 argo（Cloudflare Argo 开关）
 
-- 当argo=vmpt 表示启用vmess的argo
-- 当argo=trpt 表示启用trojan的argo
-- 当argo=vlpt 表示启用vless的argo
+- 当argo=vmess 表示启用vmess的argo
+- 当argo=trojan 表示启用trojan的argo
+- 当argo=vless 表示启用vless的argo
 - 或者这个argo参数留空，表示不启用argo
 
 ⚠️ Argo 只能用于 VMess / Trojan / Vless，是3选1的模式，暂时不支持同时argo
 
-❌ 对 hypt / vlrt / tupt无效（vless 用的是 vlpt，即 vless-ws 走 argo）
+❌ 对 hypt / vlrt / tupt无效（vless 走的是 vless-ws，即 argo=vless）
+
+> ⚠️ argo 值统一转小写后校验，安装/覆盖安装时只接受 vmess / vless / trojan 之一（或留空）。
+> 旧值 vmpt / trpt / vlpt 已废弃，外界传入会被判非法并退出；已落盘配置（vlvm 文件）依然认可。
+> 这三个协议的启用完全由 `argo=` 决定，本地回源端口不接受指定（自动随机/复用文件），无需再传 trpt/vmpt/vlpt 端口变量。
 
 ## 9、 agn / agk（Argo 固定隧道）
 
@@ -289,12 +303,11 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
 ```bash
 uuid=0631a7f3-09f8-4144-acf2-a4f5bd9ed200 \
 ippz=4 \
-trpt=41002 \
 vlrt=41003 \
 hypt=41004 \
 tupt=41005 \
 anypt=41006 \
-argo="trpt" \
+argo="trojan" \
 nginx_pt=41007 \
 socks5pt=31017 \
 socks5_username='zhangsan' \
@@ -367,8 +380,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ```bash
 ippz=4 \
-trpt=41003 \
-argo=vmpt \
+argo=vmess \
 agn="test-trojan.xxxx.xyz" \
 agk="ey开头的那一串" \
 name="小叮当-韩国春川vmess"  \
@@ -380,7 +392,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 ```bash
 ippz=4 \
 trpt=41002 \
-argo=trpt \
+argo=trojan \
 agn="test-vmess.xxxx.xyz" \
 agk="ey开头的那一串" \
 name="小叮当-韩国春川trojanc"  \
@@ -392,7 +404,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 ```bash
 ippz=4 \
 vlpt=41008 \
-argo=vlpt \
+argo=vless \
 agn="test-vless.xxxx.xyz" \
 agk="ey开头的那一串" \
 name="小叮当-韩国春川vless"  \
@@ -406,7 +418,7 @@ ippz=4 \
 hypt=41001 \
 vlrt=41002 \
 vmpt=41003 \
-argo=vmpt \
+argo=vmess \
 agn="test-vmess.xxxx.xyz" \
 agk="ey开头的那一串" \
 name="小叮当-韩国春川"  \
@@ -423,7 +435,7 @@ trpt=41002 \
 vlrt=41003 \
 hypt=41004 \
 tupt=41005 \
-argo="trpt" \
+argo="trojan" \
 agn="northCarolina.xxxx.xyz" \
 agk='{"AccountTag":"xxxxxxxxxxxxxx","TunnelSecret":"xxxxxxxxxxxxxx","TunnelID":"xxxxxxxxxxxxxx","Endpoint":""}' \
 name="小叮当-美国北卡"  \
@@ -457,9 +469,9 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 | vmpt                         | 0（无直连）                                           |
 | trpt                         | 0（无直连）                                           |
 | vlpt                         | 0（无直连）                                           |
-| vmpt + argo=vmpt             | 1（Argo-vmess）                                       |
-| trpt + argo=trpt             | 1（Argo-trojan）                                      |
-| vlpt + argo=vlpt             | 1（Argo-vless）                                       |
+| vmpt + argo=vmess             | 1（Argo-vmess）                                       |
+| trpt + argo=trojan             | 1（Argo-trojan）                                      |
+| vlpt + argo=vless             | 1（Argo-vless）                                       |
 | hypt + vlrt                  | 2（hy2和vless直连）                                   |
 | hypt + vlrt + tupt           | 3（hy2、vless、tuic直连）                             |
 | hypt + vlrt + tupt + anypt   | 4（hy2、vless、tuic、anytls直连）                     |
@@ -648,7 +660,7 @@ v1.0.19 (2026-08-25)
 
 v1.0.15 (2026-08-08)
  - Argo 隧道协议由 vmess/trojan 二选一升级为 vmess/trojan/vless 三选一
- - 新增 vless argo 支持：环境变量 `vlpt` 指定 vless-ws 本地端口，`argo=vlpt` 启用
+ - 新增 vless argo 支持：环境变量 `vlpt` 指定 vless-ws 本地端口，`argo=vless` 启用
  - 安装菜单 / 端口修改菜单 / Argo 协议切换菜单 / 分流管理均支持 vless
  - nginx 订阅新增 `/${uuid}-vl` 反代，vless argo 链接自动输出到订阅与 jh.txt
 
