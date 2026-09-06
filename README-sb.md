@@ -581,6 +581,16 @@ cat /root/doraemon/port_socks5
 
 ## 版本变更信息
 
+v2.0.1 (2026-09-06)
+ - argo 取值变更为 `vmess / vless / trojan`（三选一，统一转小写）；旧值 `vmpt/trpt/vlpt` 彻底废弃，不再读取
+ - 外部传入非法 argo（含旧值）在安装/覆盖安装时直接提示并退出；已落盘配置（vlvm）依然认可
+ - vmess/trojan/vless 的启用完全由 `argo=` 决定；三个协议本地回源端口不接受外部指定，由脚本自动随机（或复用落盘 port_*），天然适配 NAT 机
+ - 新增端口占用登记机制：随机端口自动避开「显式端口 / 服务端口(nginx_pt/argo_pt) / 已落盘 port_* / 本机正在监听的端口」，杜绝多协议端口互撞
+ - 交互菜单 Argo 协议选择改为直接设置 argo 新值，端口设置不再询问 argo 三端口
+ - 安装日志新增打印 `Argo协议: xxx`；协议端口打印在 `DEBUG_FLAG=1` 时附带其落盘文件提示
+ - Nginx 安装条件明确：subscribe=true **或** 启用 Argo 都会安装 Nginx（Argo 回源走 Nginx 反代）
+ - README 同步新取值与示例；新增 Nginx 何时安装速查表
+ 
 v1.0.30 (2026-09-05)
  - **安全加固**
  - **修复 reality_private 被忽略的问题**：本地推导公钥不再依赖 `xxd`（Debian 12/13 起 `/usr/bin/xxd` 是独立 `xxd` 包，`vim-common` 不再提供），改用 `openssl pkey -inform DER` 直接读 PKCS#8 DER，只要 openssl 在即可推导。旧版在无 xxd 的环境会推导失败→静默生成新 keypair，导致传了 `reality_private` 却节点不一致
@@ -622,15 +632,6 @@ v1.0.24 (2026-08-25)
  - 覆盖所有密钥读取路径：`init_reality_keypair()` / `ensure_and_print_reality_private_for_cip()` / `regenerate_links_and_sub()`
  - `sbbout()` 启动前预创建 singbox.log，启动后 3 秒检测日志文件是否生成
 
-v2.0.1 (2026-09-06)
- - argo 取值变更为 `vmess / vless / trojan`（三选一，统一转小写）；旧值 `vmpt/trpt/vlpt` 彻底废弃，不再读取
- - 外部传入非法 argo（含旧值）在安装/覆盖安装时直接提示并退出；已落盘配置（vlvm）依然认可
- - vmess/trojan/vless 的启用完全由 `argo=` 决定；三个协议本地回源端口不接受外部指定，由脚本自动随机（或复用落盘 port_*），天然适配 NAT 机
- - 新增端口占用登记机制：随机端口自动避开「显式端口 / 服务端口(nginx_pt/argo_pt) / 已落盘 port_* / 本机正在监听的端口」，杜绝多协议端口互撞
- - 交互菜单 Argo 协议选择改为直接设置 argo 新值，端口设置不再询问 argo 三端口
- - 安装日志新增打印 `Argo协议: xxx`；协议端口打印在 `DEBUG_FLAG=1` 时附带其落盘文件提示
- - Nginx 安装条件明确：subscribe=true **或** 启用 Argo 都会安装 Nginx（Argo 回源走 Nginx 反代）
- - README 同步新取值与示例；新增 Nginx 何时安装速查表
 
 v1.0.23 (2026-08-25)
  - sbbout() 启动前预创建 singbox.log，确保 sing-box 启动时文件已存在
