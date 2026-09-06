@@ -391,7 +391,6 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ```bash
 ippz=4 \
-trpt=41002 \
 argo=trojan \
 agn="test-vmess.xxxx.xyz" \
 agk="ey开头的那一串" \
@@ -403,7 +402,6 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ```bash
 ippz=4 \
-vlpt=41008 \
 argo=vless \
 agn="test-vless.xxxx.xyz" \
 agk="ey开头的那一串" \
@@ -417,7 +415,6 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 ippz=4 \
 hypt=41001 \
 vlrt=41002 \
-vmpt=41003 \
 argo=vmess \
 agn="test-vmess.xxxx.xyz" \
 agk="ey开头的那一串" \
@@ -431,7 +428,6 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 ```bash
 uuid=0631a7f3-09f8-4144-acf2-a4f5bd9ed281 \
 ippz=4 \
-trpt=41002 \
 vlrt=41003 \
 hypt=41004 \
 tupt=41005 \
@@ -466,12 +462,9 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 | tupt                         | 1（tuic）                                             |
 | anypt                        | 1（anytls）                                           |
 | socks5pt                     | 1（socks5）                                           |
-| vmpt                         | 0（无直连）                                           |
-| trpt                         | 0（无直连）                                           |
-| vlpt                         | 0（无直连）                                           |
-| vmpt + argo=vmess             | 1（Argo-vmess）                                       |
-| trpt + argo=trojan             | 1（Argo-trojan）                                      |
-| vlpt + argo=vless             | 1（Argo-vless）                                       |
+| argo=vmess                    | 1（Argo-vmess）                                       |
+| argo=trojan                   | 1（Argo-trojan）                                      |
+| argo=vless                    | 1（Argo-vless）                                       |
 | hypt + vlrt                  | 2（hy2和vless直连）                                   |
 | hypt + vlrt + tupt           | 3（hy2、vless、tuic直连）                             |
 | hypt + vlrt + tupt + anypt   | 4（hy2、vless、tuic、anytls直连）                     |
@@ -629,6 +622,16 @@ v1.0.24 (2026-08-25)
  - 覆盖所有密钥读取路径：`init_reality_keypair()` / `ensure_and_print_reality_private_for_cip()` / `regenerate_links_and_sub()`
  - `sbbout()` 启动前预创建 singbox.log，启动后 3 秒检测日志文件是否生成
 
+v2.0.1 (2026-09-06)
+ - argo 取值变更为 `vmess / vless / trojan`（三选一，统一转小写）；旧值 `vmpt/trpt/vlpt` 彻底废弃，不再读取
+ - 外部传入非法 argo（含旧值）在安装/覆盖安装时直接提示并退出；已落盘配置（vlvm）依然认可
+ - vmess/trojan/vless 的启用完全由 `argo=` 决定；三个协议本地回源端口不接受外部指定，由脚本自动随机（或复用落盘 port_*），天然适配 NAT 机
+ - 新增端口占用登记机制：随机端口自动避开「显式端口 / 服务端口(nginx_pt/argo_pt) / 已落盘 port_* / 本机正在监听的端口」，杜绝多协议端口互撞
+ - 交互菜单 Argo 协议选择改为直接设置 argo 新值，端口设置不再询问 argo 三端口
+ - 安装日志新增打印 `Argo协议: xxx`；协议端口打印在 `DEBUG_FLAG=1` 时附带其落盘文件提示
+ - Nginx 安装条件明确：subscribe=true **或** 启用 Argo 都会安装 Nginx（Argo 回源走 Nginx 反代）
+ - README 同步新取值与示例；新增 Nginx 何时安装速查表
+
 v1.0.23 (2026-08-25)
  - sbbout() 启动前预创建 singbox.log，确保 sing-box 启动时文件已存在
  - 启动后 3 秒检测日志文件是否生成，为空显示黄色警告提示
@@ -660,7 +663,7 @@ v1.0.19 (2026-08-25)
 
 v1.0.15 (2026-08-08)
  - Argo 隧道协议由 vmess/trojan 二选一升级为 vmess/trojan/vless 三选一
- - 新增 vless argo 支持：环境变量 `vlpt` 指定 vless-ws 本地端口，`argo=vless` 启用
+ - 新增 vless argo 支持：`argo=vless` 启用（vless-ws 走 Argo）
  - 安装菜单 / 端口修改菜单 / Argo 协议切换菜单 / 分流管理均支持 vless
  - nginx 订阅新增 `/${uuid}-vl` 反代，vless argo 链接自动输出到订阅与 jh.txt
 
