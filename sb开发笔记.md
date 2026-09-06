@@ -2,6 +2,7 @@
 
 > 适用版本：`VERSION="2.0.1(2026-09-06)"`（sb00.sh）
 > 路径统一为 `$SINGBOX_FOLDER_PATH` = `/root/doraemon/`
+
 > ⚠️ 下文行号为该版本 sb00.sh 的行号，改动后会偏移，仅作定位参考。
 
 ## 一、Argo 三协议链路（核心）
