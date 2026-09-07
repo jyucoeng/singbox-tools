@@ -32,11 +32,12 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="2.0.3(2026-09-07)"
+VERSION="2.0.3(2026-09-08)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
-export cdn_host=${cdn_host:-"saas.sin.fan"} # Default CDN host for vmess/trojan/vless  cdn.7zz.cn
+# CDN 共享参数：新名 argo_cdn_host / argo_cdn_pt 优先，兼容旧名 cdn_host / cdn_pt
+export cdn_host=${argo_cdn_host:-${cdn_host:-"saas.sin.fan"}} # Default CDN host for vmess/trojan/vless  cdn.7zz.cn
 export hy_sni=${hy_sni:-"www.apple.com"}    # Default SNI for hy2 protocol
 export vl_sni=${vl_sni:-"www.apple.com"}    # Default SNI for vless protocol   www.ua.edu www.yahoo.com
 export tu_sni=${tu_sni:-"www.apple.com"}    # Default SNI for hy2 protocol
@@ -64,16 +65,23 @@ export socks5_ips=${socks5_ips:-''}      # socks5 IP白名单列表, 逗号分�
 export out_ip=${out_ip:-''}
 
 # Argo 相关环境变量
-# argo 取值：vmess / vless / trojan（三选一），不传=不启用 Argo
-# 外部传入值统一转小写；旧值 vmpt/trpt/vlpt 已废弃，外界传入会被判非法
+# argo 取值：vmess / vless / trojan（可多选，逗号分隔，如 argo=vmess,vless；旧单值照常）
+# 不传=不启用 Argo。外部传入值统一转小写、去空格
 # ⚠️ 合法校验只作用于“安装/覆盖安装(ins/rep)”时外界传入的 argo；
 #    已落盘的配置（vlvm 文件）依然认可，维护命令与菜单不受影响
 _normalize_argo() {
-    printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]'
+    printf '%s' "${1:-}" | tr -d ' \t' | tr '[:upper:]' '[:lower:]'
 }
 export argo="$(_normalize_argo "${argo:-}")"
 export ARGO_DOMAIN=${agn:-''}
 export ARGO_AUTH=${agk:-''}
+# 每协议 Argo 优选域名/端口（未设回退 cdn_host/cdn_pt，即旧版统一语义）
+export argo_vmess_cdn_host=${argo_vmess_cdn_host:-''}
+export argo_vmess_cdn_pt=${argo_vmess_cdn_pt:-''}
+export argo_vless_cdn_host=${argo_vless_cdn_host:-''}
+export argo_vless_cdn_pt=${argo_vless_cdn_pt:-''}
+export argo_trojan_cdn_host=${argo_trojan_cdn_host:-''}
+export argo_trojan_cdn_pt=${argo_trojan_cdn_pt:-''}
 export ippz=${ippz:-''}
 export name=${name:-''}
 
@@ -98,11 +106,7 @@ export trojan_cdn_host=${trojan_cdn_host:-''} # trojan 专属 CDN 域名
 export trojan_cdn_sni=${trojan_cdn_sni:-''}   # trojan 专属 SNI
 export trojan_cdn_pt=${trojan_cdn_pt:-''}     # trojan 专属 CDN 端口
 
-# 订阅域名强制指定：sub_domain=argo / cdn（空 = 自动按顺序取），供 show_sub_url 使用
-export sub_domain=${sub_domain:-''}
-
-# 默认端口
-readonly NGINX_DEFAULT_PORT=8080
+NGINX_DEFAULT_PORT=8080
 readonly ARGO_DEFAULT_PORT=8001
 
 # iptables/ip6tables 规则标记常量（用于精确识别本脚本添加的防火墙规则）
@@ -124,8 +128,8 @@ export reality_public="${reality_public:-""}"
 # ✅ Argo 优选端口白名单（仅 https 系端口）
 HTTPS_CDN_PORTS=(443 2053 2083 2087 2096 8443)
 
-# 默认 CDN 端口和 Vless SNI 端口
-cdn_pt="${cdn_pt:-443}"
+# 默认 CDN 端口和 Vless SNI 端口（argo_cdn_pt 优先，兼容旧名 cdn_pt）
+cdn_pt="${argo_cdn_pt:-${cdn_pt:-443}}"
 vl_sni_pt="${vl_sni_pt:-443}"
 
 v46url="https://icanhazip.com"
@@ -195,13 +199,15 @@ is_yes() { [ "${1:-}" = "yes" ]; }
 # 这些变量是你脚本外部用来“开启协议”的标记：
 # hypt / vlrt / tupt / anypt / socks5pt
 # 只要标记存在，就启用对应协议
-# ⚠️ vmess/trojan/vless 这三个协议完全由 argo=vmess/trojan/vless 决定，
+# ⚠️ vmess/trojan/vless 协议由 argo（可多选）或 ws_cdn 各自独立决定，
 #    旧变量 trpt/vmpt/vlpt 已彻底废弃（脚本不再读取），本地回源端口由脚本随机/复用文件
-case "${argo:-}" in
-    trojan) trp=yes;  vmag=yes ;;
-    vmess)  vmp=yes;  vmag=yes ;;
-    vless)  vlp=yes;  vmag=yes ;;
-esac
+# argo 多选：任一命中 → 对应 vmp/vlp/trp（Argo inbound），任一 argo 都置 vmag（需要 cloudflared）
+if [ -n "$argo" ]; then
+    [[ ",$argo," == *",vmess,"* ]]  && vmp=yes
+    [[ ",$argo," == *",vless,"* ]]  && vlp=yes
+    [[ ",$argo," == *",trojan,"* ]] && trp=yes
+    vmag=yes
+fi
 
 if [ -n "${hypt+x}" ]; then
     hyp=yes
@@ -223,17 +229,19 @@ if [ -n "${socks5pt+x}" ]; then
     socksp=yes
 fi
 
-# ws+tls+cdn 直连：确保对应 ws inbound 存在（不启用 Argo/cloudflared，vmag 不置位）
+# ws+tls+cdn 回源：独立 CDN inbound（不复用 Argo inbound；不启用 Argo/cloudflared，vmag 不置位）
 # ⚠️ 必须各自独立判断：case 语句"第一个匹配即停"，多协议组合（如 vmess,trojan）会漏掉后面的
 if [ -n "$ws_cdn" ]; then
-    [[ ",$ws_cdn," == *",vmess,"* ]]  && vmp=yes
-    [[ ",$ws_cdn," == *",vless,"* ]]  && vlp=yes
-    [[ ",$ws_cdn," == *",trojan,"* ]] && trp=yes
+    [[ ",$ws_cdn," == *",vmess,"* ]]  && ws_vmp=yes
+    [[ ",$ws_cdn," == *",vless,"* ]]  && ws_vlp=yes
+    [[ ",$ws_cdn," == *",trojan,"* ]] && ws_trp=yes
 fi
 
-# 判断：至少启用一个协议
+# 判断：至少启用一个协议（含 Argo 与 ws_cdn 各自的协议）
 any_proto_enabled() {
-    is_yes "$vlr" || is_yes "$vmp" || is_yes "$vlp" || is_yes "$trp" || is_yes "$hyp" || is_yes "$tup" || is_yes "$anyp" || is_yes "$socksp"
+    is_yes "$vlr" || is_yes "$hyp" || is_yes "$tup" || is_yes "$anyp" || is_yes "$socksp" \
+        || is_yes "$vmp" || is_yes "$vlp" || is_yes "$trp" \
+        || is_yes "$ws_vmp" || is_yes "$ws_vlp" || is_yes "$ws_trp"
 }
 
 # 判断：是否需要 Argo
@@ -245,13 +253,21 @@ need_argo() {
     if [ -n "${argo:-}" ]; then
         argo_src="env"
         argo_val="$argo"
-        if [ "$argo_val" = "vmess" ] || [ "$argo_val" = "vless" ] || [ "$argo_val" = "trojan" ]; then
+        # 支持列表（vmess,vless）或单值（vmess）—— 只要含任一 Argo 协议即可
+        if printf '%s' "$argo_val" | grep -qiE 'vmess|vless|trojan'; then
+            argo_needed=1
+        fi
+    elif [ -s "$SINGBOX_FOLDER_PATH/argo" ]; then
+        argo_src="file"
+        argo_val="$(cat "$SINGBOX_FOLDER_PATH/argo" 2> /dev/null | tr -d '\r\n')"
+        if printf '%s' "$argo_val" | grep -qiE 'vmess|vless|trojan'; then
             argo_needed=1
         fi
     elif [ -s "$SINGBOX_FOLDER_PATH/vlvm" ]; then
         argo_src="file"
         argo_val="$(cat "$SINGBOX_FOLDER_PATH/vlvm" 2> /dev/null | tr -d '\r\n')"
-        if [ "$argo_val" = "Vmess" ] || [ "$argo_val" = "Trojan" ] || [ "$argo_val" = "Vless" ]; then
+        # 支持列表（Vmess,Vless）或单值（Vmess）—— 只要含任一 Argo 协议即可
+        if printf '%s' "$argo_val" | grep -qiE 'Vmess|Vless|Trojan'; then
             argo_needed=1
         fi
     else
@@ -272,15 +288,19 @@ _cmd0="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
 # argo 合法性校验：仅安装/覆盖安装(ins/rep)时拦截“外界传入”的非法值；
 # 已落盘配置（vlvm 文件）依然认可，维护命令(list/node/sub/res/del/logs 等)与菜单不校验、不受影响
 if [ "$_cmd0" = "ins" ] || [ "$_cmd0" = "rep" ]; then
-    case "${argo:-}" in
-        ""|vmess|vless|trojan) : ;;
-        *)
-            echo "❌ argo 参数非法：${argo}"
-            echo "   argo 仅支持以下取值之一（vmess / vless / trojan），或留空=不启用 Argo"
-            echo "   （旧值 vmpt/trpt/vlpt 已废弃，外界传入也不再支持）"
-            exit 1
-            ;;
-    esac
+    if [ -n "$argo" ]; then
+        for _awk in ${argo//,/ }; do
+            case "$_awk" in
+                vmess|vless|trojan) : ;;
+                *)
+                    echo "❌ argo 参数非法：${argo}"
+                    echo "   argo 支持取值（可多选，逗号分隔）：vmess / vless / trojan，或留空=不启用 Argo"
+                    echo "   （旧值 vmpt/trpt/vlpt 已废弃，外界传入也不再支持）"
+                    exit 1
+                    ;;
+            esac
+        done
+    fi
 fi
 
 # 无参数或 menu 命令（交互式菜单）时跳过“必须设置协议变量”的守卫
@@ -958,9 +978,9 @@ interactive_sb_shortcut_menu() {
 showmode() {
     blue "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     green "     Sing-box 一键脚本"
-    yellow "    argo协议: vmess/trojan/vless (Argo 选1)"
+    yellow "    argo协议: vmess/trojan/vless (Argo可多选)"
     yellow "    直连协议: vless reality+hy2+tuic+anytls+socks5(可多选)"
-    yellow "    ws_cdn回源: vmess/vless/trojan (可多选, 经CDN回源到nginx)"
+    yellow "    回源协议: vmess/vless/trojan (可多选, 经CDN回源到nginx)"
     green "     Author：$AUTHOR"
     green "     Version: ${VERSION}"
     blue "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -2259,17 +2279,50 @@ sbj_save() {
 
 # 读取单个 ws_cdn 配置值（环境变量 > 落盘文件；空返回空）
 ws_cdn_val() {
-    local k="$1" v=""
-    v="${!k:-}"
-    if [ -n "$v" ]; then
-        printf '%s' "$v"
-        return 0
-    fi
-    [ -s "$SINGBOX_FOLDER_PATH/$k" ] && cat "$SINGBOX_FOLDER_PATH/$k"
-    return 0
+     local k="$1" v=""
+     v="${!k:-}"
+     if [ -n "$v" ]; then
+         printf '%s' "$v"
+         return 0
+     fi
+     [ -s "$SINGBOX_FOLDER_PATH/$k" ] && cat "$SINGBOX_FOLDER_PATH/$k"
+     return 0
+ }
+
+# ---------- Argo 多协议辅助 ----------
+# 规范 Argo 协议列表（env argo > 落盘 argo > vlvm 转换），逗号分隔小写
+argo_proto_list() {
+    local l="${argo:-}"
+    [ -n "$l" ] || l="$(cat "$SINGBOX_FOLDER_PATH/argo" 2>/dev/null)"
+    [ -n "$l" ] || l="$(cat "$SINGBOX_FOLDER_PATH/vlvm" 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+    _normalize_argo "$l"
+}
+# 判断协议是否启用了 Argo（vmess/vless/trojan）
+argo_proto_enabled() {
+    local p="$1" list
+    list="$(argo_proto_list)"
+    [ -n "$list" ] || return 1
+    case ",$list," in
+        *",$p,"*) return 0 ;;
+    esac
+    return 1
+}
+# 生效 Argo 连接地址：协议专属 > 共享（cdn_host 文件 / argo_cdn_host env）
+argo_eff_host() {
+    local p="$1" h=""
+    h="$(ws_cdn_val "argo_${p}_cdn_host")"
+    [ -n "$h" ] || h="$(cat "$SINGBOX_FOLDER_PATH/cdn_host" 2>/dev/null)"
+    printf '%s' "$h"
+}
+# 生效 Argo 连接端口：协议专属 > 共享（cdn_pt 文件 / argo_cdn_pt env），https 系端口，非法回退 443
+argo_eff_pt() {
+    local p="$1" pt=""
+    pt="$(ws_cdn_val "argo_${p}_cdn_pt")"
+    [ -n "$pt" ] || pt="$(cat "$SINGBOX_FOLDER_PATH/cdn_pt" 2>/dev/null)"
+    normalize_cdn_pt "${pt:-443}" 443
 }
 
-# 生效 CDN 连接地址：protocol 专属 > 共享 > cdn_host
+ # 生效 CDN 连接地址：protocol 专属 > 共享 > cdn_host
 ws_cdn_eff_host() {
     local p="$1" h=""
     h="$(ws_cdn_val "${p}_cdn_host")"
@@ -2480,6 +2533,44 @@ installsb() {
                 transport: {type: "ws", path: "/\($uuid)-vl"}
             }]' "$sbj" > "$tmpj" && sbj_save "$tmpj"
     fi
+
+    # ---------- Vmess/Vless/Trojan WS-CDN 回源：独立 CDN inbound（经 CDN 反代到 nginx，不复用 Argo inbound） ----------
+    # ws_cdn 列表里每个协议建立独立 CDN ws inbound：独立端口文件 + CDN 专属路径（与 Argo 路径区分开）
+    # 路径：/{uuid}-{p}-cdn ；端口文件：port_{p}_ws_cdn
+    for _cdp in vmess vless trojan; do
+        case "$_cdp" in
+            vmess)  [ -n "$ws_vmp" ]  || continue ;;
+            vless)  [ -n "$ws_vlp" ]  || continue ;;
+            trojan) [ -n "$ws_trp" ]  || continue ;;
+        esac
+        _cdp_file="port_${_cdp}_ws_cdn"
+        _cdp_port=""
+        if [ -s "$SINGBOX_FOLDER_PATH/$_cdp_file" ]; then
+            _cdp_port="$(cat "$SINGBOX_FOLDER_PATH/$_cdp_file")"
+        else
+            _cdp_port="$(rand_port)"
+            echo "$_cdp_port" > "$SINGBOX_FOLDER_PATH/$_cdp_file"
+        fi
+        case "$_cdp" in
+            vmess)
+                jq --arg port "$_cdp_port" --arg uuid "$uuid" '
+                    .inbounds += [{type:"vmess", tag:"vmess-ws-cdn-sb", listen:"::",
+                      listen_port:($port|tonumber), users:[{uuid:$uuid, alterId:0}],
+                      transport:{type:"ws", path:"/\($uuid)-vm-cdn"}}]' "$sbj" > "$tmpj" && sbj_save "$tmpj" ;;
+            vless)
+                jq --arg port "$_cdp_port" --arg uuid "$uuid" '
+                    .inbounds += [{type:"vless", tag:"vless-ws-cdn-sb", listen:"::",
+                      listen_port:($port|tonumber), users:[{uuid:$uuid}],
+                      transport:{type:"ws", path:"/\($uuid)-vl-cdn"}}]' "$sbj" > "$tmpj" && sbj_save "$tmpj" ;;
+            trojan)
+                jq --arg port "$_cdp_port" --arg uuid "$uuid" '
+                    .inbounds += [{type:"trojan", tag:"trojan-ws-cdn-sb", listen:"::",
+                      listen_port:($port|tonumber), users:[{password:$uuid}],
+                      transport:{type:"ws", path:"/\($uuid)-tr-cdn"}}]' "$sbj" > "$tmpj" && sbj_save "$tmpj" ;;
+        esac
+        yellow "${_cdp}-WS-CDN回源端口(本地)：$_cdp_port"
+    done
+    unset _cdp _cdp_file _cdp_port
 
     # 添加vless-reality-vision协议
     if [ -n "$vlr" ]; then
@@ -2741,6 +2832,7 @@ setup_nginx_subscribe() {
     chmod 755 /var /var/www /var/www/singbox 2> /dev/null
 
     local vm_port vl_port tr_port uuid
+    local cdn_vm_port cdn_vl_port cdn_tr_port
     uuid="$(cat "$SINGBOX_FOLDER_PATH/uuid" 2> /dev/null)"
     vm_port="$(cat "$SINGBOX_FOLDER_PATH/port_vm_ws" 2> /dev/null)"
     if [ -s "$SINGBOX_FOLDER_PATH/port_vl_ws" ]; then
@@ -2750,6 +2842,10 @@ setup_nginx_subscribe() {
         vl_port="$(cat "$SINGBOX_FOLDER_PATH/port_vm_ws" 2> /dev/null)"
     fi
     tr_port="$(cat "$SINGBOX_FOLDER_PATH/port_tr" 2> /dev/null)"
+    # WS-CDN 回源独立端口（若该协议走了 ws_cdn，需反代 /{uuid}-{p}-cdn）
+    cdn_vm_port="$(cat "$SINGBOX_FOLDER_PATH/port_vm_ws_cdn" 2> /dev/null)"
+    cdn_vl_port="$(cat "$SINGBOX_FOLDER_PATH/port_vl_ws_cdn" 2> /dev/null)"
+    cdn_tr_port="$(cat "$SINGBOX_FOLDER_PATH/port_tr_ws_cdn" 2> /dev/null)"
 
     local conf
     conf="$(nginx_conf_path)"
@@ -2812,6 +2908,44 @@ EOF
         cat >> "$conf" << EOF
     location /${uuid}-tr {
         proxy_pass http://127.0.0.1:${tr_port};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+    }
+
+EOF
+    fi
+
+    # ---------- WS-CDN 回源：独立反代路径（与 Argo 的 /{uuid}-vm/-vl/-tr 区分） ----------
+    if [ -n "$cdn_vm_port" ] && [ -n "$uuid" ]; then
+        cat >> "$conf" << EOF
+    location /${uuid}-vm-cdn {
+        proxy_pass http://127.0.0.1:${cdn_vm_port};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+    }
+
+EOF
+    fi
+    if [ -n "$cdn_vl_port" ] && [ -n "$uuid" ]; then
+        cat >> "$conf" << EOF
+    location /${uuid}-vl-cdn {
+        proxy_pass http://127.0.0.1:${cdn_vl_port};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+    }
+
+EOF
+    fi
+    if [ -n "$cdn_tr_port" ] && [ -n "$uuid" ]; then
+        cat >> "$conf" << EOF
+    location /${uuid}-tr-cdn {
+        proxy_pass http://127.0.0.1:${cdn_tr_port};
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -3577,13 +3711,25 @@ ins() {
         debug_log "【调试】Argo 本地回源端口 argoport=${argoport}（来自 argo_pt 或默认 ARGO_DEFAULT_PORT）"
         echo "$argoport" > "$SINGBOX_FOLDER_PATH/argoport"
 
-        # 仍然记录 Argo 输出节点类型（给 cip 用）
-        if [ "$argo" = "vmess" ]; then
+        # 落盘 Argo 协议列表 + 每协议独立标记（旧 vlvm 兼容：仅保留单一主协议以便旧逻辑读取）
+        argo_proto_list > "$SINGBOX_FOLDER_PATH/argo"
+        local _ap
+        for _ap in vmess vless trojan; do
+            if argo_proto_enabled "$_ap"; then
+                echo "on" > "$SINGBOX_FOLDER_PATH/argo_${_ap}_proto"
+            else
+                rm -f "$SINGBOX_FOLDER_PATH/argo_${_ap}_proto"
+            fi
+        done
+        unset _ap
+        if printf '%s' "$argo" | grep -q 'vmess'; then
             echo "Vmess" > "$SINGBOX_FOLDER_PATH/vlvm"
-        elif [ "$argo" = "trojan" ]; then
-            echo "Trojan" > "$SINGBOX_FOLDER_PATH/vlvm"
-        elif [ "$argo" = "vless" ]; then
+        elif printf '%s' "$argo" | grep -q 'vless'; then
             echo "Vless" > "$SINGBOX_FOLDER_PATH/vlvm"
+        elif printf '%s' "$argo" | grep -q 'trojan'; then
+            echo "Trojan" > "$SINGBOX_FOLDER_PATH/vlvm"
+        else
+            rm -f "$SINGBOX_FOLDER_PATH/vlvm"
         fi
 
         # 2.3 生成 Argo 凭据（JSON / token）
@@ -3662,6 +3808,20 @@ write2SingboxFolders() {
     [ ! -s "$SINGBOX_FOLDER_PATH/any_sni" ] && echo "${any_sni}" > "$SINGBOX_FOLDER_PATH/any_sni"
     echo "${cdn_host}" > "$SINGBOX_FOLDER_PATH/cdn_host"
     echo "${cdn_pt}" > "$SINGBOX_FOLDER_PATH/cdn_pt"
+
+    # ✅ Argo 每协议专属 CDN 优选域名/端口落盘（go 兼容 argo_{p}_cdn_host / argo_{p}_cdn_pt；空值则删文件，回退共享 cdn_host/cdn_pt）
+    local _ap _ak _av
+    for _ap in vmess vless trojan; do
+        for _ak in host pt; do
+            _av="argo_${_ap}_cdn_${_ak}"
+            if [ -n "${!_av:-}" ]; then
+                printf '%s\n' "${!_av}" > "$SINGBOX_FOLDER_PATH/$_av"
+            else
+                rm -f "$SINGBOX_FOLDER_PATH/$_av"
+            fi
+        done
+    done
+    unset _ap _ak _av
 
     # ✅ 只写新变量
     echo "${nginx_pt}" > "$SINGBOX_FOLDER_PATH/nginx_port"
@@ -3742,9 +3902,8 @@ update_subscription_file() {
 }
 
 # 输出订阅链接
-# 域名优先级（不含手动强制）：
+# 域名优先级（自动判定，不接受 sub_domain 手动强制）：
 #   固定 Argo > 共享 ws_cdn_host > 任意 Argo(含临时 trycloudflare) > http://IP:nginx_port
-# 手动覆盖：sub_domain=argo（强制 Argo）/ sub_domain=cdn（强制 CDN，要求共享 ws_cdn_host 已设置）
 show_sub_url() {
     # ✅ 没开订阅直接不输出
     is_true "$(get_subscribe_flag)" || return 0
@@ -3775,24 +3934,7 @@ show_sub_url() {
     cdn_sub_pt="$(ws_cdn_val ws_cdn_pt)"
     cdn_sub_pt="$(normalize_cdn_pt "${cdn_sub_pt:-443}" 443)"
 
-    # 手动强制：sub_domain=argo / cdn
-    case "${sub_domain:-}" in
-        argo)
-            if [ -n "$argodomain" ]; then
-                echo "https://${argodomain}/sub/${sub_uuid}"
-                return 0
-            fi
-            # Argo 未启用，继续往下（共享cdn/专属cdn/临时/http）
-            ;;
-        cdn)
-            if [ -n "$cdn_sub_host" ]; then
-                echo "https://${cdn_sub_host}:${cdn_sub_pt}/sub/${sub_uuid}"
-                return 0
-            fi
-            yellow "⚠️ sub_domain=cdn 但未配置任何 CDN 域名（共享/协议专属均空），已回退后续项"
-            ;;
-    esac
-
+    #  ✅ 按预定优先级自动判定订阅域名（不接受 sub_domain 环境变量强制赋值）
     # ✅ 固定 Argo 域名（非临时）
     if [ -n "$argodomain" ] && ! printf '%s' "$argodomain" | grep -q 'trycloudflare\.com$'; then
         echo "https://${argodomain}/sub/${sub_uuid}"
@@ -3853,6 +3995,14 @@ append_jh() {
     # 只写纯文本到聚合文件，禁止任何颜色码污染订阅
     # ❗ 用 printf '%s\n' 而非 echo -e：防止节点名/域名里带 \n、\x.. 时被解释成转义注入订阅内容
     printf '%s\n' "$1" >> "$SINGBOX_FOLDER_PATH/jh.txt"
+}
+
+# jh.txt 块分隔：文件非空 && 末尾非空 时才插入一个空行（直连/Argo/CDN/Socks5 各块之间用空行隔开）
+jh_block_sep() {
+    [ -s "$SINGBOX_FOLDER_PATH/jh.txt" ] || return 0
+    local _last
+    _last="$(tail -n1 "$SINGBOX_FOLDER_PATH/jh.txt" 2>/dev/null)"
+    [ -n "$_last" ] && append_jh ""
 }
 
 # 节点名称片段统一做 URL 编码（防空格/#/?/& 等特殊字符破坏链接，同时防换行污染订阅）
@@ -4013,6 +4163,7 @@ regenerate_links_and_sub() {
     local uuid server_ip sxname port_hy2 hy_sni SHA256_hy2 port_tu tu_sni password
     local port_vlr public_key short_id vl_sni port_any any_sni
     local argodomain cdn_host cdn_pt vlvm vmatls_link1 vlessws_link1 tratls_link1 sbtk
+    local _ap _ah _apt _argo_link _argo_printed
     local port_socks5 socks5_username socks5_password socks5_user_enc socks5_pass_enc socks5_link
 
     rm -rf "$SINGBOX_FOLDER_PATH/jh.txt"
@@ -4088,43 +4239,55 @@ regenerate_links_and_sub() {
     cdn_pt=$(cat "$SINGBOX_FOLDER_PATH/cdn_pt" 2> /dev/null)
     cdn_pt="$(normalize_cdn_pt "$cdn_pt" 443)"
 
-    if [ -n "$argodomain" ]; then
-        vlvm=$(cat "$SINGBOX_FOLDER_PATH/vlvm" 2> /dev/null)
+    if [ -n "$argodomain" ] && need_argo; then
         uuid=$(cat "$SINGBOX_FOLDER_PATH/uuid")
-        if [ "$vlvm" = "Vmess" ]; then
-            vmatls_link1="vmess://$(printf '%s' "{\"v\":\"2\",\"ps\":$(json_escape_string "${sxname}vmess-ws-tls-argo-${hostname}-${cdn_pt}"),\"add\":$(json_escape_string "${cdn_host}"),\"port\":\"${cdn_pt}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":$(json_escape_string "${argodomain}"),\"path\":\"/${uuid}-vm\",\"tls\":\"tls\",\"sni\":$(json_escape_string "${argodomain}")}" | base64 | tr -d '\n\r')"
-
-            vlessws_link1=""
-            tratls_link1=""
-        elif [ "$vlvm" = "Trojan" ]; then
-            tratls_link1="trojan://${uuid}@${cdn_host}:${cdn_pt}?security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-tr&sni=${argodomain}&fp=chrome#$(node_frag "${sxname}trojan-ws-tls-argo-${hostname}-${cdn_pt}")"
-            vmatls_link1=""
-            vlessws_link1=""
-        elif [ "$vlvm" = "Vless" ]; then
-            vlessws_link1="vless://${uuid}@${cdn_host}:${cdn_pt}?encryption=none&security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-vl&sni=${argodomain}&fp=chrome#$(node_frag "${sxname}vless-ws-tls-argo-${hostname}-${cdn_pt}")"
-            vmatls_link1=""
-            tratls_link1=""
-        fi
-
         sbtk=$(cat "$SINGBOX_FOLDER_PATH/sbargotoken" 2> /dev/null)
         yellow "---------------------------------------------------------"
-        yellow "Argo隧道信息 (使用 ${vlvm}-ws 端口: $(cat $SINGBOX_FOLDER_PATH/argoport 2> /dev/null))"
+        yellow "Argo隧道信息 (走 Argo 回源端口: $(cat $SINGBOX_FOLDER_PATH/argoport 2> /dev/null))"
         yellow "---------------------------------------------------------"
-
         green "Argo域名: ${argodomain}"
-
         #输出 argo token
         if [ -n "${sbtk}" ]; then
             green "Argo固定隧道token:"
             green "${sbtk}"
         fi
 
-        green ""
-        green "🎯 ${cdn_pt}端口 Argo-TLS 节点 (优选IP可替换):"
-        green "${vmatls_link1}${vlessws_link1}${tratls_link1}"
-        append_jh "${vmatls_link1}${vlessws_link1}${tratls_link1}"
-        yellow "---------------------------------------------------------"
-
+        # Argo 多协议节点：逐协议遍历，各自取专属 host/pt（回退共享 cdn_host/cdn_pt）
+        _argo_printed=false
+        for _ap in vmess vless trojan; do
+            argo_proto_enabled "$_ap" || continue
+            case "$_ap" in
+                vmess)  grep -q 'vmess-sb'  "$SINGBOX_FOLDER_PATH/sb.json" || continue ;;
+                vless)  grep -q 'vless-ws-sb' "$SINGBOX_FOLDER_PATH/sb.json" || continue ;;
+                trojan) grep -q 'trojan-ws-sb' "$SINGBOX_FOLDER_PATH/sb.json" || continue ;;
+            esac
+            _ah="$(argo_eff_host "$_ap")"
+            [ -n "$_ah" ] || continue
+            _apt="$(argo_eff_pt "$_ap")"
+            case "$_ap" in
+                vmess)
+                    _argo_link="vmess://$(printf '%s' "{\"v\":\"2\",\"ps\":$(json_escape_string "${sxname}vmess-ws-tls-argo-${hostname}-${_apt}"),\"add\":$(json_escape_string "${_ah}"),\"port\":\"${_apt}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":$(json_escape_string "${argodomain}"),\"path\":\"/${uuid}-vm\",\"tls\":\"tls\",\"sni\":$(json_escape_string "${argodomain}")}" | base64 | tr -d '\n\r')"
+                    ;;
+                trojan)
+                    _argo_link="trojan://${uuid}@${_ah}:${_apt}?security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-tr&sni=${argodomain}&fp=chrome#$(node_frag "${sxname}trojan-ws-tls-argo-${hostname}-${_apt}")"
+                    ;;
+                vless)
+                    _argo_link="vless://${uuid}@${_ah}:${_apt}?encryption=none&security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-vl&sni=${argodomain}&fp=chrome#$(node_frag "${sxname}vless-ws-tls-argo-${hostname}-${_apt}")"
+                    ;;
+            esac
+            if [ "$_argo_printed" = "false" ]; then
+                jh_block_sep
+            fi
+            green ""
+            green "🎯 ${_apt}端口 ${_ap}-Argo TLS 节点 (优选IP可替换):"
+            green "$_argo_link"
+            append_jh "$_argo_link"
+            _argo_printed=true
+        done
+        if [ "$_argo_printed" = "true" ]; then
+            yellow "---------------------------------------------------------"
+        fi
+        unset _argo_link _ah _apt _argo_printed
     fi
 
     # ---------- Vmess/Vless/Trojan WS 走 CDN 回源（经 CDN 反代到 nginx，不使用 Argo） ----------
@@ -4134,9 +4297,9 @@ regenerate_links_and_sub() {
     for _p in vmess vless trojan; do
         ws_cdn_proto_enabled "$_p" || continue
         case "$_p" in
-            vmess)  grep -q 'vmess-sb'  "$SINGBOX_FOLDER_PATH/sb.json" || continue ;;
-            vless)  grep -q 'vless-ws-sb' "$SINGBOX_FOLDER_PATH/sb.json" || continue ;;
-            trojan) grep -q 'trojan-ws-sb' "$SINGBOX_FOLDER_PATH/sb.json" || continue ;;
+            vmess)  grep -q 'vmess-ws-cdn-sb'  "$SINGBOX_FOLDER_PATH/sb.json" || continue ;;
+            vless)  grep -q 'vless-ws-cdn-sb' "$SINGBOX_FOLDER_PATH/sb.json" || continue ;;
+            trojan) grep -q 'trojan-ws-cdn-sb' "$SINGBOX_FOLDER_PATH/sb.json" || continue ;;
         esac
         _ws_h="$(ws_cdn_eff_host "$_p")"
         [ -n "$_ws_h" ] || continue
@@ -4150,17 +4313,20 @@ regenerate_links_and_sub() {
         case "$_p" in
             vless)
                 # add/host 连接地址用 _ws_h（CF 优选域名/优选IP），host 头与 SNI 用真实子域名 _ws_s
-                _ws_link="vless://${uuid}@${_ws_h}:${_ws_p}?encryption=none&security=tls&type=ws&host=${_ws_s}&path=%2F${uuid}-vl&sni=${_ws_s}&fp=chrome#$(node_frag "${sxname}vless-ws-cdn-${hostname}")"
+                _ws_link="vless://${uuid}@${_ws_h}:${_ws_p}?encryption=none&security=tls&type=ws&host=${_ws_s}&path=%2F${uuid}-vl-cdn&sni=${_ws_s}&fp=chrome#$(node_frag "${sxname}vless-ws-cdn-${hostname}")"
                 ;;
             vmess)
                 # add 连接地址用 _ws_h（优选域名/优选IP），host 头与 SNI 用真实子域名 _ws_s
-                _ws_link="vmess://$(printf '%s' "{\"v\":\"2\",\"ps\":$(json_escape_string "${sxname}vmess-ws-cdn-${hostname}"),\"add\":$(json_escape_string "${_ws_h}"),\"port\":\"${_ws_p}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":$(json_escape_string "${_ws_s}"),\"path\":\"/${uuid}-vm\",\"tls\":\"tls\",\"sni\":$(json_escape_string "${_ws_s}")}" | base64 | tr -d '\n\r')"
+                _ws_link="vmess://$(printf '%s' "{\"v\":\"2\",\"ps\":$(json_escape_string "${sxname}vmess-ws-cdn-${hostname}"),\"add\":$(json_escape_string "${_ws_h}"),\"port\":\"${_ws_p}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":$(json_escape_string "${_ws_s}"),\"path\":\"/${uuid}-vm-cdn\",\"tls\":\"tls\",\"sni\":$(json_escape_string "${_ws_s}")}" | base64 | tr -d '\n\r')"
                 ;;
             trojan)
                 # add/host 连接地址用 _ws_h，host 头与 SNI 用真实子域名 _ws_s
-                _ws_link="trojan://${uuid}@${_ws_h}:${_ws_p}?security=tls&type=ws&host=${_ws_s}&path=%2F${uuid}-tr&sni=${_ws_s}&fp=chrome#$(node_frag "${sxname}trojan-ws-cdn-${hostname}")"
+                _ws_link="trojan://${uuid}@${_ws_h}:${_ws_p}?security=tls&type=ws&host=${_ws_s}&path=%2F${uuid}-tr-cdn&sni=${_ws_s}&fp=chrome#$(node_frag "${sxname}trojan-ws-cdn-${hostname}")"
                 ;;
         esac
+        if [ "$_ws_cdn_printed" = "false" ]; then
+            jh_block_sep
+        fi
         yellow "🎯【 ${_p}-WS-CDN 回源 】(经 CDN 回源到服务器 nginx_pt=${nginx_pt:-8080})"
         green "$_ws_link"
         append_jh "$_ws_link"
@@ -4193,7 +4359,7 @@ regenerate_links_and_sub() {
         else
             yellow "   ↳ 入站白名单未开启，所有IP均可访问"
         fi
-        append_jh " "
+jh_block_sep
         append_jh "$socks5_link"
         echo
     fi
@@ -4803,27 +4969,29 @@ menu_status_block() {
 
 # 根据 *pt 环境变量重新推导协议开关与端口变量（交互模式设置环境变量后调用）
 menu_reload_proto_flags() {
-    trp=; vmag=; hyp=; vmp=; vlp=; vlr=; tup=; anyp=; socksp=
+    trp=; vmag=; hyp=; vmp=; vlp=; vlr=; tup=; anyp=; socksp=; ws_vmp=; ws_vlp=; ws_trp=
     [ -n "${hypt+x}" ] && hyp=yes
     [ -n "${vlrt+x}" ] && vlr=yes
     [ -n "${tupt+x}" ] && tup=yes
     [ -n "${anypt+x}" ] && anyp=yes
     [ -n "${socks5pt+x}" ] && socksp=yes
-    # vmess/trojan/vless 由 argo 驱动（三选一；旧变量 trpt/vmpt/vlpt 已废弃）
-    case "${argo:-}" in
-        trojan) trp=yes; vmag=yes ;;
-        vmess)  vmp=yes; vmag=yes ;;
-        vless)  vlp=yes; vmag=yes ;;
-    esac
-    # ws+tls+cdn 直连：同样驱动对应 ws inbound，但不置 vmag（不启用 Argo/cloudflared）
+    # vmess/trojan/vless 由 argo 驱动（可多选，逗号分隔；任一命中即 vmag）
+    argo="$(_normalize_argo "${argo:-}")"
+    if [ -n "$argo" ]; then
+        [[ ",$argo," == *",vmess,"* ]]  && vmp=yes
+        [[ ",$argo," == *",vless,"* ]]  && vlp=yes
+        [[ ",$argo," == *",trojan,"* ]] && trp=yes
+        vmag=yes
+    fi
+    # ws+tls+cdn 回源：独立 CDN inbound 标记（不复用 Argo inbound；不置 vmag）
     # ⚠️ 独立判断而非 case：case 第一个匹配即停，多协议组合会漏掉后面的
     ws_cdn="$(_normalize_ws_cdn "${ws_cdn:-}")"
     if [ -n "$ws_cdn" ]; then
-        [[ ",$ws_cdn," == *",vmess,"* ]]  && vmp=yes
-        [[ ",$ws_cdn," == *",vless,"* ]]  && vlp=yes
-        [[ ",$ws_cdn," == *",trojan,"* ]] && trp=yes
+        [[ ",$ws_cdn," == *",vmess,"* ]]  && ws_vmp=yes
+        [[ ",$ws_cdn," == *",vless,"* ]]  && ws_vlp=yes
+        [[ ",$ws_cdn," == *",trojan,"* ]] && ws_trp=yes
     fi
-    export trp hyp vmp vlp vlr tup anyp socksp vmag ws_cdn
+    export trp hyp vmp vlp vlr tup anyp socksp vmag ws_cdn ws_vmp ws_vlp ws_trp
     # 重新绑定端口变量（与文件顶部一致）
     # 注：vmpt/vlpt/trpt 已彻底废弃（不再读取），端口由脚本随机/复用落盘文件
     export port_vm_ws='' port_vl_ws='' port_tr='' port_hy2=${hypt:-''} \
@@ -4987,20 +5155,36 @@ menu_collect_install() {
     done
     green "  ↳ 直连协议: ${_ch} (${_names#,})"
 
-    # Argo 隧道协议：三选一或选零
+    # Argo 隧道协议：多选或选零
     echo ""
-    purple "===== 选择 Argo 隧道协议 (三选一，回车=不选) ====="
+    purple "===== 选择走 Argo Tunnel 隧道的协议 (可多选，回车=不选) ====="
     green "  f) Vmess-WS-TLS"
     green "  g) Trojan-WS-TLS"
     green "  v) Vless-WS-TLS"
-    reading "输入选项 (回车=不选): " _ans
-    _ans="$(printf '%s' "$_ans" | tr '[:upper:]' '[:lower:]')"
-    case "$_ans" in
-        *g*) export argo=trojan; green "  ↳ Argo 协议: Trojan-WS-TLS" ;;
-        *v*) export argo=vless;  green "  ↳ Argo 协议: Vless-WS-TLS" ;;
-        *f*) export argo=vmess;  green "  ↳ Argo 协议: Vmess-WS-TLS" ;;
-        *)   export argo="";     green "  ↳ Argo 协议: 不选 (默认)" ;;
-    esac
+    reading "输入要走 Argo 的协议 (可多选，用字母 f/g/v，回车=不选): " _ans
+    _ans="$(printf '%s' "$_ans" | tr ',' ' ' | tr '[:upper:]' '[:lower:]')"
+    _argo_list=""
+    if [ -z "${_ans//[[:space:]]/}" ]; then
+        _argo_list=""
+    else
+        for _ag in $_ans; do
+            case "$_ag" in
+                f) _argo_list="$_argo_list,vmess" ;;
+                g) _argo_list="$_argo_list,trojan" ;;
+                v) _argo_list="$_argo_list,vless" ;;
+                *) yellow "  ⚠️ 忽略未知选项: $_ag" ;;
+            esac
+        done
+        _argo_list="${_argo_list#,}"
+    fi
+    if [ -n "$_argo_list" ]; then
+        export argo="$_argo_list"
+        green "  ↳ Argo 协议: ${_argo_list} (可多选)"
+    else
+        export argo=""
+        green "  ↳ Argo 协议: 不选 (默认)"
+    fi
+    unset _ag _argo_list
 
     # Vmess/Vless/Trojan WS 走 CDN 回源（经 CDN 反代到 nginx，不使用 Argo）
     echo ""
@@ -5075,7 +5259,8 @@ menu_collect_install() {
 
     # 端口设置：全部随机 或 逐个定制
     echo ""
-    purple "===== 端口设置 ====="
+    purple "===== 直连协议端口设置 ====="
+    green "  （仅 hy2/vless-Reality/tuic/anytls/socks5 直连协议；Argo 本地回源端口自动随机，CDN 端口在对应块设置）"
     green "  1) 全部随机生成"
     green "  2) 逐个自定义端口 (推荐)"
     reading "输入选择 (回车默认=2): " _ans
@@ -5120,13 +5305,72 @@ menu_collect_install() {
             reading "  请输入 Argo 域名: " _ans
             [ -n "$_ans" ] && export ARGO_DOMAIN="$_ans"
             green "  ↳ Argo 域名: ${ARGO_DOMAIN:-未设置}"
-            reading_secret "  请输入 Argo Token 或粘贴 JSON 凭据（输入不回显）: " _ans
+            reading "  请输入 Argo Token 或粘贴 JSON 凭据（粘贴后回车）: " _ans
             [ -n "$_ans" ] && export ARGO_AUTH="$_ans"
             green "  ↳ Argo Token/JSON: 已设置"
         fi
     fi
 
-        # WS-CDN 回源：填写域名（统一设置或分开设置）
+        # Argo 多协议：CF 优选域名/端口填写（统一设置或分开设置；与 ws_cdn 一致）
+    if [ -n "$argo" ]; then
+        echo ""
+        purple "===== Argo 隧道 · CF 优选域名/端口设置 ====="
+        green "  CDN 域名填写方式：1) 统一（所有已选 Argo 协议共用同一个 CF 优选域名/端口）  2) 分开（各协议独立填写）"
+        reading "  选择 (回车=1 统一): " _argo_mode2
+        if [ "$_argo_mode2" = "2" ]; then
+            green "     提示：各协议专属 CF 优选域名/端口如相同，只需填第一个，后面回车=沿用上一个。"
+            local _prev_ah="" _prev_ap=""
+            for _agp in $(argo_proto_list | tr ',' ' '); do
+                [ -n "$_agp" ] || continue
+                if [ -n "$_prev_ah" ]; then
+                    reading "  ${_agp}-Argo 专属 CF 优选域名/IP (回车=沿用 ${_prev_ah}): " _agah
+                else
+                    reading "  ${_agp}-Argo 专属 CF 优选域名/IP (回车=默认 saas.sin.fan): " _agah
+                fi
+                if [ -n "$_agah" ]; then
+                    printf -v "argo_${_agp}_cdn_host" '%s' "$_agah"
+                    _prev_ah="$_agah"
+                elif [ -n "$_prev_ah" ]; then
+                    printf -v "argo_${_agp}_cdn_host" '%s' "$_prev_ah"
+                fi
+                if [ -n "$_prev_ap" ]; then
+                    reading "  ${_agp}-Argo 专属 CF 优选端口 (回车=沿用 ${_prev_ap}；仅限 ${HTTPS_CDN_PORTS[*]}): " _agap
+                else
+                    reading "  ${_agp}-Argo 专属 CF 优选端口 (回车=443；仅限 ${HTTPS_CDN_PORTS[*]}): " _agap
+                fi
+                if [ -z "$_agap" ] && [ -n "$_prev_ap" ]; then
+                    _agap="$_prev_ap"
+                fi
+                if [ -n "$_agap" ]; then
+                    case "$_agap" in
+                        443|2053|2083|2087|2096|8443)
+                            printf -v "argo_${_agp}_cdn_pt" '%s' "$_agap"; _prev_ap="$_agap" ;;
+                        *) red "  ❌ 仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS[*]})，忽略 ${_agap}" ;;
+                    esac
+                fi
+            done
+        else
+            _ah_sh=""
+            reading "  Argo 共享 CF 优选域名 argo_cdn_host (回车=默认 saas.sin.fan): " _ah_sh
+            if [ -n "$_ah_sh" ]; then export argo_cdn_host="$_ah_sh"; fi
+            _ap_sh=""
+            while true; do
+                reading "  Argo 共享 CF 优选端口 argo_cdn_pt (回车=443): " _ap_sh
+                if [ -z "$_ap_sh" ]; then
+                    export argo_cdn_pt="443"
+                    break
+                fi
+                if printf '%s\n' "${HTTPS_CDN_PORTS[@]}" | grep -qx "$_ap_sh"; then
+                    export argo_cdn_pt="$_ap_sh"
+                    break
+                fi
+                red "  ❌ 仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS[*]})，请重新输入（回车=443）"
+            done
+        fi
+        unset _prev_ah _prev_ap _agah _agap _ah_sh _ap_sh
+    fi
+
+    # WS-CDN 回源：填写域名（统一设置或分开设置）
     if [ -n "$ws_cdn" ]; then
         echo ""
         purple "===== WS-CDN 回源 · 域名设置 ====="
@@ -5194,17 +5438,19 @@ menu_collect_install() {
                 break
             done
             export ws_cdn_sni="$_usn"
-            reading "  共享 CDN 端口 ws_cdn_pt (回车=443): " _ucp
-            if [ -n "$_ucp" ]; then
+            _ucp=""
+            while true; do
+                reading "  共享 CDN 端口 ws_cdn_pt (回车=443): " _ucp
+                if [ -z "$_ucp" ]; then
+                    export ws_cdn_pt="443"
+                    break
+                fi
                 if printf '%s\n' "${HTTPS_CDN_PORTS[@]}" | grep -qx "$_ucp"; then
                     export ws_cdn_pt="$_ucp"
-                else
-                    yellow "  ❌ 仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS[*]})，已用默认 443"
-                    export ws_cdn_pt="443"
+                    break
                 fi
-            else
-                export ws_cdn_pt="443"
-            fi
+                red "  ❌ 仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS[*]})，请重新输入（回车=443）"
+            done
         fi
     fi
     # 订阅
@@ -5220,63 +5466,10 @@ menu_collect_install() {
             export nginx_pt=8080
         fi
         green "  ↳ 订阅端口: ${nginx_pt}"
-        # 订阅域名：根据已开启的配置动态列出候选供选择；回车=自动默认顺序
-        local _sub_opts=() _sub_vals=()
-        if [ -n "${ARGO_DOMAIN:-}" ]; then
-            _sub_opts+=("固定 Argo 域名: ${ARGO_DOMAIN}"); _sub_vals+=("argo_fixed")
-        fi
-        [ -n "${ws_cdn_sni:-}" ] && { _sub_opts+=("WS-CDN 共享子域名: ${ws_cdn_sni}"); _sub_vals+=("cdn_shared_sni"); }
-        [ -n "${vmess_cdn_sni:-}" ] && { _sub_opts+=("vmess 专属子域名: ${vmess_cdn_sni}"); _sub_vals+=("cdn_vmess_sni"); }
-        [ -n "${vless_cdn_sni:-}" ] && { _sub_opts+=("vless 专属子域名: ${vless_cdn_sni}"); _sub_vals+=("cdn_vless_sni"); }
-        [ -n "${trojan_cdn_sni:-}" ] && { _sub_opts+=("trojan 专属子域名: ${trojan_cdn_sni}"); _sub_vals+=("cdn_trojan_sni"); }
-        if [ -n "${argo:-}" ] && [ -z "${ARGO_DOMAIN:-}" ]; then
-            _sub_opts+=("临时 Argo 域名 (运行时自动获取，域名会变)"); _sub_vals+=("argo_tmp")
-        fi
-        _sub_opts+=("IP:port (http://服务器IP:${nginx_pt})"); _sub_vals+=("ip_port")
+        # 订阅地址域名：由脚本按预定规则自动计算（固定 Argo → WS-CDN 子域名 → 临时 Argo → http://IP）；
+        # 不在此询问用户，安装完成后基于自动判定的域名回显订阅地址
+        yellow "  ↳ 节点订阅地址：域名由脚本自动判定（优先 https 域名，其次 http://IP:${nginx_pt}）"
 
-        echo ""
-        purple "===== 订阅域名 ====="
-        local _i=1
-        for _t in "${_sub_opts[@]}"; do
-            green "  ${_i}) ${_t}"
-            _i=$((_i+1))
-        done
-        green "  0) 不指定（脚本自动按默认顺序）"
-        reading "  选择 (回车=0): " _sub_choice
-        if [ -n "$_sub_choice" ] && [ "$_sub_choice" -ge 1 ] 2>/dev/null && [ "$_sub_choice" -le "${#_sub_opts[@]}" ]; then
-            local _val="${_sub_vals[$((_sub_choice-1))]}"
-            case "$_val" in
-                argo_fixed)
-                    green "  ↳ 订阅域名：将使用固定 Argo 域名 ${ARGO_DOMAIN}"
-                    ;;
-                cdn_shared_sni)
-                    export ws_cdn_host="${ws_cdn_sni}"
-                    green "  ↳ 订阅域名：已指定为 WS-CDN 共享子域名 ${ws_cdn_sni}"
-                    ;;
-                cdn_vmess_sni)
-                    export ws_cdn_host="${vmess_cdn_sni}"
-                    green "  ↳ 订阅域名：已指定为 vmess 专属子域名 ${vmess_cdn_sni}"
-                    ;;
-                cdn_vless_sni)
-                    export ws_cdn_host="${vless_cdn_sni}"
-                    green "  ↳ 订阅域名：已指定为 vless 专属子域名 ${vless_cdn_sni}"
-                    ;;
-                cdn_trojan_sni)
-                    export ws_cdn_host="${trojan_cdn_sni}"
-                    green "  ↳ 订阅域名：已指定为 trojan 专属子域名 ${trojan_cdn_sni}"
-                    ;;
-                argo_tmp)
-                    export sub_domain=argo
-                    green "  ↳ 订阅域名：将使用临时 Argo 域名（运行时自动获取）"
-                    ;;
-                ip_port)
-                    export ws_cdn_host=''; export sub_domain=''
-                    yellow "  ↳ 订阅域名：将使用 http://IP:${nginx_pt}"
-                    ;;
-            esac
-        else
-            green "  ↳ 订阅域名：使用默认自动顺序"
-        fi
     else
         green "  ↳ 订阅: 不开启 (默认)"
     fi
@@ -5858,7 +6051,7 @@ edit_argo_menu() {
         clear
         green "========= [4][4] 节点配置修改 → Argo 隧道修改 ========="
         echo ""
-        _vlvm=$(cat "$SINGBOX_FOLDER_PATH/vlvm" 2>/dev/null)
+        _vlvm=$(argo_proto_list 2>/dev/null)
         _argodomain=$(cat "$SINGBOX_FOLDER_PATH/argo_domain" 2>/dev/null)
         if [ -n "$_argodomain" ]; then
             _mode="固定隧道"
@@ -5924,53 +6117,109 @@ edit_argo_menu() {
     done
 }
 
-# 切换 Argo 使用协议（Vmess-WS-TLS / Trojan-WS-TLS / Vless-WS-TLS）
+# 切换 Argo 使用协议（Vmess-WS-TLS / Trojan-WS-TLS / Vless-WS-TLS，多选可任意组合）
 edit_argo_protocol_menu() {
-    local _vlvm _tmp
+    local _tmp
     while true; do
         clear
-        green "========= [4][5] 节点配置修改 → 切换 Argo 使用协议 ========="
+        green "========= [4][5] 节点配置修改 → 切换 Argo 使用协议（可多选） ========="
         echo ""
-        _vlvm=$(cat "$SINGBOX_FOLDER_PATH/vlvm" 2>/dev/null)
-        green "  当前 Argo 使用协议: ${_vlvm:-未设置}"
+        _vlvm_show="$(argo_proto_list)"
+        green "  当前走 Argo 的协议: ${_vlvm_show:-未设置}"
         echo ""
-        green "  1) Vmess-WS-TLS (Argo)"
-        green "  2) Trojan-WS-TLS (Argo)"
-        green "  3) Vless-WS-TLS (Argo)"
+        green "  1) Vmess-WS-TLS (Argo)   [$(argo_proto_enabled vmess && echo 已启用 || echo 未启用)]"
+        green "  2) Trojan-WS-TLS (Argo)  [$(argo_proto_enabled trojan && echo 已启用 || echo 未启用)]"
+        green "  3) Vless-WS-TLS (Argo)   [$(argo_proto_enabled vless && echo 已启用 || echo 未启用)]"
         purple "  0) 返回上级菜单"
-        reading "请输入选择: " _tmp
+        reading "输入编号切换启用/停用（可每次一个，多选可多次进入）: " _tmp
         case "$_tmp" in
             0) return ;;
             1)
                 if [ ! -s "$SINGBOX_FOLDER_PATH/port_vm_ws" ]; then
-                    red "❌ 未安装 Vmess-WS 协议，无法切换。"; menu_pause; continue
+                    red "❌ 未安装 Vmess-WS 协议，无法启用。"; menu_pause; continue
                 fi
-                echo "Vmess" > "$SINGBOX_FOLDER_PATH/vlvm"
-                green "✅ 已切换 Argo 使用协议为 Vmess-WS-TLS 操作已完成！"
-                regenerate_links_and_sub
+                if argo_proto_enabled vmess; then
+                    echo "" > /dev/null; _set_argo_proto vmess off
+                    green "✅ 已从 Argo 移除 Vmess-WS-TLS"
+                else
+                    _set_argo_proto vmess on
+                    green "✅ 已加入 Argo：Vmess-WS-TLS"
+                fi
+                refresh_sb_and_sub
                 menu_pause
                 ;;
             2)
                 if [ ! -s "$SINGBOX_FOLDER_PATH/port_tr" ]; then
-                    red "❌ 未安装 Trojan-WS 协议，无法切换。"; menu_pause; continue
+                    red "❌ 未安装 Trojan-WS 协议，无法启用。"; menu_pause; continue
                 fi
-                echo "Trojan" > "$SINGBOX_FOLDER_PATH/vlvm"
-                green "✅ 已切换 Argo 使用协议为 Trojan-WS-TLS 操作已完成！"
-                regenerate_links_and_sub
+                if argo_proto_enabled trojan; then
+                    _set_argo_proto trojan off
+                    green "✅ 已从 Argo 移除 Trojan-WS-TLS"
+                else
+                    _set_argo_proto trojan on
+                    green "✅ 已加入 Argo：Trojan-WS-TLS"
+                fi
+                refresh_sb_and_sub
                 menu_pause
                 ;;
             3)
                 if [ ! -s "$SINGBOX_FOLDER_PATH/port_vl_ws" ] && [ ! -s "$SINGBOX_FOLDER_PATH/port_vm_ws" ]; then
-                    red "❌ 未安装 Vless-WS 协议，无法切换。"; menu_pause; continue
+                    red "❌ 未安装 Vless-WS 协议，无法启用。"; menu_pause; continue
                 fi
-                echo "Vless" > "$SINGBOX_FOLDER_PATH/vlvm"
-                green "✅ 已切换 Argo 使用协议为 Vless-WS-TLS 操作已完成！"
-                regenerate_links_and_sub
+                if argo_proto_enabled vless; then
+                    _set_argo_proto vless off
+                    green "✅ 已从 Argo 移除 Vless-WS-TLS"
+                else
+                    _set_argo_proto vless on
+                    green "✅ 已加入 Argo：Vless-WS-TLS"
+                fi
+                refresh_sb_and_sub
                 menu_pause
                 ;;
             *) yellow "无效选项"; menu_pause ;;
         esac
     done
+}
+
+# 修改 Argo 某一协议启用状态并落盘 argo 列表/每协议标记（_set_argo_proto <proto> <on|off>）
+_set_argo_proto() {
+    local p="$1" act="$2" new=""
+    [ -e "$SINGBOX_FOLDER_PATH/argo" ] && new="$(cat "$SINGBOX_FOLDER_PATH/argo" 2>/dev/null)"
+    [ -z "$new" ] && new="$(argo_proto_list)"
+    if [ "$act" = "on" ]; then
+        case ",$new," in
+            *",$p,"*) : ;;
+            *) new="$new,$p" ;;
+        esac
+    else
+        local kept=""
+        for _sp in vmess vless trojan; do
+            [ "$_sp" = "$p" ] && continue
+            case ",$new," in *",$_sp,"*) kept="$kept,$_sp" ;; esac
+        done
+        new="${kept#,}"
+    fi
+    new="$(printf '%s' "$new" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed '/^$/d' | sort -u | paste -sd, -)"
+    new="${new#,}"
+    if [ -n "$new" ]; then
+        printf '%s' "$new" > "$SINGBOX_FOLDER_PATH/argo"
+    else
+        rm -f "$SINGBOX_FOLDER_PATH/argo"
+    fi
+    for _pp in vmess vless trojan; do
+        if printf '%s' "$new" | grep -qw "$_pp"; then
+            echo "on" > "$SINGBOX_FOLDER_PATH/argo_${_pp}_proto"
+        else
+            rm -f "$SINGBOX_FOLDER_PATH/argo_${_pp}_proto"
+        fi
+    done
+    # 同步旧 vlvm（兼容旧逻辑：保留任一协议，首字母大写）
+    if [ -n "$new" ]; then
+        printf '%s' "$(printf '%s' "$new" | tr ',' '\n' | head -n1 | sed 's/^./\U&/')" > "$SINGBOX_FOLDER_PATH/vlvm"
+    else
+        rm -f "$SINGBOX_FOLDER_PATH/vlvm"
+    fi
+    unset _sp _pp
 }
 
 # ================== Socks5 IP白名单管理 ==================
@@ -6312,7 +6561,7 @@ rt_manage() {
 # 查看各协议对应的代理出口（无代理 = 原IP出站）
 rt_proxy_map() {
     local sbj="$SINGBOX_FOLDER_PATH/sb.json" _p _out _cnt=0
-    local _order=(vmess-sb vless-ws-sb trojan-ws-sb vless-reality-vision-sb hy2-sb tuic-sb anytls-sb)
+    local _order=(vmess-sb vless-ws-sb trojan-ws-sb vmess-ws-cdn-sb vless-ws-cdn-sb trojan-ws-cdn-sb vless-reality-vision-sb hy2-sb tuic-sb anytls-sb)
     clear
     green "========= [5][6] 分流管理 → 各协议对应的代理出口 ========="
     echo ""
@@ -6366,7 +6615,7 @@ view_proxy_protocols() {
 # 修改某协议使用的代理（选已添加的 socks/http 代理，0=直连原IP出口，回车=取消）
 edit_protocol_proxy() {
     local sbj="$SINGBOX_FOLDER_PATH/sb.json"
-    local _letters=(b c d e f g h) _ptags=(vless-reality-vision-sb hy2-sb tuic-sb anytls-sb vmess-sb trojan-ws-sb vless-ws-sb)
+    local _letters=(b c d e f g h i j k) _ptags=(vless-reality-vision-sb hy2-sb tuic-sb anytls-sb vmess-sb trojan-ws-sb vless-ws-sb vmess-ws-cdn-sb vless-ws-cdn-sb trojan-ws-cdn-sb)
     local _protos=() _n _p _tag _cur _plist _choice
     clear
     green "========= [5][7] 分流管理 → 修改各协议使用的代理 ========="
@@ -6761,11 +7010,11 @@ delete_socks5_proxy() {
 }
 
 # 设置 socks/http 出站附着的协议（生成 inbound 路由规则，多选，0=清除全部关联，回车=取消）
-# 编号与安装时一致且按字母升序：a=全选 b=VLESS c=Hysteria2 d=TUIC e=AnyTLS f=Vmess-WS g=Trojan-WS h=Vless-WS
+# 编号与安装时一致且按字母升序：a=全选 b=VLESS c=Hysteria2 d=TUIC e=AnyTLS f=Vmess-WS g=Trojan-WS h=Vless-WS i=Vmess-CDN j=Vless-CDN k=Trojan-CDN
 attach_socks5_proxy() {
      local sbj="$SINGBOX_FOLDER_PATH/sb.json"
      local _tag="$1" _parent="${2:-3}"
-     local _letters=(b c d e f g h) _ptags=(vless-reality-vision-sb hy2-sb tuic-sb anytls-sb vmess-sb trojan-ws-sb vless-ws-sb)
+     local _letters=(b c d e f g h i j k) _ptags=(vless-reality-vision-sb hy2-sb tuic-sb anytls-sb vmess-sb trojan-ws-sb vless-ws-sb vmess-ws-cdn-sb vless-ws-cdn-sb trojan-ws-cdn-sb)
      local _protos=() _letters_all _attached _attach_input _selected=() _failed=() _n _p _conflict _inbs
      clear
      green "========= [5][${_parent}] 分流管理 → 附着协议到代理 ========="
