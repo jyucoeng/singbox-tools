@@ -5007,18 +5007,18 @@ menu_collect_install() {
     purple "===== Vmess/Vless/Trojan WS 走 CDN 回源 (ws_cdn, 可选) ====="
     yellow "  经你自己的 CDN/反代转发到服务器 nginx（回源端口 = 服务器 nginx_pt）"
     yellow "  可与 Argo 并存；支持每个协议用不同子域名（Cloudflare origin rule 多子域名同 A 记录）"
-    green "  f) Vmess-WS-CDN"
-    green "  g) Trojan-WS-CDN"
-    green "  v) Vless-WS-CDN"
-    reading "输入要启用 CDN 回源的协议 (可多选，空格/逗号分隔，回车=不启用): " _ws_sel
+    green "  i) Vmess-WS-CDN"
+    green "  j) Vless-WS-CDN"
+    green "  k) Trojan-WS-CDN"
+    reading "输入要启用 CDN 回源的协议 (可多选，用字母 i/j/k，空格/逗号分隔，回车=不启用): " _ws_sel
     _ws_sel="$(printf '%s' "$_ws_sel" | tr ',' ' ' | tr '[:upper:]' '[:lower:]')"
     if [ -n "$_ws_sel" ]; then
         _ws_list=""
         for _ws_p in $_ws_sel; do
             case "$_ws_p" in
-                f) _ws_list="$_ws_list,vmess" ;;
-                v) _ws_list="$_ws_list,vless" ;;
-                g) _ws_list="$_ws_list,trojan" ;;
+                i) _ws_list="$_ws_list,vmess" ;;
+                j) _ws_list="$_ws_list,vless" ;;
+                k) _ws_list="$_ws_list,trojan" ;;
                 *) yellow "  ! 跳过未知选项: $_ws_p" ;;
             esac
         done
