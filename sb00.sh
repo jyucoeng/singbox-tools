@@ -958,8 +958,9 @@ interactive_sb_shortcut_menu() {
 showmode() {
     blue "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     green "     Sing-box 一键脚本"
-    yellow "     协议: vmess/trojan/vless (Argo 选1)"
-    yellow "          vless reality+hy2+tuic+anytls+socks5"
+    yellow "     argo协议: vmess/trojan/vless (Argo 选1)"
+    yellow "      直连协议: vless reality+hy2+tuic+anytls+socks5(可多选)"
+    yellow "      ws_cdn回源: vmess/vless/trojan (可多选, 经CDN回源到nginx)"
     green "     Author：$AUTHOR"
     green "     Version: ${VERSION}"
     blue "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
