@@ -68,9 +68,9 @@ socks5_ips='1.2.3.4,5.6.7.0/24' \
 ########## B. Argo 隧道（可多选，任意组合） ##########
 argo="trojan,vless" \
 # 共享 CF 优选域名/端口（所有 Argo 协议共用；未填默认 saas.sin.fan / 443）
-argo_cdn_host='saas.sin.fan' \
-argo_cdn_pt=8443 \
-# 也可分开设置（未填回退共享）：argo_vmess_cdn_host / argo_vmess_cdn_pt、argo_vless_cdn_*、argo_trojan_cdn_*
+argo_cf_host='saas.sin.fan' \
+argo_cf_pt=8443 \
+# 也可分开设置（未填回退共享）：argo_vmess_cf_host / argo_vmess_cf_pt、argo_vless_cf_host / argo_vless_cf_pt、argo_trojan_cf_host / argo_trojan_cf_pt
 # agn = Argo 固定隧道域名；agk = Argo Token / JSON 凭据；argo_pt 为 Argo 本地回源端口（一般不改）
 agn="california.xxxx.xyz" \
 agk='ey开头的那一大串' \
@@ -80,13 +80,13 @@ argo_pt=8001 \
 ########## C. CDN 回源 ws_cdn（经你自己的 CDN 反代到服务器 nginx，不使用 Argo；可多选） ##########
 # ws_cdn 支持 vmess/vless/trojan 任意多选；共享参数是所有协议兜底，专属参数未填回退共享
 ws_cdn='vmess,vless,trojan' \
-ws_cdn_host='cdn.example.com' \
+ws_cdn_cf_host='cdn.example.com' \
 ws_cdn_sni='cdn.example.com' \
-ws_cdn_pt=443 \
+ws_cdn_cf_pt=443 \
 # 每协议可选不同专属子域名（Cloudflare origin rule 多子域名同 A 记录）：
-# vless_cdn_host='vless.example.com' 或 trojan_cdn_host='trojan.example.com'，对应再配 vless_cdn_sni / trojan_cdn_sni
-vless_cdn_host='vless.example.com' \
-trojan_cdn_host='trojan.example.com' \
+# ws_cdn_vless_cf_host='vless.example.com' 或 ws_cdn_trojan_cf_host='trojan.example.com'，对应再配 ws_cdn_vless_sni / ws_cdn_trojan_sni
+ws_cdn_vless_cf_host='vless.example.com' \
+ws_cdn_trojan_cf_host='trojan.example.com' \
 # ------------------------------------------------------------------------
 
 ########## D. 订阅 / 其他 ##########
@@ -109,7 +109,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 - 不传uuid → 脚本自动生成 UUID
 - 传uuid → 使用你指定的 UUID
 
-## 3、 argo_cdn_host、argo_cdn_pt、hy_sni、tu_sni、vl_sni、vl_sni_pt、any_sni、argo_pt、socks5pt（以及cdn域名 和 各协议的伪装域名，可选）
+## 3、 argo_cf_host、argo_cf_pt、hy_sni、tu_sni、vl_sni、vl_sni_pt、any_sni、argo_pt、socks5pt（以及cdn域名 和 各协议的伪装域名，可选）
 
 ❗注意：这几个值不会填的话就不要瞎传（可直接留空或者干脆删去这个变量）
 -----
@@ -140,21 +140,21 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 
      
-👉 argo_cdn_host、argo_cdn_pt 用在以下地方（Argo 场景的对外端口为 argo_cdn_pt，默认值 443，可自定义为 https 系端口中的一个：443,2053,2083,2087,2096,8443 [任选]）：
+👉 argo_cf_host、argo_cf_pt 用在以下地方（Argo 场景的对外端口为 argo_cf_pt，默认值 443，可自定义为 https 系端口中的一个：443,2053,2083,2087,2096,8443 [任选]）：
 
 —— VMess Argo：
-"add":"${argo_cdn_host}"
+"add":"${argo_cf_host}"
 
 ——  Trojan Argo：
-trojan://${uuid}@${argo_cdn_host}:${argo_cdn_pt}?...
+trojan://${uuid}@${argo_cf_host}:${argo_cf_pt}?...
 
 ——  Vless Argo：
-vless://${uuid}@${argo_cdn_host}:${argo_cdn_pt}?...
+vless://${uuid}@${argo_cf_host}:${argo_cf_pt}?...
 
-👉 每协议也可分别指定（分开设置，未填回退共享 `argo_cdn_host`/`argo_cdn_pt`）：
-`argo_vmess_cdn_host` / `argo_vmess_cdn_pt`、`argo_vless_cdn_host` / `argo_vless_cdn_pt`、`argo_trojan_cdn_host` / `argo_trojan_cdn_pt`
+👉 每协议也可分别指定（分开设置，未填回退共享 `argo_cf_host`/`argo_cf_pt`）：
+`argo_vmess_cf_host` / `argo_vmess_cf_pt`、`argo_vless_cf_host` / `argo_vless_cf_pt`、`argo_trojan_cf_host` / `argo_trojan_cf_pt`
 
-👉 兼容旧名：`cdn_host` / `cdn_pt` 仍可用（`argo_cdn_host`/`argo_cdn_pt` 优先，旧名兜底），方便旧命令直接复用。
+👉 兼容旧名：`cdn_host` / `cdn_pt` 仍可用（`argo_cf_host`/`argo_cf_pt` 优先，旧名兜底），方便旧命令直接复用。
 
 举🌰：
 ```
@@ -163,7 +163,7 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
 
 👉  vl_sni_pt 为vless Reality协议节点的伪装域名对应的https系端口，可以在安装时自定义，可自定义为https系端口中的任意一个(443,2053,2083,2087,2096,8443)，不能在客户端随便乱改（因为是安装时绑定）
 
-- argo_cdn_host 指的是用 argo 时的 cf 域名，缺省值为 saas.sin.fan，你可以自己传你要的值，比如 www.visa.com 。argo_cdn_pt 是 cf 域名对应的端口。 不传就会使用缺省值做兜底。
+- argo_cf_host 指的是用 argo 时的 cf 域名，缺省值为 saas.sin.fan，你可以自己传你要的值，比如 www.visa.com 。argo_cf_pt 是 cf 域名对应的端口。 不传就会使用缺省值做兜底。
 
 - hy_sni 指的是用hy2协议的sni（伪装域名），缺省值为www.apple.com，你可以自己传你要的值,不传就会使用缺省值做兜底。
 
@@ -175,7 +175,7 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
 
 - any_sni 指的是用anytls协议的sni(伪装域名)，缺省值为www.apple.com，你可以自己传你要的值，比如 www.yahoo.com 。 不传就会使用缺省值做兜底。
 
-- argo的对外默认优选端口为443（可自行修改 argo_cdn_pt 参数），同样argo_pt对本地的监听端口为8001.也可以自定义（但是不建议改，不然你就要同时去把CF里面的对应的HTTP改成你自定义的端口。）
+- argo的对外默认优选端口为443（可自行修改 argo_cf_pt 参数），同样argo_pt对本地的监听端口为8001.也可以自定义（但是不建议改，不然你就要同时去把CF里面的对应的HTTP改成你自定义的端口。）
 
 <img width="1514" height="621" alt="CleanShot 2026-01-25 at 12 50 32" src="https://github.com/user-attachments/assets/ec1d2396-4832-4b1b-9da7-cbda4e9c56f1" />
 
@@ -266,29 +266,29 @@ Nginx 只在以下任一情况满足时才安装/配置：
 让 vmess / vless / trojan 的 WS 节点直接经过你自己的 **CDN / 反代** 转发到服务器 nginx（回源到服务器 `nginx_pt`，通常 8080），**不启用 cloudflared**。
 
 ```
-客户端 --wss--> CDN(ws_cdn_pt, 默认443) --http--> 服务器 nginx_pt --http--> sing-box ws 端口
+客户端 --wss--> CDN(ws_cdn_cf_pt, 默认443) --http--> 服务器 nginx_pt --http--> sing-box ws 端口
 ```
 
 **开关**：`ws_cdn=vmess,vless,trojan`（逗号分隔，可多选）
 
-**域名支持每个协议不同**（适用于 Cloudflare origin rule 泛域名 + 多子域名同 A 记录），优先级：`协议专属 > 共享 ws_cdn_* > 现有 cdn_host/cdn_pt`
+**域名支持每个协议不同**（适用于 Cloudflare origin rule 泛域名 + 多子域名同 A 记录），优先级：`协议专属 > 共享 ws_cdn_* > 默认 saas.sin.fan/443`
 
 | 变量 | 说明 | 默认 |
 |------|------|------|
 | `ws_cdn` | 开关：vmess/vless/trojan 逗号分隔 | 空（不启用） |
-| `{proto}_cdn_host`（`vmess_cdn_host` 等） | 各协议 CDN 子域名 | 回退共享 |
+| `{proto}_cdn_host`（`ws_cdn_vmess_cf_host` 等） | 各协议 CDN 子域名 | 回退共享 |
 | `{proto}_cdn_sni` | 各协议 SNI | 回退共享→host |
 | `{proto}_cdn_pt` | 各协议端口 | 回退共享→443 |
-| `ws_cdn_host` | 共享 CDN 域名（也是**订阅地址**用的域名） | 回退 cdn_host |
-| `ws_cdn_sni` | 共享 SNI | 回退 ws_cdn_host |
-| `ws_cdn_pt` | 共享 CDN 端口（仅限 https 系端口） | 443 |
+| `ws_cdn_cf_host` | 共享 CDN 域名（也是**订阅地址**用的域名） | 回退默认 saas.sin.fan |
+| `ws_cdn_sni` | 共享 SNI | 回退 ws_cdn_cf_host |
+| `ws_cdn_cf_pt` | 共享 CDN 端口（仅限 https 系端口） | 443 |
 
 **示例**（vless 和 trojan 用不同子域名，vmess 用共享）：
 ```bash
 ws_cdn='vmess,vless,trojan' \
-ws_cdn_host='cdn.example.com' \
-vless_cdn_host='vless.example.com' \
-trojan_cdn_host='trojan.example.com' \
+ws_cdn_cf_host='cdn.example.com' \
+ws_cdn_vless_cf_host='vless.example.com' \
+ws_cdn_trojan_cf_host='trojan.example.com' \
 subscribe=true \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) ins
 ```
@@ -299,7 +299,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ```
 ① 固定 Argo 隧道域名（不以 trycloudflare.com 结尾）        ← 第一顺位
-② 共享 CDN 域名 ws_cdn_host
+② 共享 CDN 域名 ws_cdn_cf_host
 ③ CDN 专属域名（固定顺序 vmess→vless→trojan，取第一个非空）
 ④ 临时 Argo 域名（含 trycloudflare）
 ⑤ http://服务器IP:nginx_port（兜底，含节点口令，仅建议可信网络使用）
@@ -307,7 +307,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 > 脚本自动按 ①→②→③→④→⑤ 判定，没有手动强制项；选哪个、填不填取决于你实际配置了哪些域名。
 >
-> **✅ 有固定 Argo 隧道时，后面全部不用填**：一旦配了固定 Argo（③），订阅地址自动就是 `https://固定Argo域名/sub/{uuid}`，`ws_cdn_host` 和 `vmess/vless/trojan_cdn_host` 这些 CDN 域名**一个都不用写**，省心。
+> **✅ 有固定 Argo 隧道时，后面全部不用填**：一旦配了固定 Argo（③），订阅地址自动就是 `https://固定Argo域名/sub/{uuid}`，`ws_cdn_cf_host` 和 `vmess/vless/ws_cdn_trojan_cf_host` 这些 CDN 域名**一个都不用写**，省心。
 > CDN 域名（④⑤）唯一的意义是：**没有固定 Argo 时**（或想强制走 CDN）也能让订阅走一个稳定 https 域名，而不是跌到明文 HTTP。
 >
 > **完整顺延链路**（不足一级就顺延到下一级）：
@@ -315,7 +315,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 > ```
 > ③ 固定 Argo 隧道域名（如 argo.example.com，非 trycloudflare）  → https://固定Argo域名/sub/{uuid}
 >  ↓ 无固定 Argo
-> ④ 共享 CDN 域名 ws_cdn_host                                  → https://共享域名:pt/sub/{uuid}
+> ④ 共享 CDN 域名 ws_cdn_cf_host                                  → https://共享域名:pt/sub/{uuid}
 >  ↓ 无共享
 > ⑤ CDN 专属域名（vmess→vless→trojan，取第一个非空）            → https://专属域名:pt/sub/{uuid}
 >  ↓ 无任何 CDN 域名
@@ -332,10 +332,10 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 >
 > | 你配置的域名 | 订阅 URL 用的域名 | 说明 |
 > |---|---|---|
-> | `ws_cdn_host=cdn.example.com`，任意协议有专属 | `cdn.example.com` | **共享优先**（④），专属不用 |
-> | 共享空，`vmess_cdn_host=vm.example.com` 有值 | `vm.example.com` | ⑤ 固定顺序第一个非空 |
-> | 共享空，vmess 空，`vless_cdn_host=vl.example.com` 有值 | `vl.example.com` | **跳过空的 vmess，顺延到 vless** |
-> | 共享空，vmess/vless 都空，`trojan_cdn_host=tr.example.com` 有值 | `tr.example.com` | 顺延到 trojan |
+> | `ws_cdn_cf_host=cdn.example.com`，任意协议有专属 | `cdn.example.com` | **共享优先**（④），专属不用 |
+> | 共享空，`ws_cdn_vmess_cf_host=vm.example.com` 有值 | `vm.example.com` | ⑤ 固定顺序第一个非空 |
+> | 共享空，vmess 空，`ws_cdn_vless_cf_host=vl.example.com` 有值 | `vl.example.com` | **跳过空的 vmess，顺延到 vless** |
+> | 共享空，vmess/vless 都空，`ws_cdn_trojan_cf_host=tr.example.com` 有值 | `tr.example.com` | 顺延到 trojan |
 > | 共享 + 三个专属全空 | （无 CDN 域名）→ 顺延 ⑥⑦ | 只有 CDN 全空才会继续跌 |
 >
 > 参数里写几个、写哪个的顺序都无所谓：**只要 CDN 域名有一个非空就够**，规则永远是「共享 → vmess → vless → trojan，取第一个非空」；CDN 全部为空才继续走「⑥ 临时 Argo → ⑦ http」。
@@ -344,7 +344,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ### 8.5.1、 CF（Cloudflare）回源规则如何配置？
 
-WS-CDN 回源链路：`客户端 → CDN(ws_cdn_pt) → 服务器 nginx_pt(默认 8080)`。要让 Cloudflare 把你的子域名请求回源到你服务器的 nginx，需要两步：**Origin Rules（回源端口）** + **DNS 记录**。
+WS-CDN 回源链路：`客户端 → CDN(ws_cdn_cf_pt) → 服务器 nginx_pt(默认 8080)`。要让 Cloudflare 把你的子域名请求回源到你服务器的 nginx，需要两步：**Origin Rules（回源端口）** + **DNS 记录**。
 
 #### 1、如何添加一个回源端口规则（Origin Rules）？
 
@@ -377,10 +377,10 @@ trojan-node.xxxx.nyc.mn  →  192.9.100.***   （小黄云开不开都可以）
 
 | 你在哪填 | 对应的脚本变量 | 说明 |
 |---|---|---|
-| 上面三条 A 记录的子域名 | `vmess_cdn_host` / `vless_cdn_host` / `trojan_cdn_host` | 各协议的专属子域名（连接地址 add 可以仍用优选域名/IP） |
+| 上面三条 A 记录的子域名 | `ws_cdn_vmess_cf_host` / `ws_cdn_vless_cf_host` / `ws_cdn_trojan_cf_host` | 各协议的专属子域名（连接地址 add 可以仍用优选域名/IP） |
 | Origin Rules 的目标端口 | `nginx_pt`（默认 8080） | CDN 回源到服务器 nginx 的端口 |
-| 客户端连 CDN 的端口 | `ws_cdn_pt`（默认 443） | CDN 对外 HTTPS 端口 |
-| 各协议/共享 SNI（真实域名） | `vmess_cdn_sni` 等 / `ws_cdn_sni` | 对应上面 A 记录的某个子域名 |
+| 客户端连 CDN 的端口 | `ws_cdn_cf_pt`（默认 443） | CDN 对外 HTTPS 端口 |
+| 各协议/共享 SNI（真实域名） | `ws_cdn_vmess_sni` 等 / `ws_cdn_sni` | 对应上面 A 记录的某个子域名 |
 
 ## 9、 agn / agk（Argo 固定隧道）
 
@@ -461,15 +461,15 @@ tupt=41005 \
 anypt=41006 \
 # Argo 多选：vmess,trojan,vless 任意组合（下面示例同时启用 Vmess-Argo 和 Vless-Argo）
 argo="vmess,vless" \
-# Argo 共享 CF 优选域名/端口（所有 Argo 协议共用；或按协议分开填 argo_vmess_cdn_host / argo_vmess_cdn_pt 等）
-argo_cdn_host='saas.sin.fan' \
-argo_cdn_pt=8443 \
+# Argo 共享 CF 优选域名/端口（所有 Argo 协议共用；或按协议分开填 argo_vmess_cf_host / argo_vmess_cf_pt 等）
+argo_cf_host='saas.sin.fan' \
+argo_cf_pt=8443 \
 # ---- CDN 回源（ws_cdn，经你自己的 CDN 反代到服务器 nginx，不用 Argo；可多选） ----
 # ws_cdn='vmess,trojan,vless' \
-# ws_cdn_host='cdn.example.com' \            # 共享兜底 + 订阅 https 域名
-# vless_cdn_host='vless.example.com' \       # 每个协议可选不同专属子域名（Cloudflare origin rule 多子域名同 A 记录）
-# trojan_cdn_host='trojan.example.com' \     # 专属选择器，未填回退共享 ws_cdn_host → cdn_host
-# vless_cdn_sni='vless.example.com' \        # 各协议专属 SNI（真实子域名，HTTPS 握手必需）
+# ws_cdn_cf_host='cdn.example.com' \            # 共享兜底 + 订阅 https 域名
+# ws_cdn_vless_cf_host='vless.example.com' \       # 每个协议可选不同专属子域名（Cloudflare origin rule 多子域名同 A 记录）
+# ws_cdn_trojan_cf_host='trojan.example.com' \     # 专属选择器，未填回退共享 ws_cdn_cf_host → 默认 saas.sin.fan
+# ws_cdn_vless_sni='vless.example.com' \        # 各协议专属 SNI（真实子域名，HTTPS 握手必需）
 # ------------------------------------------------------------------------
 nginx_pt=41007 \
 socks5pt=31017 \
@@ -578,9 +578,9 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 ```bash
 ippz=4 \
 argo=vmess,trojan \
-# 共享 CF 优选域名/端口（未填默认 saas.sin.fan / 443）；每协议也可分开填 argo_vmess_cdn_host / argo_trojan_cdn_host 等
-argo_cdn_host='saas.sin.fan' \
-argo_cdn_pt=443 \
+# 共享 CF 优选域名/端口（未填默认 saas.sin.fan / 443）；每协议也可分开填 argo_vmess_cf_host / argo_trojan_cf_host 等
+argo_cf_host='saas.sin.fan' \
+argo_cf_pt=443 \
 agn="test-xxx.xxxx.xyz" \
 agk="ey开头的那一串" \
 name="小叮当-韩国春川"  \
@@ -622,7 +622,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ```bash
 ws_cdn='vmess,vless,trojan' \
-ws_cdn_host='cdn.example.com' \
+ws_cdn_cf_host='cdn.example.com' \
 subscribe=true \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
@@ -632,10 +632,10 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 ```bash
 # 共享兜底 + 订阅 https 域名；每个协议可选不同专属子域名
 ws_cdn='vmess,vless,trojan' \
-ws_cdn_host='cdn.example.com' \
-vmess_cdn_host='vm.example.com' \
-vless_cdn_host='vl.example.com' \
-trojan_cdn_host='tr.example.com' \
+ws_cdn_cf_host='cdn.example.com' \
+ws_cdn_vmess_cf_host='vm.example.com' \
+ws_cdn_vless_cf_host='vl.example.com' \
+ws_cdn_trojan_cf_host='tr.example.com' \
 subscribe=true \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
@@ -794,22 +794,31 @@ cat /root/doraemon/port_socks5
 
 ## 版本变更信息
 
-v2.0.3 (2026-09-08)
+v2.0.4 (2026-09-08)
+ - **命名重构，彻底消除 `cdn_host`/`cdn_pt` 歧义**：Argo 共享改为 `argo_cf_host` / `argo_cf_pt`（专属 `argo_vmess_cf_host` 等）；CDN 回源共享改为 `ws_cdn_cf_host` / `ws_cdn_cf_pt` / `ws_cdn_sni`（专属 `ws_cdn_vmess_cf_host` / `ws_cdn_vmess_sni` 等）。**`cdn_host` / `cdn_pt` 正式退役**，仅作为旧 Argo 兼容别名，新版不再使用这两个环境变量
+ - **旧用户升级零改造成本**（兼容旧版 `cdn_host` / `cdn_pt`）：
+   - 旧命令传 `cdn_host=xxx cdn_pt=2083` 继续生效（→ `argo_cf_host` / `argo_cf_pt`，新名优先）
+   - 旧落盘文件 `cdn_host` / `cdn_pt` / `vlvm`（单协议）升级后 `cip`/`list` 自动读取，**输出的节点串与旧版完全一致**
+   - `rep` 重装时不传新名也不丢配置：旧 `cdn_host`/`cdn_pt` 文件值自动迁移到 `argo_cf_*`
+ - **订阅地址完全兼容**：旧版订阅只有「Argo / http」两条分支，新版仅在配置了 `ws_cdn_cf_host` 时才新增「CDN 回源」订阅分支，旧用户（无 ws_cdn 文件）不受影响，订阅链接升级后保持不变
+ - 落盘改为「保留/迁移」策略（`fs_write_or_keep`）：env 值>已有文件>旧名文件迁移>默认，不覆盖用户已有配置
+
+ v2.0.3 (2026-09-08)
  - **新增 ws_cdn 功能**：Vmess/Vless/Trojan WS 走 CDN 直连（不使用 Argo）
  - 新增开关 `ws_cdn=vmess,vless,trojan`（逗号分隔，可多选）；与 Argo 共存时节点两者都输出
- - 域名支持每个协议不同（适用 Cloudflare origin rule 泛域名 + 多子域名同 A 记录）：`vmess_cdn_host` / `vless_cdn_host` / `trojan_cdn_host`（+ 各自 `_sni`/`_pt`）
- - 共享兜底参数：`ws_cdn_host` / `ws_cdn_sni` / `ws_cdn_pt`（默认 443）；优先级「协议专属 > 共享 > 现有 cdn_host/cdn_pt」
+ - 域名支持每个协议不同（适用 Cloudflare origin rule 泛域名 + 多子域名同 A 记录）：`ws_cdn_vmess_cf_host` / `ws_cdn_vless_cf_host` / `ws_cdn_trojan_cf_host`（+ 各自 `_sni`/`_pt`）
+ - 共享兜底参数：`ws_cdn_cf_host` / `ws_cdn_sni` / `ws_cdn_cf_pt`（默认 443）；优先级「协议专属 > 共享 > 默认 saas.sin.fan/443」
  - 复用现有本地 ws 端口（port_vm_ws / port_vl_ws / port_tr）与 nginx 反代（/${uuid}-vm/-vl/-tr），**不新增端口文件 / 不新增 inbound / 不新增 nginx location**
  - CDN 回源端口 = 服务器 `nginx_pt`（默认 8080）；nginx 安装条件与 8080 防火墙放行加入 ws_cdn 场景
- - 订阅地址新优先级（show_sub_url）：固定 Argo > 共享 ws_cdn_host > 任意 Argo > http；支持 `sub_domain=argo/cdn` 强制指定
+ - 订阅地址新优先级（show_sub_url）：固定 Argo > 共享 ws_cdn_cf_host > 任意 Argo > http；支持 `sub_domain=argo/cdn` 强制指定
  - 新增生效值解析函数 `ws_cdn_val / ws_cdn_eff_host/sni/pt / ws_cdn_proto_enabled`；配置落盘 + 环境变量优先
  - 交互菜单新增「Vmess/Vless/Trojan WS 走 CDN 直连」选择块（多选协议 + 逐协议子域名 + 共享 host/sni/端口）
  - 安全：所有动态赋值（落盘/菜单注入）改用间接展开 + `printf -v`，不再用 `eval`
  - 顺带修复：端口设置菜单按 `vmag` 判断是否需要 Argo 端口（此前 ws_cdn 触发 vmp/vlp/trp 会误问 Argo 端口）
 
  - **Argo 协议由「三选一」升级为「可多选」**：`argo=vmess,vless` 等任意组合（逗号分隔）；cip 显示 / jh.txt / 订阅 / nginx 反代均按多协议输出对应节点，每个节点可用不同优选域名/端口
- - 新增每协议 Argo 专属优选域名/端口：`argo_vmess_cdn_host` / `argo_vmess_cdn_pt`、`argo_vless_cdn_host` / `argo_vless_cdn_pt`、`argo_trojan_cdn_host` / `argo_trojan_cdn_pt`；未填回退共享 `argo_cdn_host` / `argo_cdn_pt`
- - 共享 CF 优选域名/端口变量由 `cdn_host` / `cdn_pt` 更名为 `argo_cdn_host` / `argo_cdn_pt`（旧名 `cdn_host` / `cdn_pt` 继续兼容，新名优先），脚本内部节点生成/回退逻辑仍用归一化值
+ - 新增每协议 Argo 专属优选域名/端口：`argo_vmess_cf_host` / `argo_vmess_cf_pt`、`argo_vless_cf_host` / `argo_vless_cf_pt`、`argo_trojan_cf_host` / `argo_trojan_cf_pt`；未填回退共享 `argo_cf_host` / `argo_cf_pt`
+ - 共享 CF 优选域名/端口变量由 `cdn_host` / `cdn_pt` 更名为 `argo_cf_host` / `argo_cf_pt`（旧名 `cdn_host` / `cdn_pt` 继续兼容，新名优先），脚本内部节点生成/回退逻辑仍用归一化值
  - 修复 WS-CDN 回源节点链接 path 缺少 `-cdn` 后缀（此前与 nginx 反代 / inbound 的 `/{uuid}-{p}-cdn` 不匹配，导致 ws_cdn 节点无法回源）
  - CLI 交互菜单：Argo 选择支持多选（f/g/v 组合），新增「Argo CF 优选域名/端口 统一或分开」填写环节；Argo 协议切换菜单改为逐个 toggle
  - 分流管理（socks/http 附着协议、查看代理出口）补充支持 WS-CDN 独立 inbound（`vmess-ws-cdn-sb` / `vless-ws-cdn-sb` / `trojan-ws-cdn-sb`）

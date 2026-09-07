@@ -32,12 +32,12 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="2.0.3(2026-09-08)"
+VERSION="2.0.4(2026-09-08)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
-# CDN 共享参数：新名 argo_cdn_host / argo_cdn_pt 优先，兼容旧名 cdn_host / cdn_pt
-export cdn_host=${argo_cdn_host:-${cdn_host:-"saas.sin.fan"}} # Default CDN host for vmess/trojan/vless  cdn.7zz.cn
+# CDN 共享参数：新名 argo_cf_host / argo_cf_pt 优先，兼容旧名 cdn_host / cdn_pt
+export cdn_host=${argo_cf_host:-${cdn_host:-"saas.sin.fan"}} # Default CDN host for vmess/trojan/vless  cdn.7zz.cn
 export hy_sni=${hy_sni:-"www.apple.com"}    # Default SNI for hy2 protocol
 export vl_sni=${vl_sni:-"www.apple.com"}    # Default SNI for vless protocol   www.ua.edu www.yahoo.com
 export tu_sni=${tu_sni:-"www.apple.com"}    # Default SNI for hy2 protocol
@@ -76,12 +76,12 @@ export argo="$(_normalize_argo "${argo:-}")"
 export ARGO_DOMAIN=${agn:-''}
 export ARGO_AUTH=${agk:-''}
 # 每协议 Argo 优选域名/端口（未设回退 cdn_host/cdn_pt，即旧版统一语义）
-export argo_vmess_cdn_host=${argo_vmess_cdn_host:-''}
-export argo_vmess_cdn_pt=${argo_vmess_cdn_pt:-''}
-export argo_vless_cdn_host=${argo_vless_cdn_host:-''}
-export argo_vless_cdn_pt=${argo_vless_cdn_pt:-''}
-export argo_trojan_cdn_host=${argo_trojan_cdn_host:-''}
-export argo_trojan_cdn_pt=${argo_trojan_cdn_pt:-''}
+export argo_vmess_cf_host=${argo_vmess_cf_host:-''}
+export argo_vmess_cf_pt=${argo_vmess_cf_pt:-''}
+export argo_vless_cf_host=${argo_vless_cf_host:-''}
+export argo_vless_cf_pt=${argo_vless_cf_pt:-''}
+export argo_trojan_cf_host=${argo_trojan_cf_host:-''}
+export argo_trojan_cf_pt=${argo_trojan_cf_pt:-''}
 export ippz=${ippz:-''}
 export name=${name:-''}
 
@@ -92,19 +92,19 @@ _normalize_ws_cdn() {
     printf '%s' "${1:-}" | tr -d ' \t' | tr '[:upper:]' '[:lower:]'
 }
 export ws_cdn="$(_normalize_ws_cdn "${ws_cdn:-}")"
-export ws_cdn_host=${ws_cdn_host:-''}        # 共享 CDN 连接地址（未设回退 cdn_host）
-export ws_cdn_sni=${ws_cdn_sni:-''}          # 共享 SNI（未设回退 ws_cdn_host）
-export ws_cdn_pt=${ws_cdn_pt:-''}            # 共享 CDN 端口（未设回退 cdn_pt）
+export ws_cdn_cf_host=${ws_cdn_cf_host:-''}        # 共享 CDN 连接地址（未设回退 cdn_host）
+export ws_cdn_sni=${ws_cdn_sni:-''}          # 共享 SNI（未设回退 ws_cdn_cf_host）
+export ws_cdn_cf_pt=${ws_cdn_cf_pt:-''}            # 共享 CDN 端口（未设回退 cdn_pt）
 # 每协议专属覆盖（可选；留空则走共享默认）
-export vmess_cdn_host=${vmess_cdn_host:-''}  # vmess 专属 CDN 域名
-export vmess_cdn_sni=${vmess_cdn_sni:-''}    # vmess 专属 SNI
-export vmess_cdn_pt=${vmess_cdn_pt:-''}      # vmess 专属 CDN 端口
-export vless_cdn_host=${vless_cdn_host:-''}   # vless 专属 CDN 域名
-export vless_cdn_sni=${vless_cdn_sni:-''}     # vless 专属 SNI
-export vless_cdn_pt=${vless_cdn_pt:-''}       # vless 专属 CDN 端口
-export trojan_cdn_host=${trojan_cdn_host:-''} # trojan 专属 CDN 域名
-export trojan_cdn_sni=${trojan_cdn_sni:-''}   # trojan 专属 SNI
-export trojan_cdn_pt=${trojan_cdn_pt:-''}     # trojan 专属 CDN 端口
+export ws_cdn_vmess_cf_host=${ws_cdn_vmess_cf_host:-''}  # vmess 专属 CDN 域名
+export ws_cdn_vmess_sni=${ws_cdn_vmess_sni:-''}    # vmess 专属 SNI
+export ws_cdn_vmess_cf_pt=${ws_cdn_vmess_cf_pt:-''}      # vmess 专属 CDN 端口
+export ws_cdn_vless_cf_host=${ws_cdn_vless_cf_host:-''}   # vless 专属 CDN 域名
+export ws_cdn_vless_sni=${ws_cdn_vless_sni:-''}     # vless 专属 SNI
+export ws_cdn_vless_cf_pt=${ws_cdn_vless_cf_pt:-''}       # vless 专属 CDN 端口
+export ws_cdn_trojan_cf_host=${ws_cdn_trojan_cf_host:-''} # trojan 专属 CDN 域名
+export ws_cdn_trojan_sni=${ws_cdn_trojan_sni:-''}   # trojan 专属 SNI
+export ws_cdn_trojan_cf_pt=${ws_cdn_trojan_cf_pt:-''}     # trojan 专属 CDN 端口
 
 NGINX_DEFAULT_PORT=8080
 readonly ARGO_DEFAULT_PORT=8001
@@ -128,8 +128,8 @@ export reality_public="${reality_public:-""}"
 # ✅ Argo 优选端口白名单（仅 https 系端口）
 HTTPS_CDN_PORTS=(443 2053 2083 2087 2096 8443)
 
-# 默认 CDN 端口和 Vless SNI 端口（argo_cdn_pt 优先，兼容旧名 cdn_pt）
-cdn_pt="${argo_cdn_pt:-${cdn_pt:-443}}"
+# 默认 CDN 端口和 Vless SNI 端口（argo_cf_pt 优先，兼容旧名 cdn_pt）
+cdn_pt="${argo_cf_pt:-${cdn_pt:-443}}"
 vl_sni_pt="${vl_sni_pt:-443}"
 
 v46url="https://icanhazip.com"
@@ -2277,7 +2277,7 @@ sbj_save() {
 # 优先级：协议专属({proto}_cdn_*) > 共享(ws_cdn_*) > 现有(cdn_host/cdn_pt)
 # 配置来源：环境变量优先，其次落盘文件；空则回退
 
-# 读取单个 ws_cdn 配置值（环境变量 > 落盘文件；空返回空）
+# 读取单个 ws_cdn 配置值（环境变量 > 落盘新名文件 > 旧名文件兼容；空返回空）
 ws_cdn_val() {
      local k="$1" v=""
      v="${!k:-}"
@@ -2285,7 +2285,35 @@ ws_cdn_val() {
          printf '%s' "$v"
          return 0
      fi
-     [ -s "$SINGBOX_FOLDER_PATH/$k" ] && cat "$SINGBOX_FOLDER_PATH/$k"
+     if [ -s "$SINGBOX_FOLDER_PATH/$k" ]; then
+         cat "$SINGBOX_FOLDER_PATH/$k"
+         return 0
+     fi
+     # 旧名文件兼容（老安装留下的 cdn_host / ws_cdn_host / {p}_cdn_* 等）
+     local _legacy=""
+     case "$k" in
+         argo_cf_host) _legacy=cdn_host ;;
+         argo_cf_pt)   _legacy=cdn_pt ;;
+         argo_vmess_cf_host) _legacy=cdn_host ;;
+         argo_vmess_cf_pt)   _legacy=cdn_pt ;;
+         argo_vless_cf_host) _legacy=cdn_host ;;
+         argo_vless_cf_pt)   _legacy=cdn_pt ;;
+         argo_trojan_cf_host) _legacy=cdn_host ;;
+         argo_trojan_cf_pt)   _legacy=cdn_pt ;;
+         ws_cdn_cf_host) _legacy=ws_cdn_host ;;
+         ws_cdn_cf_pt)   _legacy=ws_cdn_pt ;;
+         ws_cdn_vmess_cf_host) _legacy=vmess_cdn_host ;;
+         ws_cdn_vmess_sni)     _legacy=vmess_cdn_sni ;;
+         ws_cdn_vmess_cf_pt)   _legacy=vmess_cdn_pt ;;
+         ws_cdn_vless_cf_host) _legacy=vless_cdn_host ;;
+         ws_cdn_vless_sni)     _legacy=vless_cdn_sni ;;
+         ws_cdn_vless_cf_pt)   _legacy=vless_cdn_pt ;;
+         ws_cdn_trojan_cf_host) _legacy=trojan_cdn_host ;;
+         ws_cdn_trojan_sni)     _legacy=trojan_cdn_sni ;;
+         ws_cdn_trojan_cf_pt)   _legacy=trojan_cdn_pt ;;
+         *) return 0 ;;
+     esac
+     [ -s "$SINGBOX_FOLDER_PATH/$_legacy" ] && cat "$SINGBOX_FOLDER_PATH/$_legacy"
      return 0
  }
 
@@ -2307,34 +2335,37 @@ argo_proto_enabled() {
     esac
     return 1
 }
-# 生效 Argo 连接地址：协议专属 > 共享（cdn_host 文件 / argo_cdn_host env）
+# 生效 Argo 连接地址：协议专属 > 共享 argo_cf_host（新名）> 旧存档 cdn_host
 argo_eff_host() {
     local p="$1" h=""
-    h="$(ws_cdn_val "argo_${p}_cdn_host")"
+    h="$(ws_cdn_val "argo_${p}_cf_host")"
+    [ -n "$h" ] || h="$(ws_cdn_val "argo_cf_host")"
     [ -n "$h" ] || h="$(cat "$SINGBOX_FOLDER_PATH/cdn_host" 2>/dev/null)"
     printf '%s' "$h"
 }
-# 生效 Argo 连接端口：协议专属 > 共享（cdn_pt 文件 / argo_cdn_pt env），https 系端口，非法回退 443
+# 生效 Argo 连接端口：协议专属 > 共享 argo_cf_pt（新名）> 旧存档 cdn_pt；https 系端口，非法回退 443
 argo_eff_pt() {
     local p="$1" pt=""
-    pt="$(ws_cdn_val "argo_${p}_cdn_pt")"
+    pt="$(ws_cdn_val "argo_${p}_cf_pt")"
+    [ -n "$pt" ] || pt="$(ws_cdn_val "argo_cf_pt")"
     [ -n "$pt" ] || pt="$(cat "$SINGBOX_FOLDER_PATH/cdn_pt" 2>/dev/null)"
     normalize_cdn_pt "${pt:-443}" 443
 }
 
- # 生效 CDN 连接地址：protocol 专属 > 共享 > cdn_host
+ # 生效 CDN 回源连接地址：protocol 专属 > 共享 ws_cdn_cf_host > 默认 saas.sin.fan
+ # ⚠️ ws_cdn（CDN 回源）与 Argo（argo_cf_*）是两套独立共享参数，互不回退，避免命名冲突
 ws_cdn_eff_host() {
     local p="$1" h=""
-    h="$(ws_cdn_val "${p}_cdn_host")"
-    [ -n "$h" ] || h="$(ws_cdn_val "ws_cdn_host")"
-    [ -n "$h" ] || h="$(cat "$SINGBOX_FOLDER_PATH/cdn_host" 2>/dev/null)"
+    h="$(ws_cdn_val "ws_cdn_${p}_cf_host")"
+    [ -n "$h" ] || h="$(ws_cdn_val "ws_cdn_cf_host")"
+    [ -n "$h" ] || h="saas.sin.fan"
     printf '%s' "$h"
 }
 
-# 生效 SNI：protocol 专属 > 共享 > 生效 host（仅当 host 是域名时回退；host 是优选 IP 时不回退，避免 SNI=IP）
+# 生效 SNI：protocol 专属 > 共享 ws_cdn_sni > 生效 host（仅当 host 是域名时回退；host 是优选 IP 时不回退，避免 SNI=IP）
 ws_cdn_eff_sni() {
     local p="$1" s="" _h=""
-    s="$(ws_cdn_val "${p}_cdn_sni")"
+    s="$(ws_cdn_val "ws_cdn_${p}_sni")"
     [ -n "$s" ] || s="$(ws_cdn_val "ws_cdn_sni")"
     if [ -z "$s" ]; then
         _h="$(ws_cdn_eff_host "$p")"
@@ -2348,12 +2379,12 @@ ws_cdn_eff_sni() {
     printf '%s' "$s"
 }
 
-# 生效 CDN 端口：protocol 专属 > 共享 > cdn_pt（仅限 https 系端口，非法回退 443）
+# 生效 CDN 回源端口：protocol 专属 > 共享 ws_cdn_cf_pt > 443（仅限 https 系端口，非法回退 443）
+# ⚠️ 与 Argo（argo_cf_pt）完全独立，互不回退
 ws_cdn_eff_pt() {
     local p="$1" pt=""
-    pt="$(ws_cdn_val "${p}_cdn_pt")"
-    [ -n "$pt" ] || pt="$(ws_cdn_val "ws_cdn_pt")"
-    [ -n "$pt" ] || pt="$(cat "$SINGBOX_FOLDER_PATH/cdn_pt" 2>/dev/null)"
+    pt="$(ws_cdn_val "ws_cdn_${p}_cf_pt")"
+    [ -n "$pt" ] || pt="$(ws_cdn_val "ws_cdn_cf_pt")"
     normalize_cdn_pt "${pt:-443}" 443
 }
 
@@ -2368,14 +2399,14 @@ ws_cdn_proto_enabled() {
     return 1
 }
 
-# 订阅的 CDN 域名：共享 ws_cdn_host > vmess 专属 > vless 专属 > trojan 专属，取第一个非空。
+# 订阅的 CDN 域名：共享 ws_cdn_cf_host > vmess 专属 > vless 专属 > trojan 专属，取第一个非空。
 # 专属 host 仅在对应协议启用了 ws_cdn 时才借用；固定顺序与 ws_cdn 传参顺序无关，保证可预期
 ws_cdn_sub_host() {
     local h=""
-    h="$(ws_cdn_val ws_cdn_host)"
-    [ -n "$h" ] || { ws_cdn_proto_enabled vmess && h="$(ws_cdn_val vmess_cdn_host)"; }
-    [ -n "$h" ] || { ws_cdn_proto_enabled vless && h="$(ws_cdn_val vless_cdn_host)"; }
-    [ -n "$h" ] || { ws_cdn_proto_enabled trojan && h="$(ws_cdn_val trojan_cdn_host)"; }
+    h="$(ws_cdn_val ws_cdn_cf_host)"
+    [ -n "$h" ] || { ws_cdn_proto_enabled vmess && h="$(ws_cdn_val ws_cdn_vmess_cf_host)"; }
+    [ -n "$h" ] || { ws_cdn_proto_enabled vless && h="$(ws_cdn_val ws_cdn_vless_cf_host)"; }
+    [ -n "$h" ] || { ws_cdn_proto_enabled trojan && h="$(ws_cdn_val ws_cdn_trojan_cf_host)"; }
     printf '%s' "$h"
 }
 
@@ -3797,6 +3828,26 @@ ins() {
     debug_log "【调试】ensure_sb_shortcut 已执行完成（sb 快捷命令）"
 }
 
+# 落盘兼容辅助：env 值在此次运行优先写新值；否则保留已有文件；否则从旧名文件迁移；否则写默认/删文件(回退默认)
+# 用法：fs_write_or_keep <目标文件> <env值> <旧名文件> <默认值>
+fs_write_or_keep() {
+    local _f="$1" _val="$2" _leg="${3:-}" _def="${4:-}"
+    if [ -n "$_val" ]; then
+        printf '%s\n' "$_val" > "$_f"
+        return 0
+    fi
+    [ -s "$_f" ] && return 0
+    if [ -n "$_leg" ] && [ -s "$_leg" ]; then
+        cp "$_leg" "$_f"
+        return 0
+    fi
+    if [ -n "$_def" ]; then
+        printf '%s\n' "$_def" > "$_f"
+        return 0
+    fi
+    rm -f "$_f"
+}
+
 # Write environment variables to files for persistence
 write2SingboxFolders() {
     mkdir -p "$SINGBOX_FOLDER_PATH"
@@ -3806,19 +3857,19 @@ write2SingboxFolders() {
     echo "${tu_sni}" > "$SINGBOX_FOLDER_PATH/tu_sni"
     # any_sni 在 anytls 配置生成时处理，这里不覆盖
     [ ! -s "$SINGBOX_FOLDER_PATH/any_sni" ] && echo "${any_sni}" > "$SINGBOX_FOLDER_PATH/any_sni"
-    echo "${cdn_host}" > "$SINGBOX_FOLDER_PATH/cdn_host"
-    echo "${cdn_pt}" > "$SINGBOX_FOLDER_PATH/cdn_pt"
+    # Argo 共享参数落盘：新名 argo_cf_*；无 env 值则保留旧文件 / 从旧 cdn_* 迁移 / 默认
+    fs_write_or_keep "$SINGBOX_FOLDER_PATH/argo_cf_host" "${argo_cf_host:-}" "$SINGBOX_FOLDER_PATH/cdn_host" "saas.sin.fan"
+    fs_write_or_keep "$SINGBOX_FOLDER_PATH/argo_cf_pt"   "${argo_cf_pt:-}"   "$SINGBOX_FOLDER_PATH/cdn_pt"   "443"
+    # cdn_host/cdn_pt 为内部归一化别名（兼容旧存档），env 空则保留旧文件或写默认
+    fs_write_or_keep "$SINGBOX_FOLDER_PATH/cdn_host" "${cdn_host:-}" "" "saas.sin.fan"
+    fs_write_or_keep "$SINGBOX_FOLDER_PATH/cdn_pt"   "${cdn_pt:-}"   "" "443"
 
-    # ✅ Argo 每协议专属 CDN 优选域名/端口落盘（go 兼容 argo_{p}_cdn_host / argo_{p}_cdn_pt；空值则删文件，回退共享 cdn_host/cdn_pt）
+    # ✅ Argo 每协议专属 CF 优选域名/端口落盘（argo_{p}_cf_host / argo_{p}_cf_pt；空值保留旧文件，回退共享 argo_cf_*）
     local _ap _ak _av
     for _ap in vmess vless trojan; do
-        for _ak in host pt; do
-            _av="argo_${_ap}_cdn_${_ak}"
-            if [ -n "${!_av:-}" ]; then
-                printf '%s\n' "${!_av}" > "$SINGBOX_FOLDER_PATH/$_av"
-            else
-                rm -f "$SINGBOX_FOLDER_PATH/$_av"
-            fi
+        for _ak in cf_host cf_pt; do
+            _av="argo_${_ap}_${_ak}"
+            fs_write_or_keep "$SINGBOX_FOLDER_PATH/$_av" "${!_av:-}" "" ""
         done
     done
     unset _ap _ak _av
@@ -3831,18 +3882,24 @@ write2SingboxFolders() {
     # ✅ 订阅开关落盘（默认 false）
     echo "${subscribe}" > "$SINGBOX_FOLDER_PATH/subscribe"
 
-    # ✅ ws+ws+tls+cdn 直连参数落盘（开关 + 共享默认 + 每协议专属）
+    # ✅ ws+ws+tls+cdn 直连参数落盘（开关 + 共享默认 + 每协议专属；env 空保留旧文件/从旧名迁移）
     echo "${ws_cdn}" > "$SINGBOX_FOLDER_PATH/ws_cdn"
-    echo "${ws_cdn_host}" > "$SINGBOX_FOLDER_PATH/ws_cdn_host"
-    echo "${ws_cdn_sni}" > "$SINGBOX_FOLDER_PATH/ws_cdn_sni"
-    echo "${ws_cdn_pt}" > "$SINGBOX_FOLDER_PATH/ws_cdn_pt"
-    local _p _k _v
+    fs_write_or_keep "$SINGBOX_FOLDER_PATH/ws_cdn_cf_host" "${ws_cdn_cf_host:-}" "$SINGBOX_FOLDER_PATH/ws_cdn_host" ""
+    fs_write_or_keep "$SINGBOX_FOLDER_PATH/ws_cdn_sni"     "${ws_cdn_sni:-}"     "$SINGBOX_FOLDER_PATH/ws_cdn_sni" ""
+    fs_write_or_keep "$SINGBOX_FOLDER_PATH/ws_cdn_cf_pt"   "${ws_cdn_cf_pt:-}"   "$SINGBOX_FOLDER_PATH/ws_cdn_pt"   ""
+    local _p _k _v _legacy
     for _p in vmess vless trojan; do
-        for _k in host sni pt; do
-            _v="${_p}_cdn_${_k}"
-            printf '%s\n' "${!_v}" > "$SINGBOX_FOLDER_PATH/$_v"
+        for _k in cf_host sni cf_pt; do
+            _v="ws_cdn_${_p}_${_k}"
+            case "$_k" in
+                cf_host) _legacy="${_p}_cdn_host" ;;
+                sni)     _legacy="${_p}_cdn_sni" ;;
+                cf_pt)   _legacy="${_p}_cdn_pt" ;;
+            esac
+            fs_write_or_keep "$SINGBOX_FOLDER_PATH/$_v" "${!_v:-}" "$SINGBOX_FOLDER_PATH/$_legacy" ""
         done
     done
+    unset _p _k _v _legacy
 }
 
 # ================== 订阅：生成订阅内容 ==================
@@ -3903,7 +3960,7 @@ update_subscription_file() {
 
 # 输出订阅链接
 # 域名优先级（自动判定，不接受 sub_domain 手动强制）：
-#   固定 Argo > 共享 ws_cdn_host > 任意 Argo(含临时 trycloudflare) > http://IP:nginx_port
+#   固定 Argo > 共享 ws_cdn_cf_host > 任意 Argo(含临时 trycloudflare) > http://IP:nginx_port
 show_sub_url() {
     # ✅ 没开订阅直接不输出
     is_true "$(get_subscribe_flag)" || return 0
@@ -3928,10 +3985,10 @@ show_sub_url() {
         argodomain=$(grep -aoE '[a-zA-Z0-9.-]+\.trycloudflare\.com' "$LOGS_DIR/argo.log" 2> /dev/null | tail -n1)
     fi
 
-    # 订阅 CDN 域名：共享 ws_cdn_host > vmess 专属 > vless 专属 > trojan 专属（固定顺序取第一个非空）
+    # 订阅 CDN 域名：共享 ws_cdn_cf_host > vmess 专属 > vless 专属 > trojan 专属（固定顺序取第一个非空）
     local cdn_sub_host cdn_sub_pt
     cdn_sub_host="$(ws_cdn_sub_host)"
-    cdn_sub_pt="$(ws_cdn_val ws_cdn_pt)"
+    cdn_sub_pt="$(ws_cdn_val ws_cdn_cf_pt)"
     cdn_sub_pt="$(normalize_cdn_pt "${cdn_sub_pt:-443}" 443)"
 
     #  ✅ 按预定优先级自动判定订阅域名（不接受 sub_domain 环境变量强制赋值）
@@ -3964,7 +4021,7 @@ show_sub_url() {
     fi
 
     # ❗ 安全提示：无 Argo/CDN 时订阅只能走明文 HTTP，会暴露订阅 URL（内含所有节点口令）
-    #    只应在可信网络使用；如需公网安全订阅请启用固定/临时 Argo 或配置共享 ws_cdn_host
+    #    只应在可信网络使用；如需公网安全订阅请启用固定/临时 Argo 或配置共享 ws_cdn_cf_host
     yellow "⚠️ 订阅走明文 HTTP，且订阅 URL 内含全部节点口令，请勿在不可信网络分享/抓包"
     echo "http://${server_ip}:${port}/sub/${sub_uuid}"
 }
@@ -4162,8 +4219,10 @@ regenerate_links_and_sub() {
     local _cip_arg="${1:-}"
     local uuid server_ip sxname port_hy2 hy_sni SHA256_hy2 port_tu tu_sni password
     local port_vlr public_key short_id vl_sni port_any any_sni
-    local argodomain cdn_host cdn_pt vlvm vmatls_link1 vlessws_link1 tratls_link1 sbtk
+    local argodomain sbtk
     local _ap _ah _apt _argo_link _argo_printed
+    local hy2_link tuic_link vless_link anytls_link
+    local _ws_cdn_printed _ws_link _ws_h _ws_s _ws_p
     local port_socks5 socks5_username socks5_password socks5_user_enc socks5_pass_enc socks5_link
 
     rm -rf "$SINGBOX_FOLDER_PATH/jh.txt"
@@ -4235,10 +4294,6 @@ regenerate_links_and_sub() {
         argodomain=$(grep -aoE '[a-zA-Z0-9.-]+\.trycloudflare\.com' "$LOGS_DIR/argo.log" 2> /dev/null | tail -n1)
     fi
 
-    cdn_host=$(cat "$SINGBOX_FOLDER_PATH/cdn_host")
-    cdn_pt=$(cat "$SINGBOX_FOLDER_PATH/cdn_pt" 2> /dev/null)
-    cdn_pt="$(normalize_cdn_pt "$cdn_pt" 443)"
-
     if [ -n "$argodomain" ] && need_argo; then
         uuid=$(cat "$SINGBOX_FOLDER_PATH/uuid")
         sbtk=$(cat "$SINGBOX_FOLDER_PATH/sbargotoken" 2> /dev/null)
@@ -4252,7 +4307,7 @@ regenerate_links_and_sub() {
             green "${sbtk}"
         fi
 
-        # Argo 多协议节点：逐协议遍历，各自取专属 host/pt（回退共享 cdn_host/cdn_pt）
+        # Argo 多协议节点：逐协议遍历，各自取专属 host/pt（回退共享 argo_cf_host/argo_cf_pt）
         _argo_printed=false
         for _ap in vmess vless trojan; do
             argo_proto_enabled "$_ap" || continue
@@ -4308,7 +4363,7 @@ regenerate_links_and_sub() {
         # SNI 缺失提示：host 是优选 IP 或未配置任何 sni 时，wss 无法做 TLS 校验，明确提示用户
         if [ -z "$_ws_s" ]; then
             yellow "⚠️ ${_p}-WS-CDN：连接地址(${_ws_h})是 IP/域名但未提供真实子域名 SNI，客户端将无法校验 TLS。"
-            yellow "   请设置 ${_p}_cdn_sni（或共享 ws_cdn_sni）为真实子域名，或在菜单「node → SNI/CDN 设置」中修改。"
+            yellow "   请设置 ws_cdn_${_p}_sni（或共享 ws_cdn_sni）为真实子域名，或在菜单「node → SNI/CDN 设置」中修改。"
         fi
         case "$_p" in
             vless)
@@ -4359,7 +4414,7 @@ regenerate_links_and_sub() {
         else
             yellow "   ↳ 入站白名单未开启，所有IP均可访问"
         fi
-jh_block_sep
+        jh_block_sep
         append_jh "$socks5_link"
         echo
     fi
@@ -5328,10 +5383,10 @@ menu_collect_install() {
                     reading "  ${_agp}-Argo 专属 CF 优选域名/IP (回车=默认 saas.sin.fan): " _agah
                 fi
                 if [ -n "$_agah" ]; then
-                    printf -v "argo_${_agp}_cdn_host" '%s' "$_agah"
+                    printf -v "argo_${_agp}_cf_host" '%s' "$_agah"
                     _prev_ah="$_agah"
                 elif [ -n "$_prev_ah" ]; then
-                    printf -v "argo_${_agp}_cdn_host" '%s' "$_prev_ah"
+                    printf -v "argo_${_agp}_cf_host" '%s' "$_prev_ah"
                 fi
                 if [ -n "$_prev_ap" ]; then
                     reading "  ${_agp}-Argo 专属 CF 优选端口 (回车=沿用 ${_prev_ap}；仅限 ${HTTPS_CDN_PORTS[*]}): " _agap
@@ -5344,24 +5399,24 @@ menu_collect_install() {
                 if [ -n "$_agap" ]; then
                     case "$_agap" in
                         443|2053|2083|2087|2096|8443)
-                            printf -v "argo_${_agp}_cdn_pt" '%s' "$_agap"; _prev_ap="$_agap" ;;
+                            printf -v "argo_${_agp}_cf_pt" '%s' "$_agap"; _prev_ap="$_agap" ;;
                         *) red "  ❌ 仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS[*]})，忽略 ${_agap}" ;;
                     esac
                 fi
             done
         else
             _ah_sh=""
-            reading "  Argo 共享 CF 优选域名 argo_cdn_host (回车=默认 saas.sin.fan): " _ah_sh
-            if [ -n "$_ah_sh" ]; then export argo_cdn_host="$_ah_sh"; fi
+            reading "  Argo 共享 CF 优选域名 argo_cf_host (回车=默认 saas.sin.fan): " _ah_sh
+            if [ -n "$_ah_sh" ]; then export argo_cf_host="$_ah_sh"; fi
             _ap_sh=""
             while true; do
-                reading "  Argo 共享 CF 优选端口 argo_cdn_pt (回车=443): " _ap_sh
+                reading "  Argo 共享 CF 优选端口 argo_cf_pt (回车=443): " _ap_sh
                 if [ -z "$_ap_sh" ]; then
-                    export argo_cdn_pt="443"
+                    export argo_cf_pt="443"
                     break
                 fi
                 if printf '%s\n' "${HTTPS_CDN_PORTS[@]}" | grep -qx "$_ap_sh"; then
-                    export argo_cdn_pt="$_ap_sh"
+                    export argo_cf_pt="$_ap_sh"
                     break
                 fi
                 red "  ❌ 仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS[*]})，请重新输入（回车=443）"
@@ -5396,10 +5451,10 @@ menu_collect_install() {
                     reading "  ${_wn}-WS-CDN 专属 CF 优选域名/IP (回车=用默认 saas.sin.fan): " _wh
                 fi
                 if [ -n "$_wh" ]; then
-                    printf -v "${_ws_p}_cdn_host" '%s' "$_wh"
+                    printf -v "ws_cdn_${_ws_p}_cf_host" '%s' "$_wh"
                     _prev_host="$_wh"
                 elif [ -n "$_prev_host" ]; then
-                    printf -v "${_ws_p}_cdn_host" '%s' "$_prev_host"
+                    printf -v "ws_cdn_${_ws_p}_cf_host" '%s' "$_prev_host"
                 fi
                 _wsn=""
                 while true; do
@@ -5422,14 +5477,14 @@ menu_collect_install() {
                     fi
                     break
                 done
-                printf -v "${_ws_p}_cdn_sni" '%s' "$_wsn"
+                printf -v "ws_cdn_${_ws_p}_sni" '%s' "$_wsn"
                 _prev_sni="$_wsn"
             done
         else
             # ---- 统一设置：只填一次共享参数 ----
             green "     默认值：CDN 优选域名=saas.sin.fan, CDN 端口=443(仅限 HTTPS 系端口 ${HTTPS_CDN_PORTS[*]})"
-            reading "  共享 CF 优选域名 ws_cdn_host (回车=默认 saas.sin.fan): " _uch
-            if [ -n "$_uch" ]; then export ws_cdn_host="$_uch"; fi
+            reading "  共享 CF 优选域名 ws_cdn_cf_host (回车=默认 saas.sin.fan): " _uch
+            if [ -n "$_uch" ]; then export ws_cdn_cf_host="$_uch"; fi
             local _usn=""
             while true; do
                 reading "  共享子域名 SNI ws_cdn_sni（真实域名，必填）: " _usn
@@ -5440,13 +5495,13 @@ menu_collect_install() {
             export ws_cdn_sni="$_usn"
             _ucp=""
             while true; do
-                reading "  共享 CDN 端口 ws_cdn_pt (回车=443): " _ucp
+                reading "  共享 CDN 端口 ws_cdn_cf_pt (回车=443): " _ucp
                 if [ -z "$_ucp" ]; then
-                    export ws_cdn_pt="443"
+                    export ws_cdn_cf_pt="443"
                     break
                 fi
                 if printf '%s\n' "${HTTPS_CDN_PORTS[@]}" | grep -qx "$_ucp"; then
-                    export ws_cdn_pt="$_ucp"
+                    export ws_cdn_cf_pt="$_ucp"
                     break
                 fi
                 red "  ❌ 仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS[*]})，请重新输入（回车=443）"
@@ -5497,33 +5552,33 @@ menu_collect_install() {
     echo ""
     purple "===== SNI / CDN 设置 ====="
     green "  1) 全部使用默认值(偷懒就用默认)"
-    green "     默认值：CDN 优选域名=saas.sin.fan, CDN 端口=443(仅限 HTTPS 系端口 ${HTTPS_CDN_PORTS[*]}),"
+    green "     默认值：Argo CF 优选域名=saas.sin.fan, Argo CF 优选端口=443(仅限 HTTPS 系端口 ${HTTPS_CDN_PORTS[*]}),"
     green "             Hysteria2 伪装域名=www.apple.com, VLESS 伪装域名=www.apple.com,"
     green "             VLESS 伪装端口=443, TUIC 伪装域名=www.apple.com"
     green "  2) 逐个展开单独设置（可自定义，推荐）"
     reading "输入选择 (回车默认=1): " _ans
     if [ "$_ans" = "2" ]; then
         green "  ↳ SNI/CDN: 逐个设置"
-        reading "  CDN 优选域名 (默认=saas.sin.fan): " _ans
-        [ -n "$_ans" ] && export cdn_host="$_ans"
-        green "  ↳ CDN 优选域名: ${cdn_host:-saas.sin.fan}"
+        reading "  Argo CF 优选域名 argo_cf_host (默认=saas.sin.fan): " _ans
+        [ -n "$_ans" ] && export argo_cf_host="$_ans"
+        green "  ↳ Argo CF 优选域名: ${argo_cf_host:-saas.sin.fan}"
         yellow "  可选 CDN 优选端口(仅限 HTTPS 系端口)：${HTTPS_CDN_PORTS[*]}"
-        reading "  CDN 端口 (默认=443): " _ans
+        reading "  Argo CF 优选端口 argo_cf_pt (默认=443): " _ans
         if [ -n "$_ans" ]; then
             local _p _cdn_ok=false
             for _p in "${HTTPS_CDN_PORTS[@]}"; do
                 [ "$_ans" = "$_p" ] && { _cdn_ok=true; break; }
             done
             if $_cdn_ok; then
-                export cdn_pt="$_ans"
-                green "  ↳ CDN 端口: ${cdn_pt}"
+                export argo_cf_pt="$_ans"
+                green "  ↳ Argo CF 优选端口: ${argo_cf_pt}"
             else
                 yellow "  ❌ CDN 端口仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS[*]})，已用默认 443"
-                export cdn_pt="443"
-                green "  ↳ CDN 端口: ${cdn_pt} (默认)"
+                export argo_cf_pt="443"
+                green "  ↳ Argo CF 优选端口: ${argo_cf_pt} (默认)"
             fi
         else
-            green "  ↳ CDN 端口: ${cdn_pt:-443} (默认)"
+            green "  ↳ Argo CF 优选端口: ${argo_cf_pt:-443} (默认)"
         fi
         reading "  Hysteria2 伪装域名 (默认=www.apple.com): " _ans
         [ -n "$_ans" ] && export hy_sni="$_ans"
@@ -5539,7 +5594,7 @@ menu_collect_install() {
         green "  ↳ TUIC 伪装域名: ${tu_sni:-www.apple.com}"
     else
         green "  ↳ SNI/CDN: 全部使用默认值"
-        green "  ↳ CDN 优选域名=${cdn_host:-saas.sin.fan}, CDN 端口=${cdn_pt:-443},"
+        green "  ↳ Argo CF 优选域名=${argo_cf_host:-saas.sin.fan}, Argo CF 优选端口=${argo_cf_pt:-443},"
         green "  ↳ Hysteria2 伪装域名=${hy_sni:-www.apple.com}, VLESS 伪装域名=${vl_sni:-www.apple.com},"
         green "  ↳ VLESS 伪装端口=${vl_sni_pt:-443}, TUIC 伪装域名=${tu_sni:-www.apple.com}"
     fi
@@ -5889,10 +5944,10 @@ edit_snis_menu() {
         clear
         green "========= [4][3] 节点配置修改 → SNI / CDN 设置 ========="
         echo ""
-        green "  1) CDN 优选域名"
-        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/cdn_host" 2>/dev/null)"
-        green "  2) CDN 端口 (仅限 HTTPS 系端口 ${HTTPS_CDN_PORTS[*]})"
-        yellow "       当前: $(read_port_file cdn_pt)"
+        green "  1) Argo CF 优选域名 (argo_cf_host)"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/argo_cf_host" 2>/dev/null)"
+        green "  2) Argo CF 优选端口 (argo_cf_pt, 仅限 HTTPS 系端口 ${HTTPS_CDN_PORTS[*]})"
+        yellow "       当前: $(read_port_file argo_cf_pt)"
         green "  3) Hysteria2 伪装域名"
         yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/hy_sni" 2>/dev/null)"
         green "  4) VLESS 伪装域名"
@@ -5905,38 +5960,40 @@ edit_snis_menu() {
         yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/any_sni" 2>/dev/null)"
         green "  ── WS-CDN 回源参数 ──"
         green "  8)  WS-CDN 共享域名 (连接入口/CDN 优选)"
-        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/ws_cdn_host" 2>/dev/null)"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/ws_cdn_cf_host" 2>/dev/null)"
         green "  9)  WS-CDN 共享 SNI (真实子域名)"
         yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/ws_cdn_sni" 2>/dev/null)"
         green " 10)  WS-CDN 共享端口 (仅限 HTTPS 系 ${HTTPS_CDN_PORTS[*]})"
-        yellow "       当前: $(read_port_file ws_cdn_pt)"
+        yellow "       当前: $(read_port_file ws_cdn_cf_pt)"
         green " 11)  Vmess 专属优选域名"
-        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/vmess_cdn_host" 2>/dev/null)"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/ws_cdn_vmess_cf_host" 2>/dev/null)"
         green " 12)  Vless 专属优选域名"
-        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/vless_cdn_host" 2>/dev/null)"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/ws_cdn_vless_cf_host" 2>/dev/null)"
         green " 13)  Trojan 专属优选域名"
-        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/trojan_cdn_host" 2>/dev/null)"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/ws_cdn_trojan_cf_host" 2>/dev/null)"
         purple "  0) 返回上级菜单"
         reading "请输入选择: " _sel
         case "$_sel" in
             0) return ;;
             1)
-                reading "请输入新的 CDN 优选域名 (留空=取消): " _val
+                reading "请输入新的 Argo CF 优选域名 (留空=取消): " _val
                 [ -z "$_val" ] && { yellow "已取消"; menu_pause; continue; }
+                echo "$_val" > "$SINGBOX_FOLDER_PATH/argo_cf_host"
                 echo "$_val" > "$SINGBOX_FOLDER_PATH/cdn_host"
                 refresh_sb_and_sub
-                green "✅ CDN 优选域名修改操作已完成！新值: ${_val}"
+                green "✅ Argo CF 优选域名修改操作已完成！新值: ${_val}"
                 menu_pause
                 ;;
             2)
-                reading "请输入新的 CDN 端口 (${HTTPS_CDN_PORTS[*]}, 留空=取消): " _val
+                reading "请输入新的 Argo CF 优选端口 (${HTTPS_CDN_PORTS[*]}, 留空=取消): " _val
                 [ -z "$_val" ] && { yellow "已取消"; menu_pause; continue; }
                 if ! printf '%s\n' "${HTTPS_CDN_PORTS[@]}" | grep -qx "$_val"; then
                     red "❌ CDN 端口仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS[*]})"; menu_pause; continue
                 fi
+                echo "$_val" > "$SINGBOX_FOLDER_PATH/argo_cf_pt"
                 echo "$_val" > "$SINGBOX_FOLDER_PATH/cdn_pt"
                 refresh_sb_and_sub
-                green "✅ CDN 端口修改操作已完成！新值: ${_val}"
+                green "✅ Argo CF 优选端口修改操作已完成！新值: ${_val}"
                 menu_pause
                 ;;
             3)
@@ -5991,7 +6048,7 @@ edit_snis_menu() {
             8)
                 reading "请输入新的 WS-CDN 共享域名（CDN 连接入口，留空=取消）: " _val
                 [ -z "$_val" ] && { yellow "已取消"; menu_pause; continue; }
-                echo "$_val" > "$SINGBOX_FOLDER_PATH/ws_cdn_host"
+                echo "$_val" > "$SINGBOX_FOLDER_PATH/ws_cdn_cf_host"
                 refresh_sb_and_sub
                 green "✅ WS-CDN 共享域名修改操作已完成！新值: ${_val}"
                 menu_pause
@@ -6010,7 +6067,7 @@ edit_snis_menu() {
                 if ! printf '%s\n' "${HTTPS_CDN_PORTS[@]}" | grep -qx "$_val"; then
                     red "❌ 仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS[*]})"; menu_pause; continue
                 fi
-                echo "$_val" > "$SINGBOX_FOLDER_PATH/ws_cdn_pt"
+                echo "$_val" > "$SINGBOX_FOLDER_PATH/ws_cdn_cf_pt"
                 refresh_sb_and_sub
                 green "✅ WS-CDN 共享端口修改操作已完成！新值: ${_val}"
                 menu_pause
@@ -6018,7 +6075,7 @@ edit_snis_menu() {
             11)
                 reading "请输入新的 Vmess 专属优选域名（连接地址，留空=取消）: " _val
                 [ -z "$_val" ] && { yellow "已取消"; menu_pause; continue; }
-                echo "$_val" > "$SINGBOX_FOLDER_PATH/vmess_cdn_host"
+                echo "$_val" > "$SINGBOX_FOLDER_PATH/ws_cdn_vmess_cf_host"
                 refresh_sb_and_sub
                 green "✅ Vmess 专属优选域名修改操作已完成！新值: ${_val}"
                 menu_pause
@@ -6026,7 +6083,7 @@ edit_snis_menu() {
             12)
                 reading "请输入新的 Vless 专属优选域名（连接地址，留空=取消）: " _val
                 [ -z "$_val" ] && { yellow "已取消"; menu_pause; continue; }
-                echo "$_val" > "$SINGBOX_FOLDER_PATH/vless_cdn_host"
+                echo "$_val" > "$SINGBOX_FOLDER_PATH/ws_cdn_vless_cf_host"
                 refresh_sb_and_sub
                 green "✅ Vless 专属优选域名修改操作已完成！新值: ${_val}"
                 menu_pause
@@ -6034,7 +6091,7 @@ edit_snis_menu() {
             13)
                 reading "请输入新的 Trojan 专属优选域名（连接地址，留空=取消）: " _val
                 [ -z "$_val" ] && { yellow "已取消"; menu_pause; continue; }
-                echo "$_val" > "$SINGBOX_FOLDER_PATH/trojan_cdn_host"
+                echo "$_val" > "$SINGBOX_FOLDER_PATH/ws_cdn_trojan_cf_host"
                 refresh_sb_and_sub
                 green "✅ Trojan 专属优选域名修改操作已完成！新值: ${_val}"
                 menu_pause
