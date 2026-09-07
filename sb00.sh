@@ -5010,8 +5010,27 @@ menu_collect_install() {
     green "  i) Vmess-WS-CDN"
     green "  j) Vless-WS-CDN"
     green "  k) Trojan-WS-CDN"
-    reading "输入要启用 CDN 回源的协议 (可多选，用字母 i/j/k，空格/逗号分隔，回车=不启用): " _ws_sel
-    _ws_sel="$(printf '%s' "$_ws_sel" | tr ',' ' ' | tr '[:upper:]' '[:lower:]')"
+    # 循环校验：只能填 i/j/k（可空格/逗号分隔多选），回车=不启用；非法输入则重新询问
+    _ws_sel=""
+    while true; do
+        reading "输入要启用 CDN 回源的协议 (可多选，用字母 i/j/k，空格/逗号分隔，回车=不启用): " _ws_sel
+        _ws_sel="$(printf '%s' "$_ws_sel" | tr ',' ' ' | tr '[:upper:]' '[:lower:]')"
+        # 回车/全空格 = 不启用
+        [ -z "${_ws_sel//[[:space:]]/}" ] && { _ws_sel=""; break; }
+        # 校验每个 token 必须合法
+        _ws_bad=""
+        for _ws_p in $_ws_sel; do
+            case "$_ws_p" in
+                i|j|k) : ;;
+                *) _ws_bad="$_ws_bad $_ws_p" ;;
+            esac
+        done
+        if [ -n "$_ws_bad" ]; then
+            red "  ❌ 无效选项:${_ws_bad}（只能填 i/j/k，如 'i k' 或 'k'）"
+            continue
+        fi
+        break
+    done
     if [ -n "$_ws_sel" ]; then
         _ws_list=""
         for _ws_p in $_ws_sel; do
@@ -5019,7 +5038,6 @@ menu_collect_install() {
                 i) _ws_list="$_ws_list,vmess" ;;
                 j) _ws_list="$_ws_list,vless" ;;
                 k) _ws_list="$_ws_list,trojan" ;;
-                *) yellow "  ! 跳过未知选项: $_ws_p" ;;
             esac
         done
         _ws_list="${_ws_list#,}"
