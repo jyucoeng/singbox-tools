@@ -5043,36 +5043,8 @@ menu_collect_install() {
         _ws_list="${_ws_list#,}"
         if [ -n "$_ws_list" ]; then
             export ws_cdn="$_ws_list"
-            green "  ↳ WS-CDN 回源 启用: ${_ws_list}（回源 nginx_pt=${nginx_pt:-8080}）"
-            # 每个启用协议单独询问子域名；回车则留空（后续可填共享 ws_cdn_host 兜底）
-            for _ws_p in $(printf '%s' "$_ws_list" | tr ',' ' '); do
-                local _wn
-                case "$_ws_p" in
-                    vmess)  _wn="Vmess-WS-CDN" ;;
-                    vless)  _wn="Vless-WS-CDN" ;;
-                    trojan) _wn="Trojan-WS-CDN" ;;
-                esac
-                reading "  ${_wn} 子域名 (回车跳过，可用共享域名兜底): " _wh
-                if [ -n "$_wh" ]; then
-                    # 这些变量名字在文件顶部已 export，printf -v 赋值自动继承导出属性
-                    printf -v "${_ws_p}_cdn_host" '%s' "$_wh"
-                fi
-            done
-            reading "  共享 CDN 域名 ws_cdn_host (回车=不填，也可以给订阅用): " _wh
-            [ -n "$_wh" ] && export ws_cdn_host="$_wh"
-            reading "  共享 CDN SNI (回车=${ws_cdn_host:-各协议专属域名}): " _ws_sni
-            [ -n "$_ws_sni" ] && export ws_cdn_sni="$_ws_sni"
-            reading "  共享 CDN 端口 (回车=443): " _ws_pt
-            if [ -n "$_ws_pt" ]; then
-                if printf '%s\n' "${HTTPS_CDN_PORTS[@]}" | grep -qx "$_ws_pt"; then
-                    export ws_cdn_pt="$_ws_pt"
-                else
-                    yellow "  ❌ 仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS[*]})，已用默认 443"
-                    export ws_cdn_pt="443"
-                fi
-            else
-                export ws_cdn_pt="443"
-            fi
+            green "  ↳ WS-CDN 回源 启用: ${_ws_list}（回源端口 = nginx_pt，稍后订阅步骤可设置，默认 8080）"
+            # 各协议的专属 CF 优选域名/SNI 在下方「Argo 隧道配置」之后、开启订阅之前另行填写
         fi
     else
         green "  ↳ WS-CDN 回源: 不启用 (默认)"
@@ -5154,6 +5126,87 @@ menu_collect_install() {
         fi
     fi
 
+        # WS-CDN 回源：填写域名（统一设置或分开设置）
+    if [ -n "$ws_cdn" ]; then
+        echo ""
+        purple "===== WS-CDN 回源 · 域名设置 ====="
+        green "  CDN 域名填写方式：1) 统一（所有选中协议共用同一个 CF 优选域名/子域名）  2) 分开（各协议独立填写）"
+        reading "  选择 (回车=1 统一): " _ws_mode
+        if [ "$_ws_mode" = "2" ]; then
+            # ---- 分开设置：逐协议填写专属 CF 优选 + 专属 SNI（相同回车沿用上一个） ----
+            green "     提示：三个协议的专属 CF 优选域名/SNI 若相同，只需填第一个，后面回车=沿用上一个。"
+            local _prev_host="" _prev_sni=""
+            for _ws_p in $(printf '%s' "$ws_cdn" | tr ',' ' '); do
+                local _wn
+                case "$_ws_p" in
+                    vmess)  _wn="Vmess" ;;
+                    vless)  _wn="Vless" ;;
+                    trojan) _wn="Trojan" ;;
+                esac
+                echo ""
+                green "  ── ${_wn}-WS-CDN ──"
+                green "     默认值：CDN 优选域名=saas.sin.fan, CDN 端口=443(仅限 HTTPS 系端口 ${HTTPS_CDN_PORTS[*]})"
+                if [ -n "$_prev_host" ]; then
+                    reading "  ${_wn}-WS-CDN 专属 CF 优选域名/IP (回车=沿用 ${_prev_host}): " _wh
+                else
+                    reading "  ${_wn}-WS-CDN 专属 CF 优选域名/IP (回车=用默认 saas.sin.fan): " _wh
+                fi
+                if [ -n "$_wh" ]; then
+                    printf -v "${_ws_p}_cdn_host" '%s' "$_wh"
+                    _prev_host="$_wh"
+                elif [ -n "$_prev_host" ]; then
+                    printf -v "${_ws_p}_cdn_host" '%s' "$_prev_host"
+                fi
+                _wsn=""
+                while true; do
+                    if [ -n "$_prev_sni" ]; then
+                        reading "  ${_wn}-WS-CDN 专属子域名 SNI (回车=沿用 ${_prev_sni}；或输入): " _wsn
+                    else
+                        reading "  ${_wn}-WS-CDN 专属子域名 SNI (必填，真实域名，如 ${_ws_p}.example.com): " _wsn
+                    fi
+                    if [ -z "$_wsn" ] && [ -n "$_prev_sni" ]; then
+                        _wsn="$_prev_sni"
+                        break
+                    fi
+                    if [ -z "$_wsn" ]; then
+                        red "  ❌ SNI 必填，不能留空"
+                        continue
+                    fi
+                    if ! is_valid_domain "$_wsn"; then
+                        red "  ❌ SNI 非法：不能是 IP，需为真实子域名（如 ${_ws_p}.example.com）"
+                        continue
+                    fi
+                    break
+                done
+                printf -v "${_ws_p}_cdn_sni" '%s' "$_wsn"
+                _prev_sni="$_wsn"
+            done
+        else
+            # ---- 统一设置：只填一次共享参数 ----
+            green "     默认值：CDN 优选域名=saas.sin.fan, CDN 端口=443(仅限 HTTPS 系端口 ${HTTPS_CDN_PORTS[*]})"
+            reading "  共享 CF 优选域名 ws_cdn_host (回车=默认 saas.sin.fan): " _uch
+            if [ -n "$_uch" ]; then export ws_cdn_host="$_uch"; fi
+            local _usn=""
+            while true; do
+                reading "  共享子域名 SNI ws_cdn_sni（真实域名，必填）: " _usn
+                if [ -z "$_usn" ]; then red "  ❌ SNI 必填，不能留空"; continue; fi
+                if ! is_valid_domain "$_usn"; then red "  ❌ SNI 非法：不能是 IP，需为真实子域名"; continue; fi
+                break
+            done
+            export ws_cdn_sni="$_usn"
+            reading "  共享 CDN 端口 ws_cdn_pt (回车=443): " _ucp
+            if [ -n "$_ucp" ]; then
+                if printf '%s\n' "${HTTPS_CDN_PORTS[@]}" | grep -qx "$_ucp"; then
+                    export ws_cdn_pt="$_ucp"
+                else
+                    yellow "  ❌ 仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS[*]})，已用默认 443"
+                    export ws_cdn_pt="443"
+                fi
+            else
+                export ws_cdn_pt="443"
+            fi
+        fi
+    fi
     # 订阅
     echo ""
     reading "是否开启节点订阅 [y/N]: " _ans
@@ -5167,6 +5220,63 @@ menu_collect_install() {
             export nginx_pt=8080
         fi
         green "  ↳ 订阅端口: ${nginx_pt}"
+        # 订阅域名：根据已开启的配置动态列出候选供选择；回车=自动默认顺序
+        local _sub_opts=() _sub_vals=()
+        if [ -n "${ARGO_DOMAIN:-}" ]; then
+            _sub_opts+=("固定 Argo 域名: ${ARGO_DOMAIN}"); _sub_vals+=("argo_fixed")
+        fi
+        [ -n "${ws_cdn_sni:-}" ] && { _sub_opts+=("WS-CDN 共享子域名: ${ws_cdn_sni}"); _sub_vals+=("cdn_shared_sni"); }
+        [ -n "${vmess_cdn_sni:-}" ] && { _sub_opts+=("vmess 专属子域名: ${vmess_cdn_sni}"); _sub_vals+=("cdn_vmess_sni"); }
+        [ -n "${vless_cdn_sni:-}" ] && { _sub_opts+=("vless 专属子域名: ${vless_cdn_sni}"); _sub_vals+=("cdn_vless_sni"); }
+        [ -n "${trojan_cdn_sni:-}" ] && { _sub_opts+=("trojan 专属子域名: ${trojan_cdn_sni}"); _sub_vals+=("cdn_trojan_sni"); }
+        if [ -n "${argo:-}" ] && [ -z "${ARGO_DOMAIN:-}" ]; then
+            _sub_opts+=("临时 Argo 域名 (运行时自动获取，域名会变)"); _sub_vals+=("argo_tmp")
+        fi
+        _sub_opts+=("IP:port (http://服务器IP:${nginx_pt})"); _sub_vals+=("ip_port")
+
+        echo ""
+        purple "===== 订阅域名 ====="
+        local _i=1
+        for _t in "${_sub_opts[@]}"; do
+            green "  ${_i}) ${_t}"
+            _i=$((_i+1))
+        done
+        green "  0) 不指定（脚本自动按默认顺序）"
+        reading "  选择 (回车=0): " _sub_choice
+        if [ -n "$_sub_choice" ] && [ "$_sub_choice" -ge 1 ] 2>/dev/null && [ "$_sub_choice" -le "${#_sub_opts[@]}" ]; then
+            local _val="${_sub_vals[$((_sub_choice-1))]}"
+            case "$_val" in
+                argo_fixed)
+                    green "  ↳ 订阅域名：将使用固定 Argo 域名 ${ARGO_DOMAIN}"
+                    ;;
+                cdn_shared_sni)
+                    export ws_cdn_host="${ws_cdn_sni}"
+                    green "  ↳ 订阅域名：已指定为 WS-CDN 共享子域名 ${ws_cdn_sni}"
+                    ;;
+                cdn_vmess_sni)
+                    export ws_cdn_host="${vmess_cdn_sni}"
+                    green "  ↳ 订阅域名：已指定为 vmess 专属子域名 ${vmess_cdn_sni}"
+                    ;;
+                cdn_vless_sni)
+                    export ws_cdn_host="${vless_cdn_sni}"
+                    green "  ↳ 订阅域名：已指定为 vless 专属子域名 ${vless_cdn_sni}"
+                    ;;
+                cdn_trojan_sni)
+                    export ws_cdn_host="${trojan_cdn_sni}"
+                    green "  ↳ 订阅域名：已指定为 trojan 专属子域名 ${trojan_cdn_sni}"
+                    ;;
+                argo_tmp)
+                    export sub_domain=argo
+                    green "  ↳ 订阅域名：将使用临时 Argo 域名（运行时自动获取）"
+                    ;;
+                ip_port)
+                    export ws_cdn_host=''; export sub_domain=''
+                    yellow "  ↳ 订阅域名：将使用 http://IP:${nginx_pt}"
+                    ;;
+            esac
+        else
+            green "  ↳ 订阅域名：使用默认自动顺序"
+        fi
     else
         green "  ↳ 订阅: 不开启 (默认)"
     fi
