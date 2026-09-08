@@ -32,7 +32,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="2.0.33(2026-09-08)"
+VERSION="2.0.34(2026-09-08)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -3768,24 +3768,24 @@ ins() {
     [ -n "$_exit_region" ] && _exit_region=" ($_exit_region)"
     green ""
     green "========= 安装参数 ========="
+    # ---- 基础 ----
     green "  日志调试: ${DEBUG_FLAG:-0}"
     green "  IP偏好: ${ippz:-自动}"
     green "  出口 IP: ${_exit_ip:-自动检测}${_exit_label}${_exit_region}"
     green "  UUID: ${uuid:-自动生成}"
+    echo ""
+    # ---- 直连块：协议 / Socks5 / 直连端口 / 伪装SNI ----
     green "  直连协议: ${_dlist:-<未选>} ${_d_sfx}"
+    green "  Socks5: $([ -n "$socksp" ] && echo 安装 || echo 不安装)"
+    green "  直连端口: VLESS-Reality=${vlrt:-随机} Hysteria2=${hypt:-随机} TUIC=${tupt:-随机} AnyTLS=${anypt:-随机}"
+    green "  伪装SNI: Hysteria2=${hy_sni:-www.apple.com} VLESS=${vl_sni:-www.apple.com} VLESS端口=${vl_sni_pt:-443} TUIC=${tu_sni:-www.apple.com} AnyTLS=${any_sni:-www.apple.com}"
+    echo ""
+    # ---- Argo 块：Argo 协议 / Argo 隧道 / Argo CF 优选 ----
     if [ -n "$argo" ]; then
         green "  Argo 协议: ${argo} ${_a_sfx}"
     else
         green "  Argo 协议: 未启用（未传 argo）"
     fi
-    if [ -n "$ws_cdn" ]; then
-        green "  WS-CDN 回源: ${ws_cdn} ${_w_sfx}"
-    else
-        green "  WS-CDN 回源: 未启用（未传 ws_cdn）"
-    fi
-    green "  Socks5: $([ -n "$socksp" ] && echo 安装 || echo 不安装)"
-    green "  直连端口: VLESS-Reality=${vlrt:-随机} Hysteria2=${hypt:-随机} TUIC=${tupt:-随机} AnyTLS=${anypt:-随机}"
-    green "  伪装SNI: Hysteria2=${hy_sni:-www.apple.com} VLESS=${vl_sni:-www.apple.com} VLESS端口=${vl_sni_pt:-443} TUIC=${tu_sni:-www.apple.com} AnyTLS=${any_sni:-www.apple.com}"
     if [ -n "$argo" ]; then
         if [ -n "${ARGO_DOMAIN:-}" ] && [ -n "${ARGO_AUTH:-}" ]; then
             green "  Argo 隧道: 固定 (域名=${ARGO_DOMAIN})"
@@ -3809,9 +3809,16 @@ ins() {
             green "  Argo CF 优选:"
             for _agx in $(argo_proto_list | tr ',' ' '); do
                 _aghx="$(argo_eff_host "$_agx")"; _agpx="$(argo_eff_pt "$_agx")"
-                green "    ${_agx}=${_aghx}:${_agpx}"
+                green "    ${_agx}的cf优选域名=${_aghx}:${_agpx}"
             done
         fi
+    fi
+    echo ""
+    # ---- WS-CDN 块：WS-CDN 回源 / WS-CDN 域名 ----
+    if [ -n "$ws_cdn" ]; then
+        green "  WS-CDN 回源: ${ws_cdn} ${_w_sfx}"
+    else
+        green "  WS-CDN 回源: 未启用（未传 ws_cdn）"
     fi
     if [ -n "$ws_cdn" ]; then
         # WS-CDN：全协议都用共享域名/端口 → 只打共享；否则逐协议列细节（含回源SNI）
@@ -3832,10 +3839,12 @@ ins() {
             green "  WS-CDN:"
             for _wmx in $(printf '%s' "$ws_cdn" | tr ',' ' '); do
                 _wmhx="$(ws_cdn_eff_host "$_wmx")"; _wmpx="$(ws_cdn_eff_pt "$_wmx")"; _wmsx="$(ws_cdn_eff_sni "$_wmx")"
-                green "    ${_wmx}=${_wmhx}:${_wmpx} (sni=${_wmsx})"
+                green "    ${_wmx}的cf优选域名=${_wmhx}:${_wmpx} (回源域名 sni=${_wmsx})"
             done
         fi
     fi
+    echo ""
+    # ---- 其余 ----
     green "  订阅: ${_sub_txt}"
     [ -n "$vlr" ] && green "  reality_private: ${reality_private:-自动生成}"
     green "  节点名称前缀: ${name:-跳过}"
