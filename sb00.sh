@@ -32,7 +32,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="2.0.5(2026-09-08)"
+VERSION="2.0.6(2026-09-08)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -2505,7 +2505,7 @@ installsb() {
             echo "$port_tr" > "$SINGBOX_FOLDER_PATH/port_tr"
         fi
         port_tr=$(cat "$SINGBOX_FOLDER_PATH/port_tr")
-        yellow "Trojan端口(Argo本地使用)：$port_tr"
+        yellow "Trojan端口(Argo本地使用, 自动随机)：$port_tr"
         debug_log " [调试] Trojan端口已写入文件：$SINGBOX_FOLDER_PATH/port_tr"
 
         jq --arg port "$port_tr" --arg uuid "$uuid" '
@@ -3109,9 +3109,9 @@ nginx_status() {
 
 # 确保 cloudflared 如果需要
 ensure_cloudflared_if_needed() {
-    # ✅ 仅当启用 argo=vmess/trojan/vless 且 vmag 存在时才需要 cloudflared
+    # ✅ 仅当启用任一 argo=vmess/trojan/vless（支持多选）时才需要 cloudflared
     debug_log "【调试】ensure_cloudflared_if_needed：检查是否需要 cloudflared"
-    if { [ "${argo:-}" != "vmess" ] && [ "${argo:-}" != "trojan" ] && [ "${argo:-}" != "vless" ]; } || [ -z "${vmag:-}" ]; then
+    if ! need_argo; then
         debug_log "【调试】ensure_cloudflared_if_needed：未启用 Argo（或未启用 vmess/trojan/vless），跳过 cloudflared 下载/安装"
         purple "ℹ️ 未启用 Argo（或未启用 vmess/trojan/vless），跳过 cloudflared 下载/安装"
         return 0
