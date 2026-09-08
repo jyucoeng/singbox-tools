@@ -4279,7 +4279,7 @@ regenerate_links_and_sub() {
     echo
     # Hysteria2 protocol (hy2)
     if grep -q "hy2-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
-        _hdr d "直连 块协议信息"
+        _hdr d "直连协议信息"
         port_hy2=$(cat "$SINGBOX_FOLDER_PATH/port_hy2")
         hy_sni=$(cat "$SINGBOX_FOLDER_PATH/hy_sni")
         SHA256_hy2=$(openssl x509 -in "$SINGBOX_FOLDER_PATH/cert.pem" -outform DER 2>/dev/null | sha256sum | awk '{print $1}')
@@ -4344,10 +4344,10 @@ regenerate_links_and_sub() {
         yellow "---------------------------------------------------------"
         yellow "Argo隧道信息 (走 Argo 回源端口: $(cat $SINGBOX_FOLDER_PATH/argoport 2> /dev/null))"
         yellow "---------------------------------------------------------"
-        green "Argo域名: ${argodomain}"
+        yellow "Argo域名: ${argodomain}"
         #输出 argo token
         if [ -n "${sbtk}" ]; then
-            green "Argo固定隧道token:"
+            yellow "Argo固定隧道token:"
             green "${sbtk}"
         fi
 
@@ -4375,7 +4375,7 @@ regenerate_links_and_sub() {
                     ;;
             esac
             green ""
-            green "🎯 ${_apt}端口 ${_ap}-Argo TLS 节点 (优选IP可替换):"
+            yellow "🎯 ${_apt}端口 ${_ap}-Argo TLS 节点 (优选IP可替换):"
             green "$_argo_link"
             append_jh "$_argo_link"
             _argo_printed=true
@@ -4420,11 +4420,17 @@ regenerate_links_and_sub() {
                 _ws_link="trojan://${uuid}@${_ws_h}:${_ws_p}?security=tls&type=ws&host=${_ws_s}&path=%2F${uuid}-tr-cdn&sni=${_ws_s}&fp=chrome#$(node_frag "${sxname}trojan-ws-cdn-${hostname}")"
                 ;;
         esac
+        if [ "$_ws_cdn_printed" = "false" ]; then
+            yellow "---------------------------------------------------------"
+            yellow "WS-CDN 回源协议信息"
+            yellow "---------------------------------------------------------"
+            echo
+            _ws_cdn_printed=true
+        fi
         yellow "🎯【 ${_p}-WS-CDN 回源 】(经 CDN 回源到服务器 nginx_pt=${nginx_pt:-8080})"
         green "$_ws_link"
         append_jh "$_ws_link"
         echo
-        _ws_cdn_printed=true
     done
     unset _ws_link _ws_h _ws_s _ws_p _ws_cdn_printed
 
