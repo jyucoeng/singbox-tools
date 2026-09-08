@@ -32,7 +32,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="3.0.0(2026-09-08)"
+VERSION="3.0.1(2026-09-08)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -4991,18 +4991,97 @@ check_port_conflicts_or_exit() {
         exit 1
     fi
 
-    # ⚠️ 系统已监听端口检测（非阻断，仅提示）：ss 可用时，确认端口没被其他进程占用
+    # ⚠️ 系统已监听端口检测（非阻断，仅提示）：只检查端口是否被【别的】进程占用
     #     本脚本栈自带的 sing-box/cloudflared/nginx 监听不算冲突（rep 覆盖安装前旧实例还在，马上会被清理）
+    #     ❗ 只依赖 ss -p 显示的进程名容易在 Alpine 误报：
+    #       - Debian/systemd：sing-box 直接运行，ss -p 显示 comm=sing-box，能命中白名单；
+    #       - Alpine/OpenRC：sing-box 经 start-stop-daemon --background 后台化，ss 显示的 comm
+    #         可能是 sh/nohup/singbox 或为空，白名单匹配不上 → 自家旧实例被误报。
+    #       所以这里做多通道判定，任一命中即认为端口属于本脚本栈：
+    #       1) ss -p 输出的进程名命中 sing-box/cloudflared/nginx；
+    #       2) ss 输出的 pid 属于本脚本栈进程（按完整命令行匹配，兼容包装进程）；
+    #       3) /proc/$pid/comm 或 /proc/$pid/cmdline 能识别为本脚本栈（该 pid 是 sh/nohup/singbox 等包装）；
+    #       4) 端口已存在于旧 sb.json 的 inbound，且本机正在运行本脚本栈 → 覆盖安装前的旧实例占用。
     if command -v ss > /dev/null 2>&1; then
-        local p_check _tcp _udp
+        # 本脚本栈 PID（pgrep -f 匹配完整命令行，兼容 OpenRC/shell 包装后的进程）
+        local own_pids
+        own_pids="$( { pgrep -f "$SINGBOX_FOLDER_PATH/sing-box" 2>/dev/null
+                       pgrep -f "$OLD_SINGBOX_FOLDER/sing-box" 2>/dev/null
+                       pgrep -f "$SINGBOX_FOLDER_PATH/cloudflared" 2>/dev/null
+                       pgrep -f "$OLD_SINGBOX_FOLDER/cloudflared" 2>/dev/null
+                       pgrep -x nginx 2>/dev/null; } | sort -u )"
+
+        # 本机是否正在运行本脚本栈（用于判断“无属主监听”是否为旧实例）
+        local stack_running=false
+        [ -n "$own_pids" ] && stack_running=true
+
+        # 旧 sb.json 中已经配置的监听端口（rep 覆盖安装前旧实例正占用这些端口）
+        local old_json_ports
+        old_json_ports="$([ -s "$SINGBOX_FOLDER_PATH/sb.json" ] \
+            && grep -oE '"listen_port"[[:space:]]*:[[:space:]]*[0-9]+' "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null \
+            | grep -oE '[0-9]+' \
+            | sort -u )"
+
+        # 判定一条 ss 记录属于：OWN（本脚本栈）/ FOREIGN（别的进程）/ UNKNOWN（无法识别）
+        _p_listener_kind() {
+            local line="$1" pid comm cmdline
+            [ -z "$line" ] && { echo UNKNOWN; return; }
+            # 通道1：ss -p 已解析出的进程名
+            if printf '%s' "$line" | grep -qE 'sing-box|cloudflared|nginx'; then
+                echo OWN; return
+            fi
+            # 从 ss 行提取 pid（iproute2 格式 users:(("name",pid=N,fd=M))）
+            pid="$(printf '%s' "$line" | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -n1)"
+            [ -z "$pid" ] && { echo UNKNOWN; return; }
+            # 通道2：pid 属于本脚本栈
+            if printf '%s\n' "$own_pids" | grep -qx "$pid"; then
+                echo OWN; return
+            fi
+            # 通道3：该 pid 是 sh/nohup/singbox 等包装进程，从 /proc 还原真实命令
+            if [ -r "/proc/$pid/comm" ]; then
+                comm="$(tr -d '\000' < "/proc/$pid/comm" 2>/dev/null)"
+                cmdline="$(tr '\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null)"
+                case "$comm" in
+                    sing-box|singbox|cloudflared|nginx)
+                        echo OWN; return ;;
+                esac
+                case "$cmdline" in
+                    *sing-box*|*cloudflared*|*nginx*)
+                        echo OWN; return ;;
+                esac
+            fi
+            echo FOREIGN
+        }
+
+        local p_check _tcp _udp _all_lines _kind _foreign _unknown
         for p_check in "${!used[@]}"; do
-            _tcp="$(ss -ltnp 2>/dev/null | grep -E "[:.]${p_check} " | head -n1)"
-            _udp="$(ss -ulnp 2>/dev/null | grep -E "[:.]${p_check} " | head -n1)"
+            _tcp="$(ss -ltnp 2>/dev/null | grep -E "[:.]${p_check}[[:space:]]")"
+            _udp="$(ss -ulnp 2>/dev/null | grep -E "[:.]${p_check}[[:space:]]")"
             [ -z "$_tcp" ] && [ -z "$_udp" ] && continue
-            if [ -n "$_tcp" ] && printf '%s' "$_tcp" | grep -qE 'sing-box|cloudflared|nginx'; then _tcp=""; fi
-            if [ -n "$_udp" ] && printf '%s' "$_udp" | grep -qE 'sing-box|cloudflared|nginx'; then _udp=""; fi
-            [ -z "$_tcp" ] && [ -z "$_udp" ] && continue
-            yellow "⚠️ 端口 ${p_check}（${used[$p_check]}）当前已被其他进程监听，安装后可能无法绑定"
+
+            _all_lines="$(printf '%s\n%s' "${_tcp:-}" "${_udp:-}")"
+            _foreign=false; _unknown=false
+            while IFS= read -r _kind; do
+                [ -z "$_kind" ] && continue
+                case "$(_p_listener_kind "$_kind")" in
+                    FOREIGN) _foreign=true; break ;;
+                    UNKNOWN) _unknown=true ;;
+                    *) ;;
+                esac
+            done <<< "$_all_lines"
+
+            if $_foreign; then
+                yellow "⚠️ 端口 ${p_check}（${used[$p_check]}）当前已被其他进程监听，安装后可能无法绑定"
+            elif $_unknown; then
+                # 无属主信息（ss 无法解析进程）：
+                # 命中“旧 sb.json 端口 + 本栈在跑” → 判定为旧实例占用，rep 清理后即释放，不提示
+                if $stack_running && printf '%s\n' "$old_json_ports" | grep -qx "$p_check"; then
+                    debug_log "【调试】端口 ${p_check} 判定为本栈旧实例占用（命中旧 sb.json），不提示"
+                else
+                    yellow "⚠️ 端口 ${p_check}（${used[$p_check]}）当前已被其他进程监听，安装后可能无法绑定"
+                fi
+            fi
+            # 全部 OWN：本栈自身监听 → 不提示
         done
     fi
 }
