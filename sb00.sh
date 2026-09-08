@@ -3753,8 +3753,16 @@ ins() {
     green "  出口 IP: ${out_ip:-自动检测}"
     green "  UUID: ${uuid:-自动生成}"
     green "  直连协议: ${_dlist:-<未选>} ${_d_sfx}"
-    green "  Argo 协议: $([ -n "$argo" ] && echo "${argo} ${_a_sfx}" || echo "未启用（未传 argo）")"
-    green "  WS-CDN 回源: $([ -n "$ws_cdn" ] && echo "${ws_cdn} ${_w_sfx}" || echo "未启用（未传 ws_cdn）")"
+    if [ -n "$argo" ]; then
+        green "  Argo 协议: ${argo} ${_a_sfx}"
+    else
+        green "  Argo 协议: 未启用（未传 argo）"
+    fi
+    if [ -n "$ws_cdn" ]; then
+        green "  WS-CDN 回源: ${ws_cdn} ${_w_sfx}"
+    else
+        green "  WS-CDN 回源: 未启用（未传 ws_cdn）"
+    fi
     green "  Socks5: $([ -n "$socksp" ] && echo 安装 || echo 不安装)"
     green "  端口: VLESS-Reality=${vlrt:-随机} Hysteria2=${hypt:-随机} TUIC=${tupt:-随机} AnyTLS=${anypt:-随机}"
     green "  伪装SNI: Hysteria2=${hy_sni:-www.apple.com} VLESS=${vl_sni:-www.apple.com} VLESS端口=${vl_sni_pt:-443} TUIC=${tu_sni:-www.apple.com}"
