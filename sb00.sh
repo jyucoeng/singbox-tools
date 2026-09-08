@@ -32,7 +32,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="2.0.13(2026-09-08)"
+VERSION="2.0.16(2026-09-08)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -127,6 +127,9 @@ export reality_public="${reality_public:-""}"
 
 # ✅ Argo 优选端口白名单（仅 https 系端口）
 HTTPS_CDN_PORTS=(443 2053 2083 2087 2096 8443)
+# ✅ HTTPS 系端口展示串（逗号分隔）：提示语统一用它展示有哪些可选，避免各处手写端口列表
+HTTPS_CDN_PORTS_TEXT="$(IFS=,; printf '%s' "${HTTPS_CDN_PORTS[*]}")"
+HTTPS_CDN_PORTS_TEXT="${HTTPS_CDN_PORTS_TEXT//,/, }"
 
 # 默认 CDN 端口和 Vless SNI 端口（argo_cf_pt 优先，兼容旧名 cdn_pt）
 cdn_pt="${argo_cf_pt:-${cdn_pt:-443}}"
@@ -1122,7 +1125,7 @@ normalize_cdn_pt() {
 
     # 非法端口回退
     if ! is_https_cdn_port "$p"; then
-        yellow "❗ cdn_pt=$p 非法，仅支持 ${HTTPS_CDN_PORTS[*]}，已回退为 ${fallback}"
+        yellow "❗ cdn_pt=$p 非法，仅支持 ${HTTPS_CDN_PORTS_TEXT}，已回退为 ${fallback}"
         echo "$fallback"
         return 0
     fi
@@ -5444,25 +5447,29 @@ menu_collect_install() {
                     printf -v "argo_${_agp}_cf_host" '%s' "$_prev_ah"
                 fi
                 if [ -n "$_prev_ap" ]; then
-                    reading "  ${_agp}-Argo 专属 CF 优选端口 (回车=沿用 ${_prev_ap}；仅限 ${HTTPS_CDN_PORTS[*]}): " _agap
+                    reading "  ${_agp}-Argo 专属 CF 优选端口 (回车=沿用 ${_prev_ap}；仅限 ${HTTPS_CDN_PORTS_TEXT}): " _agap
                 else
-                    reading "  ${_agp}-Argo 专属 CF 优选端口 (回车=443；仅限 ${HTTPS_CDN_PORTS[*]}): " _agap
+                    reading "  ${_agp}-Argo 专属 CF 优选端口 (回车=443；仅限 ${HTTPS_CDN_PORTS_TEXT}): " _agap
                 fi
                 if [ -z "$_agap" ] && [ -n "$_prev_ap" ]; then
                     _agap="$_prev_ap"
                 fi
                 if [ -n "$_agap" ]; then
-                    case "$_agap" in
-                        443|2053|2083|2087|2096|8443)
-                            printf -v "argo_${_agp}_cf_pt" '%s' "$_agap"; _prev_ap="$_agap" ;;
-                        *) red "  ❌ 仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS[*]})，忽略 ${_agap}" ;;
-                    esac
+                    if is_https_cdn_port "$_agap"; then
+                        printf -v "argo_${_agp}_cf_pt" '%s' "$_agap"; _prev_ap="$_agap"
+                    else
+                        red "  ❌ 仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS_TEXT})，忽略 ${_agap}"
+                    fi
                 fi
+                # 回显：展示本协议最终生效的 CF 优选域名/端口（含默认/沿用值）
+                green "  ↳ ${_agp}-Argo CF 优选域名: ${_agah:-${_prev_ah:-saas.sin.fan}}"
+                green "  ↳ ${_agp}-Argo CF 优选端口: ${_prev_ap:-443}"
             done
         else
             _ah_sh=""
             reading "  Argo 共享 CF 优选域名 argo_cf_host (回车=默认 saas.sin.fan): " _ah_sh
             if [ -n "$_ah_sh" ]; then export argo_cf_host="$_ah_sh"; fi
+            green "  ↳ Argo 共享 CF 优选域名: ${argo_cf_host:-saas.sin.fan}"
             _ap_sh=""
             while true; do
                 reading "  Argo 共享 CF 优选端口 argo_cf_pt (回车=443): " _ap_sh
@@ -5470,12 +5477,13 @@ menu_collect_install() {
                     export argo_cf_pt="443"
                     break
                 fi
-                if printf '%s\n' "${HTTPS_CDN_PORTS[@]}" | grep -qx "$_ap_sh"; then
+                if is_https_cdn_port "$_ap_sh"; then
                     export argo_cf_pt="$_ap_sh"
                     break
                 fi
-                red "  ❌ 仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS[*]})，请重新输入（回车=443）"
+                red "  ❌ 仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS_TEXT})，请重新输入（回车=443）"
             done
+            green "  ↳ Argo 共享 CF 优选端口: ${argo_cf_pt:-443}"
         fi
         unset _prev_ah _prev_ap _agah _agap _ah_sh _ap_sh
     fi
@@ -5487,9 +5495,9 @@ menu_collect_install() {
         green "  CDN 域名填写方式：1) 统一（所有选中协议共用同一个 CF 优选域名/子域名）  2) 分开（各协议独立填写）"
         reading "  选择 (回车=1 统一): " _ws_mode
         if [ "$_ws_mode" = "2" ]; then
-            # ---- 分开设置：逐协议填写专属 CF 优选 + 专属 SNI（相同回车沿用上一个） ----
-            green "     提示：三个协议的专属 CF 优选域名/SNI 若相同，只需填第一个，后面回车=沿用上一个。"
-            local _prev_host="" _prev_sni=""
+            # ---- 分开设置：逐协议填写专属 CF 优选域名/端口/SNI（相同回车沿用上一个） ----
+            green "     提示：三个协议的专属 CF 优选域名/端口/SNI 若相同，只需填第一个，后面回车=沿用上一个。"
+            local _prev_host="" _prev_sni="" _prev_port=""
             for _ws_p in $(printf '%s' "$ws_cdn" | tr ',' ' '); do
                 local _wn
                 case "$_ws_p" in
@@ -5499,7 +5507,7 @@ menu_collect_install() {
                 esac
                 echo ""
                 green "  ── ${_wn}-WS-CDN ──"
-                green "     默认值：CDN 优选域名=saas.sin.fan, CDN 端口=443(仅限 HTTPS 系端口 ${HTTPS_CDN_PORTS[*]})"
+                green "     默认值：CDN 优选域名=saas.sin.fan, CDN 端口=443(仅限 HTTPS 系端口 ${HTTPS_CDN_PORTS_TEXT})"
                 if [ -n "$_prev_host" ]; then
                     reading "  ${_wn}-WS-CDN 专属 CF 优选域名/IP (回车=沿用 ${_prev_host}): " _wh
                 else
@@ -5511,6 +5519,24 @@ menu_collect_install() {
                 elif [ -n "$_prev_host" ]; then
                     printf -v "ws_cdn_${_ws_p}_cf_host" '%s' "$_prev_host"
                 fi
+                _wspt=""
+                while true; do
+                    if [ -n "$_prev_port" ]; then
+                        reading "  ${_wn}-WS-CDN 专属 CDN 端口 (回车=沿用 ${_prev_port}；仅限 ${HTTPS_CDN_PORTS_TEXT}): " _wspt
+                    else
+                        reading "  ${_wn}-WS-CDN 专属 CDN 端口 (回车=443；仅限 ${HTTPS_CDN_PORTS_TEXT}): " _wspt
+                    fi
+                    if [ -z "$_wspt" ]; then
+                        _wspt="${_prev_port:-443}"
+                        break
+                    fi
+                    if is_https_cdn_port "$_wspt"; then
+                        break
+                    fi
+                    red "  ❌ 仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS_TEXT})，请重新输入（回车=443 或沿用上一协议）"
+                done
+                printf -v "ws_cdn_${_ws_p}_cf_pt" '%s' "$_wspt"
+                _prev_port="$_wspt"
                 _wsn=""
                 while true; do
                     if [ -n "$_prev_sni" ]; then
@@ -5534,12 +5560,17 @@ menu_collect_install() {
                 done
                 printf -v "ws_cdn_${_ws_p}_sni" '%s' "$_wsn"
                 _prev_sni="$_wsn"
+                # 回显：本协议最终生效值（含默认/沿用）
+                green "  ↳ ${_wn}-WS-CDN CF 优选域名: ${_wh:-${_prev_host:-saas.sin.fan}}"
+                green "  ↳ ${_wn}-WS-CDN CDN 端口: ${_wspt:-443}"
+                green "  ↳ ${_wn}-WS-CDN SNI: ${_wsn}"
             done
         else
             # ---- 统一设置：只填一次共享参数 ----
-            green "     默认值：CDN 优选域名=saas.sin.fan, CDN 端口=443(仅限 HTTPS 系端口 ${HTTPS_CDN_PORTS[*]})"
+            green "     默认值：CDN 优选域名=saas.sin.fan, CDN 端口=443(仅限 HTTPS 系端口 ${HTTPS_CDN_PORTS_TEXT})"
             reading "  共享 CF 优选域名 ws_cdn_cf_host (回车=默认 saas.sin.fan): " _uch
             if [ -n "$_uch" ]; then export ws_cdn_cf_host="$_uch"; fi
+            green "  ↳ WS-CDN 共享 CF 优选域名: ${ws_cdn_cf_host:-saas.sin.fan}"
             local _usn=""
             while true; do
                 reading "  共享子域名 SNI ws_cdn_sni（真实域名，必填）: " _usn
@@ -5548,6 +5579,7 @@ menu_collect_install() {
                 break
             done
             export ws_cdn_sni="$_usn"
+            green "  ↳ WS-CDN 共享 SNI: ${ws_cdn_sni}"
             _ucp=""
             while true; do
                 reading "  共享 CDN 端口 ws_cdn_cf_pt (回车=443): " _ucp
@@ -5555,12 +5587,13 @@ menu_collect_install() {
                     export ws_cdn_cf_pt="443"
                     break
                 fi
-                if printf '%s\n' "${HTTPS_CDN_PORTS[@]}" | grep -qx "$_ucp"; then
+                if is_https_cdn_port "$_ucp"; then
                     export ws_cdn_cf_pt="$_ucp"
                     break
                 fi
-                red "  ❌ 仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS[*]})，请重新输入（回车=443）"
+                red "  ❌ 仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS_TEXT})，请重新输入（回车=443）"
             done
+            green "  ↳ WS-CDN 共享 CDN 端口: ${ws_cdn_cf_pt:-443}"
         fi
     fi
     # 订阅
@@ -5607,7 +5640,7 @@ menu_collect_install() {
     echo ""
     purple "===== SNI / CDN 设置 ====="
     green "  1) 全部使用默认值(偷懒就用默认)"
-    green "     默认值：Argo CF 优选域名=saas.sin.fan, Argo CF 优选端口=443(仅限 HTTPS 系端口 ${HTTPS_CDN_PORTS[*]}),"
+    green "     默认值：Argo CF 优选域名=saas.sin.fan, Argo CF 优选端口=443(仅限 HTTPS 系端口 ${HTTPS_CDN_PORTS_TEXT}),"
     green "             Hysteria2 伪装域名=www.apple.com, VLESS 伪装域名=www.apple.com,"
     green "             VLESS 伪装端口=443, TUIC 伪装域名=www.apple.com"
     green "  2) 逐个展开单独设置（可自定义，推荐）"
@@ -5617,7 +5650,7 @@ menu_collect_install() {
         reading "  Argo CF 优选域名 argo_cf_host (默认=saas.sin.fan): " _ans
         [ -n "$_ans" ] && export argo_cf_host="$_ans"
         green "  ↳ Argo CF 优选域名: ${argo_cf_host:-saas.sin.fan}"
-        yellow "  可选 CDN 优选端口(仅限 HTTPS 系端口)：${HTTPS_CDN_PORTS[*]}"
+        yellow "  可选 CDN 优选端口(仅限 HTTPS 系端口)：${HTTPS_CDN_PORTS_TEXT}"
         reading "  Argo CF 优选端口 argo_cf_pt (默认=443): " _ans
         if [ -n "$_ans" ]; then
             local _p _cdn_ok=false
@@ -5628,7 +5661,7 @@ menu_collect_install() {
                 export argo_cf_pt="$_ans"
                 green "  ↳ Argo CF 优选端口: ${argo_cf_pt}"
             else
-                yellow "  ❌ CDN 端口仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS[*]})，已用默认 443"
+                yellow "  ❌ CDN 端口仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS_TEXT})，已用默认 443"
                 export argo_cf_pt="443"
                 green "  ↳ Argo CF 优选端口: ${argo_cf_pt} (默认)"
             fi
@@ -6001,7 +6034,7 @@ edit_snis_menu() {
         echo ""
         green "  1) Argo CF 优选域名 (argo_cf_host)"
         yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/argo_cf_host" 2>/dev/null)"
-        green "  2) Argo CF 优选端口 (argo_cf_pt, 仅限 HTTPS 系端口 ${HTTPS_CDN_PORTS[*]})"
+        green "  2) Argo CF 优选端口 (argo_cf_pt, 仅限 HTTPS 系端口 ${HTTPS_CDN_PORTS_TEXT})"
         yellow "       当前: $(read_port_file argo_cf_pt)"
         green "  3) Hysteria2 伪装域名"
         yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/hy_sni" 2>/dev/null)"
@@ -6018,7 +6051,7 @@ edit_snis_menu() {
         yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/ws_cdn_cf_host" 2>/dev/null)"
         green "  9)  WS-CDN 共享 SNI (真实子域名)"
         yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/ws_cdn_sni" 2>/dev/null)"
-        green " 10)  WS-CDN 共享端口 (仅限 HTTPS 系 ${HTTPS_CDN_PORTS[*]})"
+        green " 10)  WS-CDN 共享端口 (仅限 HTTPS 系 ${HTTPS_CDN_PORTS_TEXT})"
         yellow "       当前: $(read_port_file ws_cdn_cf_pt)"
         green " 11)  Vmess 专属优选域名"
         yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/ws_cdn_vmess_cf_host" 2>/dev/null)"
@@ -6040,10 +6073,10 @@ edit_snis_menu() {
                 menu_pause
                 ;;
             2)
-                reading "请输入新的 Argo CF 优选端口 (${HTTPS_CDN_PORTS[*]}, 留空=取消): " _val
+                reading "请输入新的 Argo CF 优选端口 (${HTTPS_CDN_PORTS_TEXT}, 留空=取消): " _val
                 [ -z "$_val" ] && { yellow "已取消"; menu_pause; continue; }
-                if ! printf '%s\n' "${HTTPS_CDN_PORTS[@]}" | grep -qx "$_val"; then
-                    red "❌ CDN 端口仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS[*]})"; menu_pause; continue
+                if ! is_https_cdn_port "$_val"; then
+                    red "❌ CDN 端口仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS_TEXT})"; menu_pause; continue
                 fi
                 echo "$_val" > "$SINGBOX_FOLDER_PATH/argo_cf_pt"
                 echo "$_val" > "$SINGBOX_FOLDER_PATH/cdn_pt"
@@ -6117,10 +6150,10 @@ edit_snis_menu() {
                 menu_pause
                 ;;
             10)
-                reading "请输入新的 WS-CDN 共享端口 (${HTTPS_CDN_PORTS[*]}, 留空=取消): " _val
+                reading "请输入新的 WS-CDN 共享端口 (${HTTPS_CDN_PORTS_TEXT}, 留空=取消): " _val
                 [ -z "$_val" ] && { yellow "已取消"; menu_pause; continue; }
-                if ! printf '%s\n' "${HTTPS_CDN_PORTS[@]}" | grep -qx "$_val"; then
-                    red "❌ 仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS[*]})"; menu_pause; continue
+                if ! is_https_cdn_port "$_val"; then
+                    red "❌ 仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS_TEXT})"; menu_pause; continue
                 fi
                 echo "$_val" > "$SINGBOX_FOLDER_PATH/ws_cdn_cf_pt"
                 refresh_sb_and_sub
