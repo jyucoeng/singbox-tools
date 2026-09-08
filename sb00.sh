@@ -32,7 +32,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="3.0.2(2026-09-08)"
+VERSION="3.0.3(2026-09-08)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -2904,10 +2904,30 @@ setup_nginx_subscribe() {
     conf="$(nginx_conf_path)"
     mkdir -p "$(dirname "$conf")" > /dev/null 2>&1
 
+    # ✅ IPv6 双栈监听（与 ippz 语义对齐）：
+    #    ippz=4 → 强制 IPv4，不监听 [::]；
+    #    ippz=6 → 强制 IPv6；ippz 留空 → 自动双栈（v4/v6 兼容）。
+    #    只要不是 ippz=4 且服务器有全局 IPv6，就额外 listen [::]，
+    #    否则 IPv6-only VPS（无公网 IPv4）上 CDN 回源（ws_cdn）/订阅端口对外不可达 → Connection refused 全不通
+    local has_v6=false
+    if [ "${ippz:-}" != "4" ] && { [ "$v6_ok" = true ] || ip -6 addr show scope global 2>/dev/null | grep -q inet6; }; then
+        has_v6=true
+    fi
+
     cat > "$conf" << EOF
 server {
     listen ${port};
     listen 127.0.0.1:${argo_port};
+EOF
+
+    if $has_v6; then
+        cat >> "$conf" << EOF
+    listen [::]:${port};
+
+EOF
+    fi
+
+    cat >> "$conf" << EOF
     server_name _;
 EOF
 
