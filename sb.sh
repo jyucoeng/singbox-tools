@@ -32,7 +32,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="3.0.1(2026-09-08)"
+VERSION="3.0.2(2026-09-08)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -5180,26 +5180,29 @@ menu_status_block() {
     else
         yellow "  ↳ 获取服务状态中..."
     fi
-    local _tmpd _f
+    local _tmpd _f _p1 _p2 _p3
     _tmpd="$(mktemp -d 2>/dev/null || printf '%s' "$SINGBOX_FOLDER_PATH")"
     {
         if [ -x "$SINGBOX_FOLDER_PATH/sing-box" ]; then
             "$SINGBOX_FOLDER_PATH/sing-box" version 2>/dev/null | head -1 | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/sbv"
         fi
-    } &
+    } & _p1=$!
     {
         if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ]; then
             "$SINGBOX_FOLDER_PATH/cloudflared" version 2>/dev/null | sed -n 's/.*version \([0-9]\{4\}\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/cfv"
         elif command -v cloudflared >/dev/null 2>&1; then
             cloudflared version 2>/dev/null | sed -n 's/.*version \([0-9]\{4\}\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/cfv"
         fi
-    } &
+    } & _p2=$!
     {
         if command -v nginx >/dev/null 2>&1; then
             nginx -v 2>&1 | sed -n 's/.*nginx\/\([0-9.]*\).*/\1/p' > "$_tmpd/ngv"
         fi
-    } &
-    wait
+    } & _p3=$!
+    # ⚠️ 必须只等上面三个版本查询子进程：bash 裸 wait 会等"当前 shell 所有后台子进程"，
+    # 而 ins/rep 流程里 cloudflared 隧道是同一 shell 的 nohup 后台子进程（永不退出），
+    # 裸 wait 会像本函数之前的版本一样永久卡死（症状：卡在"获取服务状态中..."）。
+    wait "$_p1" "$_p2" "$_p3" 2>/dev/null
     # 状态已就绪，擦除上面的"正在检查..."提示行（仅 TTY）
     [ -t 1 ] && printf -- '\r\033[2K'
     v_sb="$(cat "$_tmpd/sbv" 2>/dev/null)"; [ -n "$v_sb" ] && v_sb="V$v_sb"
