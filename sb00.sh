@@ -32,7 +32,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="2.0.9(2026-09-08)"
+VERSION="2.0.10(2026-09-08)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -4966,8 +4966,13 @@ menu_status_block() {
     argo_needed=false
     need_argo && argo_needed=true
 
-    # 提示 + 并发收集三个二进制版本（sing-box / cloudflared / nginx），避免串行查询拖慢菜单
-    yellow "  ↳ 正在检查 sing-box / cloudflared / nginx 状态..."
+    # 并发收集三个二进制版本（sing-box / cloudflared / nginx），避免串行查询拖慢菜单
+    # TTY 下提示写在同一行，状态就绪后立即擦除；非 TTY（重定向/日志）保留普通换行提示
+    if [ -t 1 ]; then
+        printf -- '\r\033[2K\033[33m  ↳ 获取服务状态中...\033[0m'
+    else
+        yellow "  ↳ 获取服务状态中..."
+    fi
     local _tmpd _f
     _tmpd="$(mktemp -d 2>/dev/null || printf '%s' "$SINGBOX_FOLDER_PATH")"
     {
@@ -4988,6 +4993,8 @@ menu_status_block() {
         fi
     } &
     wait
+    # 状态已就绪，擦除上面的"正在检查..."提示行（仅 TTY）
+    [ -t 1 ] && printf -- '\r\033[2K'
     v_sb="$(cat "$_tmpd/sbv" 2>/dev/null)"; [ -n "$v_sb" ] && v_sb="V$v_sb"
     v_cf="$(cat "$_tmpd/cfv" 2>/dev/null)"; [ -n "$v_cf" ] && v_cf="V$v_cf"
     v_nginx="$(cat "$_tmpd/ngv" 2>/dev/null)"; [ -n "$v_nginx" ] && v_nginx="V$v_nginx"
@@ -5004,9 +5011,10 @@ menu_status_block() {
     fi
 
     # cloudflared 运行判定
+    local cf_running=false
     if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ] || command -v cloudflared > /dev/null 2>&1; then
         if pgrep -f "$SINGBOX_FOLDER_PATH/cloudflared" > /dev/null 2>&1; then
-            st_cf="$(green "● 运行中")"
+            st_cf="$(green "● 运行中")"; cf_running=true
         else
             st_cf="$(red "■ 已停止")"
             capture_stop_reason argo quiet 2>/dev/null
@@ -5016,7 +5024,7 @@ menu_status_block() {
     fi
 
     # nginx 运行判定
-    if ps aux | grep -v grep | grep -q nginx; then
+    if pgrep -x nginx > /dev/null 2>&1; then
         st_nginx="$(green "● 运行中")"
     elif command -v nginx > /dev/null 2>&1; then
         st_nginx="$(red "■ 已停止")"
@@ -5043,7 +5051,7 @@ menu_status_block() {
         local st_argo_off="$(purple "○ 未启用")"
         green "  Argo        : ${st_argo_off}（当前场景无需 Argo，端口：${argo_port}）"
     elif [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ] || command -v cloudflared > /dev/null 2>&1; then
-        if pgrep -f "$SINGBOX_FOLDER_PATH/cloudflared" > /dev/null 2>&1; then
+        if $cf_running; then
             green "  Argo        : ${st_cf}（端口：${argo_port}）"
         else
             green "  Argo        : ${st_cf}（已启用 Argo，端口：${argo_port}）"
