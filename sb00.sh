@@ -32,7 +32,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="2.0.28(2026-09-08)"
+VERSION="2.0.32(2026-09-08)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -3746,11 +3746,31 @@ ins() {
     [ -n "$_dlist" ] && { _d_c="${_dlist//[!,]/}"; _d_n=$((${#_d_c}+1)); if [ "$_d_n" -eq 1 ]; then _d_sfx="(单选，${_d_n}个)"; else _d_sfx="(已多选，${_d_n}个)"; fi; }
     local _sub_txt="不开启"
     [ "${subscribe:-false}" = "true" ] && _sub_txt="开启 (nginx_pt=${nginx_pt})"
+    # 出口 IP：优先 out_ip，否则现场检测 v4/v6（偏好逻辑与 write_server_ip 一致）
+    local _ipres _ipv4 _ipv6 _exit_ip="" _exit_label="" _exit_region=""
+    _ipres="$(check_ip_connectivity "$v46url" 2>/dev/null)"
+    _ipv4="$(printf '%s' "${_ipres%%|*}" | tr -d '\r\n')"
+    _ipv6="$(printf '%s' "${_ipres##*|}" | tr -d '\r\n')"
+    case "${ippz:-}" in
+        4) _exit_ip="$_ipv4" ;;
+        6) _exit_ip="$_ipv6" ;;
+        *) _exit_ip="${_ipv4:-$_ipv6}" ;;
+    esac
+    if [ -n "${out_ip:-}" ]; then
+        _exit_ip="$out_ip"; _exit_label=" (out_ip)"
+    elif [ -n "$_ipv4" ] && [ "$_exit_ip" = "$_ipv4" ]; then
+        _exit_label=" (IPv4)"
+    elif [ -n "$_ipv6" ] && [ "$_exit_ip" = "$_ipv6" ]; then
+        _exit_label=" (IPv6)"
+    fi
+    # 国家/城市：geo_get_ip 返回如 "日本, 东京"，命中 geo 缓存则无网络开销
+    [ -n "$_exit_ip" ] && _exit_region="$(geo_get_ip "$_exit_ip")"
+    [ -n "$_exit_region" ] && _exit_region=" ($_exit_region)"
     green ""
     green "========= 安装参数 ========="
     green "  日志调试: ${DEBUG_FLAG:-0}"
     green "  IP偏好: ${ippz:-自动}"
-    green "  出口 IP: ${out_ip:-自动检测}"
+    green "  出口 IP: ${_exit_ip:-自动检测}${_exit_label}${_exit_region}"
     green "  UUID: ${uuid:-自动生成}"
     green "  直连协议: ${_dlist:-<未选>} ${_d_sfx}"
     if [ -n "$argo" ]; then
@@ -3765,17 +3785,58 @@ ins() {
     fi
     green "  Socks5: $([ -n "$socksp" ] && echo 安装 || echo 不安装)"
     green "  端口: VLESS-Reality=${vlrt:-随机} Hysteria2=${hypt:-随机} TUIC=${tupt:-随机} AnyTLS=${anypt:-随机}"
-    green "  伪装SNI: Hysteria2=${hy_sni:-www.apple.com} VLESS=${vl_sni:-www.apple.com} VLESS端口=${vl_sni_pt:-443} TUIC=${tu_sni:-www.apple.com}"
+    green "  伪装SNI: Hysteria2=${hy_sni:-www.apple.com} VLESS=${vl_sni:-www.apple.com} VLESS端口=${vl_sni_pt:-443} TUIC=${tu_sni:-www.apple.com} AnyTLS=${any_sni:-www.apple.com}"
     if [ -n "$argo" ]; then
         if [ -n "${ARGO_DOMAIN:-}" ] && [ -n "${ARGO_AUTH:-}" ]; then
             green "  Argo 隧道: 固定 (域名=${ARGO_DOMAIN})"
         else
             green "  Argo 隧道: 临时"
         fi
-        green "  Argo CF 优选: 域名=${argo_cf_host:-saas.sin.fan} 端口=${argo_cf_pt:-443}"
+        # Argo CF 优选：全协议都用共享域名/端口 → 只打共享；否则逐协议列细节
+        local _argosh="${argo_cf_host:-saas.sin.fan}" _argosp="${argo_cf_pt:-443}" _all_shared=1 _agx _aghx _agpx
+        for _agx in $(argo_proto_list | tr ',' ' '); do
+            [ -n "$_agx" ] || continue
+            _aghx="$(argo_eff_host "$_agx")"
+            _agpx="$(argo_eff_pt "$_agx")"
+            if [ "$_aghx" != "$_argosh" ] || [ "$_agpx" != "$_argosp" ]; then
+                _all_shared=0
+                break
+            fi
+        done
+        if [ "$_all_shared" = "1" ]; then
+            green "  Argo CF 优选: 域名=${_argosh} 端口=${_argosp}"
+        else
+            local _agcf=""
+            for _agx in $(argo_proto_list | tr ',' ' '); do
+                _aghx="$(argo_eff_host "$_agx")"; _agpx="$(argo_eff_pt "$_agx")"
+                _agcf="$_agcf ${_agx}=${_aghx}:${_agpx}"
+            done
+            green "  Argo CF 优选:${_agcf}"
+        fi
     fi
     if [ -n "$ws_cdn" ]; then
-        green "  WS-CDN: 域名=${ws_cdn_cf_host:-saas.sin.fan} 端口=${ws_cdn_cf_pt:-443} 回源SNI=${ws_cdn_sni:-<未设>}"
+        # WS-CDN：全协议都用共享域名/端口 → 只打共享；否则逐协议列细节（含回源SNI）
+        local _wsh="${ws_cdn_cf_host:-saas.sin.fan}" _wsp="${ws_cdn_cf_pt:-443}" _wss="${ws_cdn_sni:-}" _all_shared=1 _wmx _wmhx _wmpx _wmsx
+        for _wmx in $(printf '%s' "$ws_cdn" | tr ',' ' '); do
+            [ -n "$_wmx" ] || continue
+            _wmhx="$(ws_cdn_eff_host "$_wmx")"
+            _wmpx="$(ws_cdn_eff_pt "$_wmx")"
+            if [ "$_wmhx" != "$_wsh" ] || [ "$_wmpx" != "$_wsp" ]; then
+                _all_shared=0
+                break
+            fi
+        done
+        if [ "$_all_shared" = "1" ]; then
+            [ -n "$_wss" ] && _wss=" 回源SNI=${_wss}"
+            green "  WS-CDN: 域名=${_wsh} 端口=${_wsp}${_wss}"
+        else
+            local _wmcf=""
+            for _wmx in $(printf '%s' "$ws_cdn" | tr ',' ' '); do
+                _wmhx="$(ws_cdn_eff_host "$_wmx")"; _wmpx="$(ws_cdn_eff_pt "$_wmx")"; _wmsx="$(ws_cdn_eff_sni "$_wmx")"
+                _wmcf="$_wmcf ${_wmx}=${_wmhx}:${_wmpx} sni=${_wmsx}"
+            done
+            green "  WS-CDN:${_wmcf}"
+        fi
     fi
     green "  订阅: ${_sub_txt}"
     [ -n "$vlr" ] && green "  reality_private: ${reality_private:-自动生成}"
