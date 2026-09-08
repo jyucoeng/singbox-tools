@@ -757,6 +757,8 @@ _fetch() {
 
 _verify_and_run() {
     local _body="\$1" _ver="" _tmp
+    shift  # 剔除函数首个参数 _body（整份脚本内容），使 exec 时 "$@" 只含用户原始参数；
+           # 否则 300KB+ 脚本会作为 argv 传给新起 /usr/bin/bash → "Argument list too long"
     # 内容自检：必须有 VERSION 声明，防止错误页/被篡改内容被当脚本执行
     printf '%s\n' "\$_body" | grep -qE '^VERSION="[^"]+"' || {
         echo "ERROR: 拉取的脚本内容异常（可能被篡改或网络返回错误页），已中止" >&2
