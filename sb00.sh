@@ -4381,9 +4381,6 @@ regenerate_links_and_sub() {
             append_jh "$_argo_link"
             _argo_printed=true
         done
-        if [ "$_argo_printed" = "true" ]; then
-            yellow "---------------------------------------------------------"
-        fi
         unset _argo_link _ah _apt _argo_printed
     fi
 
