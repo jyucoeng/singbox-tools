@@ -32,7 +32,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="2.0.6(2026-09-08)"
+VERSION="2.0.7(2026-09-08)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -2505,7 +2505,7 @@ installsb() {
             echo "$port_tr" > "$SINGBOX_FOLDER_PATH/port_tr"
         fi
         port_tr=$(cat "$SINGBOX_FOLDER_PATH/port_tr")
-        yellow "Trojan端口(Argo本地使用, 自动随机)：$port_tr"
+        yellow "Trojan-ws端口 (Argo本地使用, 自动随机)：$port_tr"
         debug_log " [调试] Trojan端口已写入文件：$SINGBOX_FOLDER_PATH/port_tr"
 
         jq --arg port "$port_tr" --arg uuid "$uuid" '
@@ -2526,7 +2526,7 @@ installsb() {
             echo "$port_vm_ws" > "$SINGBOX_FOLDER_PATH/port_vm_ws"
         fi
         port_vm_ws=$(cat "$SINGBOX_FOLDER_PATH/port_vm_ws")
-        yellow "Vmess-ws端口 (Argo本地使用)：$port_vm_ws"
+        yellow "Vmess-ws端口 (Argo本地使用, 自动随机)：$port_vm_ws"
         debug_log " [调试] Vmess-ws端口已写入文件：$SINGBOX_FOLDER_PATH/port_vm_ws"
 
         jq --arg port "$port_vm_ws" --arg uuid "$uuid" '
@@ -2545,8 +2545,9 @@ installsb() {
             echo "$port_vl_ws" > "$SINGBOX_FOLDER_PATH/port_vl_ws"
         elif [ -n "$port_vl_ws" ]; then
             echo "$port_vl_ws" > "$SINGBOX_FOLDER_PATH/port_vl_ws"
-        elif [ -s "$SINGBOX_FOLDER_PATH/port_vm_ws" ]; then
-            # 兼容旧版本 vmess 端口文件，升级后复用同一端口
+        elif [ -s "$SINGBOX_FOLDER_PATH/port_vm_ws" ] && [ -z "$vmp" ]; then
+            # 兼容旧版单 Argo(vless) 场景复用 vmess 端口文件；
+            # ⚠️ vmess 协议已启用时必须独立端口，否则 vless-ws-sb 与 vmess-sb 两个 inbound 端口冲突
             port_vl_ws=$(cat "$SINGBOX_FOLDER_PATH/port_vm_ws")
             echo "$port_vl_ws" > "$SINGBOX_FOLDER_PATH/port_vl_ws"
         fi
@@ -2555,8 +2556,14 @@ installsb() {
             port_vl_ws=$(rand_port)
             echo "$port_vl_ws" > "$SINGBOX_FOLDER_PATH/port_vl_ws"
         fi
+        # 多协议并存兜底：vless 端口不得与 vmess 相同（升级/复用历史可能残留同端口，rand_port 会避开已登记占用）
+        if [ -n "$vmp" ] && [ -n "$port_vl_ws" ] && [ -n "$port_vm_ws" ] && [ "$port_vl_ws" = "$port_vm_ws" ]; then
+            port_vl_ws=$(rand_port)
+            echo "$port_vl_ws" > "$SINGBOX_FOLDER_PATH/port_vl_ws"
+            yellow "  ↳ Vless 端口与 Vmess 端口冲突，已重新随机为 $port_vl_ws"
+        fi
         port_vl_ws=$(cat "$SINGBOX_FOLDER_PATH/port_vl_ws")
-        yellow "Vless-ws端口 (Argo本地使用)：$port_vl_ws"
+        yellow "Vless-ws端口 (Argo本地使用, 自动随机)：$port_vl_ws"
         debug_log " [调试] Vless-ws端口已写入文件：$SINGBOX_FOLDER_PATH/port_vl_ws"
 
         jq --arg port "$port_vl_ws" --arg uuid "$uuid" '
@@ -2602,7 +2609,7 @@ installsb() {
                       listen_port:($port|tonumber), users:[{password:$uuid}],
                       transport:{type:"ws", path:"/\($uuid)-tr-cdn"}}]' "$sbj" > "$tmpj" && sbj_save "$tmpj" ;;
         esac
-        yellow "${_cdp}-WS-CDN回源端口(本地)：$_cdp_port"
+        yellow "${_cdp}-WS-CDN回源端口(本地, 自动随机)：$_cdp_port"
     done
     unset _cdp _cdp_file _cdp_port
 
@@ -3707,7 +3714,14 @@ EOF
 
 ins() {
     debug_log "【调试】进入 ins() 安装流程"
-    debug_log "【调试】关键参数：argo=${argo:-<空>}，vmag=${vmag:-<空>}，subscribe=$(get_subscribe_flag 2> /dev/null || echo ${subscribe:-false})，nginx_pt=${nginx_pt:-<空>}，argo_pt=${argo_pt:-<空>}"
+    debug_log "【调试】关键参数：argo=${argo:-<空>}，ws_cdn=${ws_cdn:-<空>}，vmag=${vmag:-<空>}，subscribe=$(get_subscribe_flag 2> /dev/null || echo ${subscribe:-false})，nginx_pt=${nginx_pt:-<空>}，argo_pt=${argo_pt:-<空>}"
+    # 提升协议开关可见性：无论是否启用都在终端打印 argo / ws_cdn 的值
+    green ""
+    green "========= 协议开关 ========="
+    green "  Argo  : ${argo:-未启用（未传 argo）}"
+    green "  ws_cdn: ${ws_cdn:-未启用（未传 ws_cdn）}"
+    green "============================"
+    echo
     # =====================================================
     # 1. 安装并启动 sing-box
     # =====================================================
