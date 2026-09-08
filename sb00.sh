@@ -32,7 +32,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="2.0.4(2026-09-08)"
+VERSION="2.0.5(2026-09-08)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -2401,12 +2401,15 @@ ws_cdn_proto_enabled() {
 
 # 订阅的 CDN 域名：共享 ws_cdn_cf_host > vmess 专属 > vless 专属 > trojan 专属，取第一个非空。
 # 专属 host 仅在对应协议启用了 ws_cdn 时才借用；固定顺序与 ws_cdn 传参顺序无关，保证可预期
+# 订阅的 CDN 域名：共享回源域名 ws_cdn_sni > vmess 专属 > vless 专属 > trojan 专属，取第一个非空。
+# ⚠️ 订阅 https 域名必须是「回源域名」(ws_cdn_sni 系列/真实子域名)，CF 按 Host/SNI 路由回源到 nginx_pt；
+#    用 CF 优选域名(ws_cdn_cf_host 系列)做订阅地址会因不匹配回源规则而 530
 ws_cdn_sub_host() {
     local h=""
-    h="$(ws_cdn_val ws_cdn_cf_host)"
-    [ -n "$h" ] || { ws_cdn_proto_enabled vmess && h="$(ws_cdn_val ws_cdn_vmess_cf_host)"; }
-    [ -n "$h" ] || { ws_cdn_proto_enabled vless && h="$(ws_cdn_val ws_cdn_vless_cf_host)"; }
-    [ -n "$h" ] || { ws_cdn_proto_enabled trojan && h="$(ws_cdn_val ws_cdn_trojan_cf_host)"; }
+    h="$(ws_cdn_val ws_cdn_sni)"
+    [ -n "$h" ] || { ws_cdn_proto_enabled vmess && h="$(ws_cdn_val ws_cdn_vmess_sni)"; }
+    [ -n "$h" ] || { ws_cdn_proto_enabled vless && h="$(ws_cdn_val ws_cdn_vless_sni)"; }
+    [ -n "$h" ] || { ws_cdn_proto_enabled trojan && h="$(ws_cdn_val ws_cdn_trojan_sni)"; }
     printf '%s' "$h"
 }
 
@@ -3961,6 +3964,14 @@ update_subscription_file() {
 # 输出订阅链接
 # 域名优先级（自动判定，不接受 sub_domain 手动强制）：
 #   固定 Argo > 共享 ws_cdn_cf_host > 任意 Argo(含临时 trycloudflare) > http://IP:nginx_port
+# Argo 隧道实际可用性：cloudflared 已安装 且 进程在运行
+# （否则 AGN 域名只是"配置了 Argo"，隧道没连上，走它做订阅会 530）
+argo_tunnel_alive() {
+    command -v cloudflared >/dev/null 2>&1 || return 1
+    pgrep -f "cloudflared" >/dev/null 2>&1 || return 1
+    return 0
+}
+
 show_sub_url() {
     # ✅ 没开订阅直接不输出
     is_true "$(get_subscribe_flag)" || return 0
@@ -3992,20 +4003,20 @@ show_sub_url() {
     cdn_sub_pt="$(normalize_cdn_pt "${cdn_sub_pt:-443}" 443)"
 
     #  ✅ 按预定优先级自动判定订阅域名（不接受 sub_domain 环境变量强制赋值）
-    # ✅ 固定 Argo 域名（非临时）
-    if [ -n "$argodomain" ] && ! printf '%s' "$argodomain" | grep -q 'trycloudflare\.com$'; then
+    # ✅ 固定 Argo 域名（仅当隧道实际可用时才优先；否则即使配了 agn/agk 也降级，避免 530）
+    if [ -n "$argodomain" ] && ! printf '%s' "$argodomain" | grep -q 'trycloudflare\.com$' && argo_tunnel_alive; then
         echo "https://${argodomain}/sub/${sub_uuid}"
         return 0
     fi
 
-    # ✅ 共享/协议专属 CDN 域名（CDN 回源订阅，https）
+    # ✅ 共享/协议专属 CDN 域名（CDN 回源订阅，https；走用户自己的 CDN/Origin Rule，不依赖 Argo 隧道）
     if [ -n "$cdn_sub_host" ]; then
         echo "https://${cdn_sub_host}:${cdn_sub_pt}/sub/${sub_uuid}"
         return 0
     fi
 
-    # ✅ 任意 Argo（含临时 trycloudflare）
-    if [ -n "$argodomain" ]; then
+    # ✅ 任意 Argo（含临时 trycloudflare，隧道存活才用）
+    if [ -n "$argodomain" ] && argo_tunnel_alive; then
         echo "https://${argodomain}/sub/${sub_uuid}"
         return 0
     fi
