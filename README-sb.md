@@ -103,7 +103,6 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 # ws_cdn_trojan_cf_host='CF优选域名' \
 # ws_cdn_trojan_sni='回源域名' \
 # ws_cdn_trojan_cf_pt=443 \               # 以上为 ws_cdn 各协议专属域名（未填回退共享 ws_cdn_cf_host/ws_cdn_sni/ws_cdn_cf_pt）
-# reality_public='reality公钥' \          # 一般不传（脚本自动根据 reality_private 生成配套公钥）
 ```
 
 **变量速查：**
