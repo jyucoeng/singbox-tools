@@ -54,6 +54,7 @@ hy_sni='www.apple.com' \
 vl_sni='www.apple.com' \
 vl_sni_pt=443 \
 tu_sni='www.apple.com' \
+any_sni='www.apple.com' \
 uuid=0631a7f3-09f8-4144-acf2-a4f5bd9ed200 \
 ippz=4 \
 vlrt=41003 \
@@ -80,22 +81,47 @@ DEBUG_FLAG=0 \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
+**可选项 / 进阶参数（默认不传即用，需要时复制到上面、去掉 `#` 并填真实值）：**
+
+```
+# out_ip='特殊出口IP' \                    # 仅当出口IP与服务器IP不一致时（配合 ippz），一般不填
+# argo_pt=8001 \                          # Argo 本地回源端口（一般不改）
+# agn='固定Argo隧道域名' \                 # 有固定 CF Tunnel 才填，不填=临时 trycloudflare
+# agk='固定Argo隧道token' \               # token 或 JSON 凭据（JSON 必须用单引号包裹）
+# argo_vmess_cf_host='CF优选域名' \
+# argo_vmess_cf_pt=443 \
+# argo_vless_cf_host='CF优选域名' \
+# argo_vless_cf_pt=443 \
+# argo_trojan_cf_host='CF优选域名' \
+# argo_trojan_cf_pt=8443 \                # 以上为各协议独立 Argo 优选域名/端口（未填回退 argo_cf_host/argo_cf_pt）
+# ws_cdn_vmess_cf_host='CF优选域名' \
+# ws_cdn_vmess_sni='回源域名' \
+# ws_cdn_vmess_cf_pt=443 \
+# ws_cdn_vless_cf_host='CF优选域名' \
+# ws_cdn_vless_sni='回源域名' \
+# ws_cdn_vless_cf_pt=443 \
+# ws_cdn_trojan_cf_host='CF优选域名' \
+# ws_cdn_trojan_sni='回源域名' \
+# ws_cdn_trojan_cf_pt=443 \               # 以上为 ws_cdn 各协议专属域名（未填回退共享 ws_cdn_cf_host/ws_cdn_sni/ws_cdn_cf_pt）
+# reality_public='reality公钥' \          # 一般不传（脚本自动根据 reality_private 生成配套公钥）
+```
+
 **变量速查：**
 
 - `uuid`：节点 UUID，不传则自动生成
 - `ippz`：出口 IP 偏好（`4`=仅 IPv4、`6`=仅 IPv6，不传=双栈）；`out_ip` 仅当出口 IP 与服务器 IP 不一致时才需要填（配合 `ippz`）
-- `hy_sni` / `vl_sni` / `tu_sni`：各协议伪装 SNI（`vl_sni_pt=443` 为 VLESS 的 SNI 端口）
+- `hy_sni` / `vl_sni` / `tu_sni` / `any_sni`：各协议伪装 SNI（`vl_sni_pt=443` 为 VLESS 的 SNI 端口；`any_sni` 为 AnyTLS 的 SNI）
 - `vlrt`+`vl_sni` = VLESS-Reality；`hypt`+`hy_sni` = Hysteria2；`tupt`+`tu_sni` = TUIC；`anypt` = AnyTLS；`socks5pt` = Socks5 → 端口行删除即不装对应协议
 - `socks5_username` / `socks5_password`：Socks5 认证账号密码（密码含特殊字符时必须用单引号包裹）
 - `socks5_wl_flag` / `socks5_ips`：Socks5 白名单开关，以及放行 IP（逗号分隔，支持掩码如 `1.2.3.0/24`）
-- `argo`：Argo 协议，逗号分隔可多选 `vmess/trojan/vless`；固定隧道另配 `agn`（域名）或 `agk`（Token/JSON），不配则用临时 trycloudflare 域名
-- `argo_cf_host` / `argo_cf_pt`：共享 CF 优选域名/端口（所有 Argo 协议共用，未填默认 `saas.sin.fan`/`443`）
+- `argo`：Argo 协议，逗号分隔可多选 `vmess/trojan/vless`；`argo_pt` 为 Argo 本地回源端口（默认 8001，一般不改）；固定隧道另配 `agn`（域名）或 `agk`（Token/JSON），不配则用临时 trycloudflare 域名
+- `argo_cf_host` / `argo_cf_pt`：共享 CF 优选域名/端口（所有 Argo 协议共用，未填默认 `saas.sin.fan`/`443`）；每协议可单独指定，如 `argo_vless_cf_host` / `argo_vless_cf_pt`、`argo_vmess_*`、`argo_trojan_*`
 - `ws_cdn`：CDN 回源（经自己 CDN 反代到 nginx，与 Argo 二选一），逗号分隔可多选 `vmess/vless/trojan`
-- `ws_cdn_cf_host` / `ws_cdn_sni` / `ws_cdn_cf_pt`：CDN 回源域名/SNI/端口（每协议可单独指定，如 `ws_cdn_vless_cf_host`）
+- `ws_cdn_cf_host` / `ws_cdn_sni` / `ws_cdn_cf_pt`：CDN 回源域名/SNI/端口（每协议可单独指定，如 `ws_cdn_vless_cf_host` / `ws_cdn_vless_sni` / `ws_cdn_vless_cf_pt`）
 - `subscribe` / `nginx_pt`：开启订阅及订阅端口
-- `reality_private`：传上次安装的 Reality 私钥可保持节点一致，不传则自动生成
+- `reality_private`：传上次安装的 Reality 私钥可保持节点一致，不传则自动生成；`reality_public` 一般不传（脚本自动由私钥推导公钥）
 - `name`：节点名称前缀
-- `DEBUG_FLAG`：日志调试开关（`0`=关）
+- `DEBUG_FLAG`：日志调试开关（`0`=关，`1`=开，调试输出写入 `doraemon/debug.log`）
 
 详细说明见下方「[环境变量说明](#环境变量说明)」。
 
@@ -366,7 +392,9 @@ WS-CDN 回源链路：`客户端 → CDN(ws_cdn_cf_pt) → 服务器 nginx_pt(�
 添加下面三条 **A 记录**，其中 `192.9.100.***` 为你的小鸡（服务器）的 IPv4：
 
 ```
-vmess-node.xxxx.nyc.mn   →  192.9.100.***   （小黄云开不开都可以）
+vmess-node.xxxx.nyc.mn    →  192.9.100.***   （小黄云开不开都可以）
+vless-node.xxxx.nyc.mn    →  192.9.100.***   （小黄云开不开都可以）
+trojan-node.xxxx.nyc.mn   →  192.9.100.***   （小黄云开不开都可以）
 
 ```
 
@@ -453,6 +481,8 @@ vmess-node.xxxx.nyc.mn   →  192.9.100.***   （小黄云开不开都可以）
 - 不传 → 默认 生成
 - 传 → 就能节点永远相同(请注意不要乱填，正确的值应该是43个字符)
 
+**reality_public（可选）**：Reality 节点对外暴露的公钥。一般不传——脚本会根据 `reality_private` 自动推导配套公钥；只有当你已经持有公钥、并希望强制指定它时，才需要传。传了 `reality_private` 时以私钥推导为准。
+
 ## 12、 socks5pt 指的是socks5协议的端口，不传就不启用socks5。同时自定义 socks5_username / socks5_password 环境变量的值。用户名/密码不传就自动随机生成。
 
 > **⚠️ 注意：如果 `socks5_password` 含 `!`、`#`、`$` 等特殊字符，必须用单引号 `'...'` 包裹整个密码串。**  
@@ -519,6 +549,17 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 # ws_cdn_vless_sni='vless.example.com' \
 # agn='california.xxxx.xyz' \
 # agk='ey开头的那一大串'
+```
+
+## 14、 DEBUG_FLAG 调试日志开关（默认 0）
+
+- `0`（默认）→ 关闭调试输出
+- `1` → 开启调试模式，脚本会把入口参数、解析结果、各命令目标等调试信息写入 `doraemon/debug.log`，排障时用
+
+示例：
+```bash
+DEBUG_FLAG=1 \
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
 # 2、常见组合调用方式
