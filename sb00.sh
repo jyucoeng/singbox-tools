@@ -1719,9 +1719,10 @@ geo_get_ip() {
     fi
     if [ -z "$_region" ]; then
         if echo "$_ip" | grep -q ':'; then _proto="6"; else _proto="4"; fi
-        _region="$(curl -s${_proto} -m8 --connect-timeout 3 -k https://ip.fm 2>/dev/null \
+        # 现场查询收紧超时（2s），避免距 10 秒卡顿：区地未命中缓存时只等 2 秒，不行就空
+        _region="$(curl -s${_proto} -m2 --connect-timeout 2 -k https://ip.fm 2>/dev/null \
             | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1)"
-        [ -z "$_region" ] && _region="$(wget -${_proto} -qO- --tries=1 --timeout=8 https://ip.fm 2>/dev/null \
+        [ -z "$_region" ] && _region="$(wget -${_proto} -qO- --tries=1 --timeout=2 https://ip.fm 2>/dev/null \
             | sed -nE 's/.*Location: ([^,]+(, [^,]+)*),.*/\1/p' | head -n1)"
         [ -n "$_region" ] && geo_set "$_ip" "$_region"
     fi
@@ -4960,18 +4961,39 @@ capture_stop_reason() {
 menu_status_block() {
     local _old_suppress="$_SUPPRESS_LOG"
     _SUPPRESS_LOG=1
-    local sub_flag argo_needed st_sb st_cf v_sb v_cf v_nginx
+    local sub_flag argo_needed st_sb st_cf st_nginx v_sb v_cf v_nginx
     sub_flag="$(get_subscribe_flag)"
     argo_needed=false
     need_argo && argo_needed=true
 
-    # sing-box
-    v_sb=""
-    if [ -x "$SINGBOX_FOLDER_PATH/sing-box" ]; then
-        local _ver
-        _ver=$("$SINGBOX_FOLDER_PATH/sing-box" version 2> /dev/null | head -1 | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')
-        [ -n "$_ver" ] && v_sb="V$_ver"
-    fi
+    # 提示 + 并发收集三个二进制版本（sing-box / cloudflared / nginx），避免串行查询拖慢菜单
+    yellow "  ↳ 正在检查 sing-box / cloudflared / nginx 状态..."
+    local _tmpd _f
+    _tmpd="$(mktemp -d 2>/dev/null || printf '%s' "$SINGBOX_FOLDER_PATH")"
+    {
+        if [ -x "$SINGBOX_FOLDER_PATH/sing-box" ]; then
+            "$SINGBOX_FOLDER_PATH/sing-box" version 2>/dev/null | head -1 | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/sbv"
+        fi
+    } &
+    {
+        if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ]; then
+            "$SINGBOX_FOLDER_PATH/cloudflared" version 2>/dev/null | sed -n 's/.*version \([0-9]\{4\}\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/cfv"
+        elif command -v cloudflared >/dev/null 2>&1; then
+            cloudflared version 2>/dev/null | sed -n 's/.*version \([0-9]\{4\}\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/cfv"
+        fi
+    } &
+    {
+        if command -v nginx >/dev/null 2>&1; then
+            nginx -v 2>&1 | sed -n 's/.*nginx\/\([0-9.]*\).*/\1/p' > "$_tmpd/ngv"
+        fi
+    } &
+    wait
+    v_sb="$(cat "$_tmpd/sbv" 2>/dev/null)"; [ -n "$v_sb" ] && v_sb="V$v_sb"
+    v_cf="$(cat "$_tmpd/cfv" 2>/dev/null)"; [ -n "$v_cf" ] && v_cf="V$v_cf"
+    v_nginx="$(cat "$_tmpd/ngv" 2>/dev/null)"; [ -n "$v_nginx" ] && v_nginx="V$v_nginx"
+    rm -rf "$_tmpd" 2>/dev/null || true
+
+    # sing-box 运行判定
     if pgrep -f "$SINGBOX_FOLDER_PATH/sing-box" > /dev/null 2>&1; then
         st_sb="$(green "● 运行中")"
     elif [ -n "$v_sb" ]; then
@@ -4981,17 +5003,7 @@ menu_status_block() {
         st_sb="$(yellow "○ 未安装")"
     fi
 
-    # cloudflared
-    v_cf=""
-    if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ]; then
-        local _ver
-        _ver=$("$SINGBOX_FOLDER_PATH/cloudflared" version 2> /dev/null | sed -n 's/.*version \([0-9]\{4\}\.[0-9]\+\.[0-9]\+\).*/\1/p')
-        [ -n "$_ver" ] && v_cf="V$_ver"
-    elif command -v cloudflared > /dev/null 2>&1; then
-        local _ver
-        _ver=$(cloudflared version 2> /dev/null | sed -n 's/.*version \([0-9]\{4\}\.[0-9]\+\.[0-9]\+\).*/\1/p')
-        [ -n "$_ver" ] && v_cf="V$_ver"
-    fi
+    # cloudflared 运行判定
     if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ] || command -v cloudflared > /dev/null 2>&1; then
         if pgrep -f "$SINGBOX_FOLDER_PATH/cloudflared" > /dev/null 2>&1; then
             st_cf="$(green "● 运行中")"
@@ -5003,14 +5015,7 @@ menu_status_block() {
         st_cf="$(yellow "○ 未安装")"
     fi
 
-    # nginx
-    v_nginx=""
-    local st_nginx=""
-    if command -v nginx > /dev/null 2>&1; then
-        local _ver
-        _ver=$(nginx -v 2>&1 | sed -n 's/.*nginx\/\([0-9.]*\).*/\1/p')
-        [ -n "$_ver" ] && v_nginx="V$_ver"
-    fi
+    # nginx 运行判定
     if ps aux | grep -v grep | grep -q nginx; then
         st_nginx="$(green "● 运行中")"
     elif command -v nginx > /dev/null 2>&1; then
