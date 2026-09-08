@@ -4051,15 +4051,11 @@ print_reality_key() {
 append_jh() {
     # 只写纯文本到聚合文件，禁止任何颜色码污染订阅
     # ❗ 用 printf '%s\n' 而非 echo -e：防止节点名/域名里带 \n、\x.. 时被解释成转义注入订阅内容
+    # ✅ 每个节点（协议）之间插一个空行，方便可视化（文件头 / 连续空行都不会出现）
+    if [ -s "$SINGBOX_FOLDER_PATH/jh.txt" ] && [ -n "$(tail -n1 "$SINGBOX_FOLDER_PATH/jh.txt" 2>/dev/null)" ]; then
+        printf '%s\n' "" >> "$SINGBOX_FOLDER_PATH/jh.txt"
+    fi
     printf '%s\n' "$1" >> "$SINGBOX_FOLDER_PATH/jh.txt"
-}
-
-# jh.txt 块分隔：文件非空 && 末尾非空 时才插入一个空行（直连/Argo/CDN/Socks5 各块之间用空行隔开）
-jh_block_sep() {
-    [ -s "$SINGBOX_FOLDER_PATH/jh.txt" ] || return 0
-    local _last
-    _last="$(tail -n1 "$SINGBOX_FOLDER_PATH/jh.txt" 2>/dev/null)"
-    [ -n "$_last" ] && append_jh ""
 }
 
 # 节点名称片段统一做 URL 编码（防空格/#/?/& 等特殊字符破坏链接，同时防换行污染订阅）
@@ -4224,6 +4220,16 @@ regenerate_links_and_sub() {
     local hy2_link tuic_link vless_link anytls_link
     local _ws_cdn_printed _ws_link _ws_h _ws_s _ws_p
     local port_socks5 socks5_username socks5_password socks5_user_enc socks5_pass_enc socks5_link
+    # 块头一次性打印：节点按「直连 / Argo / ws_cdn 回源 / Socks5」分块显示
+    local -A _BH=()
+    _hdr() { # $1=块key  $2=标题（同 key 只打印一次）
+        [ -n "${_BH[$1]+x}" ] && return 0
+        _BH[$1]=1
+        yellow "---------------------------------------------------------"
+        yellow "$2"
+        yellow "---------------------------------------------------------"
+        echo
+    }
 
     rm -rf "$SINGBOX_FOLDER_PATH/jh.txt"
     uuid=$(cat "$SINGBOX_FOLDER_PATH/uuid")
@@ -4236,6 +4242,7 @@ regenerate_links_and_sub() {
     echo
     # Hysteria2 protocol (hy2)
     if grep -q "hy2-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
+        _hdr d "直连 块协议信息"
         port_hy2=$(cat "$SINGBOX_FOLDER_PATH/port_hy2")
         hy_sni=$(cat "$SINGBOX_FOLDER_PATH/hy_sni")
         SHA256_hy2=$(openssl x509 -in "$SINGBOX_FOLDER_PATH/cert.pem" -outform DER 2>/dev/null | sha256sum | awk '{print $1}')
@@ -4330,9 +4337,6 @@ regenerate_links_and_sub() {
                     _argo_link="vless://${uuid}@${_ah}:${_apt}?encryption=none&security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-vl&sni=${argodomain}&fp=chrome#$(node_frag "${sxname}vless-ws-tls-argo-${hostname}-${_apt}")"
                     ;;
             esac
-            if [ "$_argo_printed" = "false" ]; then
-                jh_block_sep
-            fi
             green ""
             green "🎯 ${_apt}端口 ${_ap}-Argo TLS 节点 (优选IP可替换):"
             green "$_argo_link"
@@ -4379,9 +4383,6 @@ regenerate_links_and_sub() {
                 _ws_link="trojan://${uuid}@${_ws_h}:${_ws_p}?security=tls&type=ws&host=${_ws_s}&path=%2F${uuid}-tr-cdn&sni=${_ws_s}&fp=chrome#$(node_frag "${sxname}trojan-ws-cdn-${hostname}")"
                 ;;
         esac
-        if [ "$_ws_cdn_printed" = "false" ]; then
-            jh_block_sep
-        fi
         yellow "🎯【 ${_p}-WS-CDN 回源 】(经 CDN 回源到服务器 nginx_pt=${nginx_pt:-8080})"
         green "$_ws_link"
         append_jh "$_ws_link"
@@ -4414,7 +4415,6 @@ regenerate_links_and_sub() {
         else
             yellow "   ↳ 入站白名单未开启，所有IP均可访问"
         fi
-        jh_block_sep
         append_jh "$socks5_link"
         echo
     fi
