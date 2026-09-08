@@ -32,7 +32,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="2.0.16(2026-09-08)"
+VERSION="2.0.19(2026-09-08)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -4390,7 +4390,7 @@ regenerate_links_and_sub() {
     fi
 
     # ---------- Vmess/Vless/Trojan WS 走 CDN 回源（经 CDN 反代到 nginx，不使用 Argo） ----------
-    # 每个协议可用不同域名（Cloudflare origin rule 多子域名同 A 记录）；
+    # 每个协议可用不同回源域名（Cloudflare origin rule 多个回源域名同 A 记录）；
     # 与 Argo 节点共用同一本地 ws 端口/nginx 反代，仅客户端握手域名不同，可并存输出
     _ws_cdn_printed=false
     for _p in vmess vless trojan; do
@@ -5303,7 +5303,7 @@ menu_collect_install() {
     echo ""
     purple "===== Vmess/Vless/Trojan WS 走 CDN 回源 (ws_cdn, 可选) ====="
     yellow "  经你自己的 CDN/反代转发到服务器 nginx（回源端口 = 服务器 nginx_pt）"
-    yellow "  可与 Argo 并存；支持每个协议用不同子域名（Cloudflare origin rule 多子域名同 A 记录）"
+    yellow "  可与 Argo 并存；支持每个协议用不同回源域名（Cloudflare origin rule 多个回源域名同 A 记录）"
     green "  i) Vmess-WS-CDN"
     green "  j) Vless-WS-CDN"
     green "  k) Trojan-WS-CDN"
@@ -5442,10 +5442,11 @@ menu_collect_install() {
                 fi
                 if [ -n "$_agah" ]; then
                     printf -v "argo_${_agp}_cf_host" '%s' "$_agah"
-                    _prev_ah="$_agah"
                 elif [ -n "$_prev_ah" ]; then
                     printf -v "argo_${_agp}_cf_host" '%s' "$_prev_ah"
                 fi
+                # 记住上一个生效值（含默认 saas.sin.fan）：下一个协议提示"回车=沿用 …"
+                _prev_ah="${_agah:-${_prev_ah:-saas.sin.fan}}"
                 if [ -n "$_prev_ap" ]; then
                     reading "  ${_agp}-Argo 专属 CF 优选端口 (回车=沿用 ${_prev_ap}；仅限 ${HTTPS_CDN_PORTS_TEXT}): " _agap
                 else
@@ -5459,8 +5460,11 @@ menu_collect_install() {
                         printf -v "argo_${_agp}_cf_pt" '%s' "$_agap"; _prev_ap="$_agap"
                     else
                         red "  ❌ 仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS_TEXT})，忽略 ${_agap}"
+                        _agap=""
                     fi
                 fi
+                # 记住上一个生效值（含默认 443）：下一个协议提示"回车=沿用 …"
+                _prev_ap="${_agap:-${_prev_ap:-443}}"
                 # 回显：展示本协议最终生效的 CF 优选域名/端口（含默认/沿用值）
                 green "  ↳ ${_agp}-Argo CF 优选域名: ${_agah:-${_prev_ah:-saas.sin.fan}}"
                 green "  ↳ ${_agp}-Argo CF 优选端口: ${_prev_ap:-443}"
@@ -5515,10 +5519,11 @@ menu_collect_install() {
                 fi
                 if [ -n "$_wh" ]; then
                     printf -v "ws_cdn_${_ws_p}_cf_host" '%s' "$_wh"
-                    _prev_host="$_wh"
                 elif [ -n "$_prev_host" ]; then
                     printf -v "ws_cdn_${_ws_p}_cf_host" '%s' "$_prev_host"
                 fi
+                # 记住上一个生效值（含默认 saas.sin.fan）：下一个协议提示"回车=沿用 …"
+                _prev_host="${_wh:-${_prev_host:-saas.sin.fan}}"
                 _wspt=""
                 while true; do
                     if [ -n "$_prev_port" ]; then
@@ -5609,9 +5614,8 @@ menu_collect_install() {
             export nginx_pt=8080
         fi
         green "  ↳ 订阅端口: ${nginx_pt}"
-        # 订阅地址域名：由脚本按预定规则自动计算（固定 Argo → WS-CDN 子域名 → 临时 Argo → http://IP）；
+        # 订阅地址域名：由脚本按预定规则自动计算（固定 Argo → WS-CDN 回源域名 → 临时 Argo → http://IP）；
         # 不在此询问用户，安装完成后基于自动判定的域名回显订阅地址
-        yellow "  ↳ 节点订阅地址：域名由脚本自动判定（优先 https 域名，其次 http://IP:${nginx_pt}）"
 
     else
         green "  ↳ 订阅: 不开启 (默认)"
@@ -5620,10 +5624,10 @@ menu_collect_install() {
     # VLESS 才询问 reality_private
     if [ -n "$vlr" ]; then
         echo ""
-        reading_secret "reality_private (回车=自动生成): " _ans
+        reading "reality_private (回车=自动生成): " _ans
         if [ -n "$_ans" ]; then
             export reality_private="$_ans"
-            green "  ↳ reality_private: 已输入"
+            green "  ↳ reality_private: ${_ans} (已输入)"
         else
             local _rp
             _rp="$(gen_reality_private)"
@@ -5707,17 +5711,22 @@ menu_show_selection() {
     [ -n "$tup" ]    && green "    - TUIC"
     [ -n "$anyp" ]   && green "    - AnyTLS"
     [ -n "$socksp" ] && green "    - Socks5"
-    # Argo 场景（vmag 置位）与 ws_cdn 场景（vmag 未置位）分开标注
-    [ -n "$vmp" ] && {
-        if [ -n "$vmag" ]; then green "    - Vmess-WS-TLS (Argo)"; else green "    - Vmess-WS-CDN"; fi
-    }
-    [ -n "$vlp" ] && {
-        if [ -n "$vmag" ]; then green "    - Vless-WS-TLS (Argo)"; else green "    - Vless-WS-CDN"; fi
-    }
-    [ -n "$trp" ] && {
-        if [ -n "$vmag" ]; then green "    - Trojan-WS-TLS (Argo)"; else green "    - Trojan-WS-CDN"; fi
-    }
-    [ -n "$_ws_list" ] && green "    ↳ CDN 回源协议: ${_ws_list}"
+    # Argo 场景（vmp/vlp/trp 由 argo 置位）与 WS-CDN 场景分开标注，各自单独一行，更直观
+    [ -n "$vmp" ] && green "    - Vmess-WS-TLS (Argo)"
+    [ -n "$vlp" ] && green "    - Vless-WS-TLS (Argo)"
+    [ -n "$trp" ] && green "    - Trojan-WS-TLS (Argo)"
+    # WS-CDN 回源协议逐个单独列出（可与 Argo 并存，两个都启用时各占一行）
+    if [ -n "$_ws_list" ]; then
+        case ",$_ws_list," in
+            *,vmess,*) green "    - Vmess-WS-CDN (回源)" ;;
+        esac
+        case ",$_ws_list," in
+            *,vless,*) green "    - Vless-WS-CDN (回源)" ;;
+        esac
+        case ",$_ws_list," in
+            *,trojan,*) green "    - Trojan-WS-CDN (回源)" ;;
+        esac
+    fi
     echo ""
 }
 
@@ -6225,7 +6234,7 @@ edit_argo_menu() {
                 if ! is_valid_domain "$_d"; then
                     red "❌ 域名非法（只能含字母/数字/'-'/'.'）：${_d}"; menu_pause; continue
                 fi
-                reading_secret "请输入 Argo Token 或粘贴 JSON 凭据: " _a
+                reading "请输入 Argo Token 或粘贴 JSON 凭据: " _a
                 [ -z "$_a" ] && { red "❌ Token/JSON 不能为空"; menu_pause; continue; }
                 rm -f "$SINGBOX_FOLDER_PATH/tunnel.yml" "$SINGBOX_FOLDER_PATH/tunnel.json" "$SINGBOX_FOLDER_PATH/sbargotoken"
                 # 先校验（含域名/凭据格式），通过后再落盘，避免失败时留下不一致状态
