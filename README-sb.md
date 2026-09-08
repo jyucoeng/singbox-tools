@@ -358,7 +358,7 @@ WS-CDN 回源链路：`客户端 → CDN(ws_cdn_cf_pt) → 服务器 nginx_pt(�
   - 点击 **And**，再选 **SSL/HTTPS**，**等于**，**确保这一行后面的开关要选上（打勾）**
 - 然后下面的**目标端口** 重写到 **31007**（这个 31007 端口就是你的 **nginx 订阅端口 nginx_pt** 的值，按你实际配置的 `nginx_pt` 填写）
 
-> 规则里的 `*node.xxxx.nyc.mn` 通配符要能覆盖你实际用的三个回源域名：`vmess-node.xxxx.nyc.mn` / `vless-node.xxxx.nyc.mn` / `trojan-node.xxxx.nyc.mn`（或多个节点共用的其它域名）。
+> 规则里的 `*node.xxxx.nyc.mn` 通配符要能覆盖你实际用的三个回源域名：`vmess` / `vless` / `trojan`（这3个协议可以共用一个回源域名，也可以用三个不同的域名）。
 
 #### 2、域名 `xxxx.nyc.mn` 的 DNS 记录
 
@@ -366,11 +366,10 @@ WS-CDN 回源链路：`客户端 → CDN(ws_cdn_cf_pt) → 服务器 nginx_pt(�
 
 ```
 vmess-node.xxxx.nyc.mn   →  192.9.100.***   （小黄云开不开都可以）
-vless-node.xxxx.nyc.mn   →  192.9.100.***   （小黄云开不开都可以）
-trojan-node.xxxx.nyc.mn  →  192.9.100.***   （小黄云开不开都可以）
+
 ```
 
-> 三条记录指向**同一个 IPv4**（同一台服务器），配合上面的 Origin Rules 泛域名回源到 nginx_pt；
+> 可以每个协议一个dns记录，也可以3个协议共用一个dns记录，这个子域名记录指向**同一个 IPv4**（同一台服务器），配合上面的 Origin Rules 泛域名回源到 nginx_pt；
 > `小黄云`（Cloudflare 橙色云代理）开或不开都可以——开=走 CDN+CDN TLS 终结，关=仅 CDN 反代一样能到 nginx。
 
 > **⚠️ 每个实际用到的 SNI 回源域名都必须有 DNS 记录**。节点里的 `sni/host` 用的分别是 `ws_cdn_vmess_sni` / `ws_cdn_vless_sni` / `ws_cdn_trojan_sni`（没设专属就回退共享 `ws_cdn_sni`），**凡是当 SNI 用的回源域名，每个都必须在 DNS 里有一条记录**，缺哪个哪个节点就是 **530（Origin DNS Error）**。
