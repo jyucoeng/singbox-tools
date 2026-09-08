@@ -32,7 +32,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="2.0.10(2026-09-08)"
+VERSION="2.0.11(2026-09-08)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -2890,9 +2890,10 @@ setup_nginx_subscribe() {
     fi
     tr_port="$(cat "$SINGBOX_FOLDER_PATH/port_tr" 2> /dev/null)"
     # WS-CDN 回源独立端口（若该协议走了 ws_cdn，需反代 /{uuid}-{p}-cdn）
-    cdn_vm_port="$(cat "$SINGBOX_FOLDER_PATH/port_vm_ws_cdn" 2> /dev/null)"
-    cdn_vl_port="$(cat "$SINGBOX_FOLDER_PATH/port_vl_ws_cdn" 2> /dev/null)"
-    cdn_tr_port="$(cat "$SINGBOX_FOLDER_PATH/port_tr_ws_cdn" 2> /dev/null)"
+    # 落盘文件名为协议全名（port_vmess_ws_cdn / port_vless_ws_cdn / port_trojan_ws_cdn，与 ws_cdn inbound 生成一致）
+    cdn_vm_port="$(cat "$SINGBOX_FOLDER_PATH/port_vmess_ws_cdn" 2> /dev/null)"
+    cdn_vl_port="$(cat "$SINGBOX_FOLDER_PATH/port_vless_ws_cdn" 2> /dev/null)"
+    cdn_tr_port="$(cat "$SINGBOX_FOLDER_PATH/port_trojan_ws_cdn" 2> /dev/null)"
 
     local conf
     conf="$(nginx_conf_path)"
