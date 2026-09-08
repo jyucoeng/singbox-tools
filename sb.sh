@@ -140,7 +140,6 @@ v46url="https://icanhazip.com"
 # 不固定 commit SHA（避免每次发布都去查 SHA）；由 wrapper 内在的内容/版本校验来
 # 发现 CDN 缓存或异常内容（详见 gen_online_wrapper）。
 SCRIPT_URL="${SB_SCRIPT_URL:-https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh}"
-
 CN_BING="www.bing.com"
 
 v4_ok=false
