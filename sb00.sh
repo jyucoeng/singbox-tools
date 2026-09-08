@@ -32,7 +32,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="2.0.21(2026-09-08)"
+VERSION="2.0.25(2026-09-08)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -3727,11 +3727,24 @@ EOF
 ins() {
     debug_log "【调试】进入 ins() 安装流程"
     debug_log "【调试】关键参数：argo=${argo:-<空>}，ws_cdn=${ws_cdn:-<空>}，vmag=${vmag:-<空>}，subscribe=$(get_subscribe_flag 2> /dev/null || echo ${subscribe:-false})，nginx_pt=${nginx_pt:-<空>}，argo_pt=${argo_pt:-<空>}"
-    # 提升协议开关可见性：无论是否启用都在终端打印 argo / ws_cdn 的值
+    # 提升协议开关可见性：无论是否启用都在终端打印 argo / ws_cdn 的值（含单选/已多选个数）
+    local _a_c _a_n _w_c _w_n _a_sfx="" _w_sfx=""
+    if [ -n "${argo:-}" ]; then
+        _a_c="${argo//[!,]/}"; _a_n=$((${#_a_c}+1))
+        if [ "$_a_n" -eq 1 ]; then _a_sfx="(单选，${_a_n}个)"; else _a_sfx="(已多选，${_a_n}个)"; fi
+    else
+        _a_sfx="未启用（未传 argo）"
+    fi
+    if [ -n "${ws_cdn:-}" ]; then
+        _w_c="${ws_cdn//[!,]/}"; _w_n=$((${#_w_c}+1))
+        if [ "$_w_n" -eq 1 ]; then _w_sfx="(单选，${_w_n}个)"; else _w_sfx="(已多选，${_w_n}个)"; fi
+    else
+        _w_sfx="未启用（未传 ws_cdn）"
+    fi
     green ""
     green "========= 协议开关 ========="
-    green "  Argo  : ${argo:-未启用（未传 argo）}"
-    green "  ws_cdn: ${ws_cdn:-未启用（未传 ws_cdn）}"
+    green "  Argo  : ${argo:-}${_a_sfx}"
+    green "  ws_cdn: ${ws_cdn:-}${_w_sfx}"
     green "============================"
     echo
     # =====================================================
@@ -5257,6 +5270,15 @@ menu_collect_install() {
     reading "输入选项 (回车默认=全部直连协议 b c d e): " _ch
     [ -z "$_ch" ] && _ch="b c d e"
     _ch="$(printf '%s' "$_ch" | tr ',' ' ' | tr '[:upper:]' '[:lower:]')"
+    # 去重：重复输入只算一次（如 b,b,c → b c），影响后续回显/启用标记/端口设置
+    local _ch_uniq=""
+    for _sel in $_ch; do
+        case " $_ch_uniq " in
+            *" $_sel "*) : ;;
+            *) _ch_uniq="$_ch_uniq $_sel" ;;
+        esac
+    done
+    _ch="${_ch_uniq# }"
     local _names=""
     for _sel in $_ch; do
         case "$_sel" in
@@ -5266,7 +5288,10 @@ menu_collect_install() {
             e) _names="$_names,AnyTLS" ;;
         esac
     done
-    green "  ↳ 直连协议: ${_ch} (${_names#,})"
+    _direct_n=0
+    for _w in $_ch; do _direct_n=$((_direct_n+1)); done
+    if [ "$_direct_n" -eq 1 ]; then _direct_sfx="单选，${_direct_n}个"; else _direct_sfx="已多选，${_direct_n}个"; fi
+    green "  ↳ 直连协议: ${_ch} (${_names#,}，${_direct_sfx})"
 
     # Argo 隧道协议：多选或选零
     echo ""
@@ -5282,9 +5307,10 @@ menu_collect_install() {
     else
         for _ag in $_ans; do
             case "$_ag" in
-                f) _argo_list="$_argo_list,vmess" ;;
-                g) _argo_list="$_argo_list,trojan" ;;
-                v) _argo_list="$_argo_list,vless" ;;
+                # 每次加入前去重：已选过的协议不再追加（如 f,f,v 只算一次）
+                f) case ",$_argo_list," in *,vmess,*) : ;; *) _argo_list="$_argo_list,vmess" ;; esac ;;
+                g) case ",$_argo_list," in *,trojan,*) : ;; *) _argo_list="$_argo_list,trojan" ;; esac ;;
+                v) case ",$_argo_list," in *,vless,*) : ;; *) _argo_list="$_argo_list,vless" ;; esac ;;
                 *) yellow "  ⚠️ 忽略未知选项: $_ag" ;;
             esac
         done
@@ -5335,9 +5361,10 @@ menu_collect_install() {
         _ws_list=""
         for _ws_p in $_ws_sel; do
             case "$_ws_p" in
-                i) _ws_list="$_ws_list,vmess" ;;
-                j) _ws_list="$_ws_list,vless" ;;
-                k) _ws_list="$_ws_list,trojan" ;;
+                # 每次加入前去重：已选过的协议不再追加（如 j,j,k 只算一次）
+                i) case ",$_ws_list," in *,vmess,*) : ;; *) _ws_list="$_ws_list,vmess" ;; esac ;;
+                j) case ",$_ws_list," in *,vless,*) : ;; *) _ws_list="$_ws_list,vless" ;; esac ;;
+                k) case ",$_ws_list," in *,trojan,*) : ;; *) _ws_list="$_ws_list,trojan" ;; esac ;;
             esac
         done
         _ws_list="${_ws_list#,}"
@@ -7214,9 +7241,16 @@ attach_socks5_proxy() {
      else
          _letters_all=""
          for _entry in "${_protos[@]}"; do _letters_all="$_letters_all ${_entry%%:*}"; done
+         # 展开 a=全选：用「已安装协议字母」整体替换，丢掉 a 本身，避免把 a 当待附着项误报“跳过”
          for _n in $_attach_input; do
-             [ "$_n" = "a" ] && { _attach_input="$_attach_input $_letters_all"; break; }
+             [ "$_n" = "a" ] && { _attach_input="$_letters_all"; break; }
          done
+         # 去重输入字母，防止同一协议被写两遍
+         local _dedup="" _nn
+         for _nn in $_attach_input; do
+             case " $_dedup " in *" $_nn "*) : ;; *) _dedup="$_dedup $_nn" ;; esac
+         done
+         _attach_input="$_dedup"
          _failed=()
          for _n in $_attach_input; do
              _p=""
