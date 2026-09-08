@@ -32,7 +32,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="2.0.34(2026-09-08)"
+VERSION="2.0.3(2026-09-08)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -3766,6 +3766,8 @@ ins() {
     # 国家/城市：geo_get_ip 返回如 "日本, 东京"，命中 geo 缓存则无网络开销
     [ -n "$_exit_ip" ] && _exit_region="$(geo_get_ip "$_exit_ip")"
     [ -n "$_exit_region" ] && _exit_region=" ($_exit_region)"
+    # 无交互安装才打印「安装参数」日志（交互式已通过菜单逐项展示值，这里只展示接收到的环境变量，不影响流程）
+    if [ "${_INTERACTIVE_MODE:-0}" != "1" ]; then
     green ""
     green "========= 安装参数 ========="
     # ---- 基础 ----
@@ -3850,6 +3852,7 @@ ins() {
     green "  节点名称前缀: ${name:-跳过}"
     green "============================"
     echo
+    fi
     # =====================================================
     # 1. 安装并启动 sing-box
     # =====================================================
@@ -5288,6 +5291,7 @@ query_ip_region() {
 
 menu_collect_install() {
     local _ans _ch _sel _has_all _has_vmess _has_trojan
+    export _INTERACTIVE_MODE=1  # 标记：走交互式菜单安装（供 ins() 区分，无交互时「安装参数」日志才打印）
 
     echo ""
     purple "===== 日志调试 ====="
@@ -7158,8 +7162,13 @@ add_socks5_proxy() {
         fi
     fi
 
+    # 兼容 URL 末尾斜杠/路径/查询：socks/http 出站只认 host:port，去掉多余部分（如 socks5://1.2.3.4:7928/ → 1.2.3.4:7928）
+    _host_port="${_host_port%%/*}"
+    _host_port="${_host_port%%\?*}"
     _server="${_host_port%%:*}"; _port="${_host_port##*:}"
-    [ -z "$_server" ] || [ -z "$_port" ] && { red "格式错误：缺少ip或端口"; menu_pause; return; }
+    if [ -z "$_server" ] || [ -z "$_port" ] || ! [[ "$_port" =~ ^[0-9]+$ ]]; then
+        red "格式错误：缺少 IP 或端口非法（${_host_port}）"; menu_pause; return
+    fi
 
     [[ "$_proto" == "socks" || "$_proto" == "socks5" ]] && _check_proto="socks5" || _check_proto="$_proto"
 

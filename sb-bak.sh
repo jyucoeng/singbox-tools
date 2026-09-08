@@ -14,6 +14,13 @@ if [ -z "${BASH_VERSION}" ]; then
 fi
 
 
+# 必须以 root 运行：本脚本会写 /root/doraemon、/etc/systemd、(openrc) init.d、/etc/iptables、
+# /etc/nginx 等系统目录，非 root 会静默半失败。到执行前尽早拦截。
+if [ "$(id -u)" -ne 0 ]; then
+    echo "❌ 本脚本需要 root 权限运行，请使用 sudo 或切到 root 用户后重试" >&2
+    exit 1
+fi
+
 export LANG=en_US.UTF-8
 
 # ================== 文件夹路径配置 ==================
@@ -25,7 +32,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="1.0.25(2026-08-25)"
+VERSION="2.0.2(2026-09-07)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -37,9 +44,12 @@ export any_sni=${any_sni:-"www.apple.com"}  # Default SNI for anytls protocol
 
 # Environment variables for ports and other settings
 export uuid=${uuid:-''}
-export port_vm_ws=${vmpt:-''}
-export port_vl_ws=${vlpt:-''}
-export port_tr=${trpt:-''}
+# ⚠️ Argo 三协议（vmess/trojan/vless）由 argo=vmess/trojan/vless 决定启用，
+#    本地回源端口不接受外部指定：旧变量 trpt/vmpt/vlpt 已彻底废弃（不再读取），
+#    端口一律由脚本随机分配（或复用已落盘 port_* 文件），避免 NAT/端口冲突问题。
+export port_vm_ws=''
+export port_vl_ws=''
+export port_tr=''
 export port_hy2=${hypt:-''}
 export port_vlr=${vlrt:-''}
 export port_tu=${tupt:-''}
@@ -47,12 +57,21 @@ export port_any=${anypt:-''}
 export port_socks5=${socks5pt:-''}
 export socks5_username=${socks5_username:-''}
 export socks5_password=${socks5_password:-''}
+export socks5_wl_flag=${socks5_wl_flag:-''}  # socks5 IP白名单开关: true/1=开启, 空/其他=关闭(默认)
+export socks5_ips=${socks5_ips:-''}      # socks5 IP白名单列表, 逗号分隔 (如 "1.2.3.4,5.6.7.0/24")
 
 # 获取到的IP和出口ip不一样的时候，优先使用出口ip也就是out_ip
 export out_ip=${out_ip:-''}
 
 # Argo 相关环境变量
-export argo=${argo:-''}
+# argo 取值：vmess / vless / trojan（三选一），不传=不启用 Argo
+# 外部传入值统一转小写；旧值 vmpt/trpt/vlpt 已废弃，外界传入会被判非法
+# ⚠️ 合法校验只作用于“安装/覆盖安装(ins/rep)”时外界传入的 argo；
+#    已落盘的配置（vlvm 文件）依然认可，维护命令与菜单不受影响
+_normalize_argo() {
+    printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]'
+}
+export argo="$(_normalize_argo "${argo:-}")"
 export ARGO_DOMAIN=${agn:-''}
 export ARGO_AUTH=${agk:-''}
 export ippz=${ippz:-''}
@@ -61,6 +80,10 @@ export name=${name:-''}
 # 默认端口
 readonly NGINX_DEFAULT_PORT=8080
 readonly ARGO_DEFAULT_PORT=8001
+
+# iptables/ip6tables 规则标记常量（用于精确识别本脚本添加的防火墙规则）
+readonly IPTABLES_COMMENT_SINGBOX="doraemon_singbox_rule"   # 非socks5协议 + 无白名单时的socks5
+readonly IPTABLES_COMMENT_SOCKS5="socks5_rule"              # 有白名单时的socks5
 
 #
 export nginx_pt=${nginx_pt:-$NGINX_DEFAULT_PORT} # 订阅服务端口（Nginx）
@@ -82,7 +105,10 @@ cdn_pt="${cdn_pt:-443}"
 vl_sni_pt="${vl_sni_pt:-443}"
 
 v46url="https://icanhazip.com"
-SCRIPT_URL="https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb-bak.sh"
+# wrapper 在线自拉脚本地址（默认最新 main 分支；可用 SB_SCRIPT_URL 覆盖，如自建镜像）。
+# 不固定 commit SHA（避免每次发布都去查 SHA）；由 wrapper 内在的内容/版本校验来
+# 发现 CDN 缓存或异常内容（详见 gen_online_wrapper）。
+SCRIPT_URL="${SB_SCRIPT_URL:-https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb-bak.sh}"
 
 CN_BING="www.bing.com"
 
@@ -143,25 +169,18 @@ get_subscribe_flag() {
 is_yes() { [ "${1:-}" = "yes" ]; }
 
 # 这些变量是你脚本外部用来“开启协议”的标记：
-# trpt / hypt / vmpt / vlpt / vlrt / tupt / anypt / socks5pt
+# hypt / vlrt / tupt / anypt / socks5pt
 # 只要标记存在，就启用对应协议
-if [ -n "${trpt+x}" ]; then
-    trp=yes
-    vmag=yes
-fi
+# ⚠️ vmess/trojan/vless 这三个协议完全由 argo=vmess/trojan/vless 决定，
+#    旧变量 trpt/vmpt/vlpt 已彻底废弃（脚本不再读取），本地回源端口由脚本随机/复用文件
+case "${argo:-}" in
+    trojan) trp=yes;  vmag=yes ;;
+    vmess)  vmp=yes;  vmag=yes ;;
+    vless)  vlp=yes;  vmag=yes ;;
+esac
 
 if [ -n "${hypt+x}" ]; then
     hyp=yes
-fi
-
-if [ -n "${vmpt+x}" ]; then
-    vmp=yes
-    vmag=yes
-fi
-
-if [ -n "${vlpt+x}" ]; then
-    vlp=yes
-    vmag=yes
 fi
 
 if [ -n "${vlrt+x}" ]; then
@@ -194,7 +213,7 @@ need_argo() {
     if [ -n "${argo:-}" ]; then
         argo_src="env"
         argo_val="$argo"
-        if [ "$argo_val" = "vmpt" ] || [ "$argo_val" = "trpt" ] || [ "$argo_val" = "vlpt" ]; then
+        if [ "$argo_val" = "vmess" ] || [ "$argo_val" = "vless" ] || [ "$argo_val" = "trojan" ]; then
             argo_needed=1
         fi
     elif [ -s "$SINGBOX_FOLDER_PATH/vlvm" ]; then
@@ -218,9 +237,24 @@ need_argo() {
 # 命令参数转小写，供顶层 guard 大小写不敏感比对
 _cmd0="$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')"
 
+# argo 合法性校验：仅安装/覆盖安装(ins/rep)时拦截“外界传入”的非法值；
+# 已落盘配置（vlvm 文件）依然认可，维护命令(list/node/sub/res/del/logs 等)与菜单不校验、不受影响
+if [ "$_cmd0" = "ins" ] || [ "$_cmd0" = "rep" ]; then
+    case "${argo:-}" in
+        ""|vmess|vless|trojan) : ;;
+        *)
+            echo "❌ argo 参数非法：${argo}"
+            echo "   argo 仅支持以下取值之一（vmess / vless / trojan），或留空=不启用 Argo"
+            echo "   （旧值 vmpt/trpt/vlpt 已废弃，外界传入也不再支持）"
+            exit 1
+            ;;
+    esac
+fi
+
 # 无参数或 menu 命令（交互式菜单）时跳过“必须设置协议变量”的守卫
 if [ -n "$_cmd0" ] && [ "$_cmd0" != "menu" ]; then
-    if pgrep -f 'sing-box' > /dev/null 2>&1; then
+    # 收窄为仅匹配本脚本安装路径的 sing-box 进程，避免误判系统中其他 sing-box
+    if pgrep -f "$SINGBOX_FOLDER_PATH/sing-box" > /dev/null 2>&1; then
         # 已安装
         if [ "$_cmd0" = "rep" ]; then
             any_proto_enabled || {
@@ -229,13 +263,16 @@ if [ -n "$_cmd0" ] && [ "$_cmd0" != "menu" ]; then
             }
         fi
     else
-        # 未安装
-        if [ "$_cmd0" != "del" ]; then
-            any_proto_enabled || {
-                echo "提示：未安装脚本，请在脚本前至少设置一个协议变量哦，再见！🎯"
-                exit 1
-            }
-        fi
+        # 未安装：仅安装/重装类命令（ins/rep）强制要求至少一个协议变量；
+        # list/sub/node/rt/logs 等维护命令不受影响（未安装时各命令自会给出相应提示）
+        case "$_cmd0" in
+            ins | rep)
+                any_proto_enabled || {
+                    echo "提示：未安装脚本，请在脚本前至少设置一个协议变量哦，再见！🎯"
+                    exit 1
+                }
+                ;;
+        esac
     fi
 fi
 
@@ -398,7 +435,7 @@ install_deps() {
             psmisc
             coreutils
             ca-certificates
-            vim-common # 提供 xxd（大多数 Debian/Ubuntu）
+            xxd vim-common # xxd：Debian 12+ 为独立包，旧版由 vim-common 提供（装不上自动跳过）
         )
 
         local -a APT_CMD=(
@@ -567,12 +604,15 @@ EOF
 
     # openrc (Alpine)
     if command -v rc-service > /dev/null 2>&1 && command -v rc-update > /dev/null 2>&1; then
-        cat > /etc/init.d/${svc} << EOF
+        # ❗ 用 quoted heredoc（<< 'EOF'）写模板，再用 sed 替换占位符 __SB_PATH__。
+        # 避免 bash 在写文件时把 openrc 脚本内部的 ${name}/$command/$pidfile/$command_args/$?
+        # 当成当前 shell 变量展开（旧版 bug：生成文件变成 --exec ""，start/stop 全部失效）。
+        cat > /etc/init.d/${svc} << 'OPENRC_SB00'
 #!/sbin/openrc-run
 name="singbox service"
 description="singbox service"
-command="$SINGBOX_FOLDER_PATH/sing-box"
-command_args="run -c $SINGBOX_FOLDER_PATH/sb.json"
+command="__SB_PATH__/sing-box"
+command_args="run -c __SB_PATH__/sb.json"
 command_background="yes"
 pidfile="/run/singbox.pid"
 
@@ -582,8 +622,8 @@ depend() {
 }
 
 start_pre() {
-  [ -x $SINGBOX_FOLDER_PATH/sing-box ] || return 1
-  [ -s $SINGBOX_FOLDER_PATH/sb.json ] || return 1
+  [ -x __SB_PATH__/sing-box ] || return 1
+  [ -s __SB_PATH__/sb.json ] || return 1
 }
 
 start() {
@@ -598,7 +638,9 @@ stop() {
   start-stop-daemon --stop --pidfile "$pidfile"
   eend $?
 }
-EOF
+OPENRC_SB00
+
+        sed -i "s|__SB_PATH__|${SINGBOX_FOLDER_PATH}|g" "/etc/init.d/${svc}"
 
         chmod +x /etc/init.d/${svc}
         rc-update add "${svc}" default > /dev/null 2>&1
@@ -636,9 +678,60 @@ disable_autostart() {
 }
 
 # 确保快捷命令
+# 生成"在线拉取脚本"的 wrapper：
+# - 从 SCRIPT_URL（默认最新 main 分支）拉取，不固定 commit SHA（免去每次发布去查 SHA 的维护）
+# - 执行前校验内容含有 VERSION 声明，防止错误页/被篡改内容被当成脚本执行
+# - 版本与生成 wrapper 时不一致时给出提示（用于发现 raw.githubusercontent 的 CDN 缓存 / 拉取异常）
+gen_online_wrapper() {
+    cat << EOF
+#!/usr/bin/env bash
+set -e
+EXPECT_SB_VER="$VERSION"
+SB_FOLDER="$SINGBOX_FOLDER_PATH"
+SB_URL="$SCRIPT_URL"
+
+_fetch() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -Ls --max-time 30 "\$1" 2>/dev/null || true
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO- --timeout=30 "\$1" 2>/dev/null || true
+    else
+        echo "ERROR: need curl or wget to fetch script." >&2
+        echo "Debian/Ubuntu: apt update && apt install -y curl" >&2
+        echo "Alpine: apk add --no-cache curl" >&2
+        exit 1
+    fi
+}
+
+_verify_and_run() {
+    local _body="\$1" _ver=""
+    # 内容自检：必须有 VERSION 声明，防止错误页/被篡改内容被当脚本执行
+    printf '%s\n' "\$_body" | grep -qE '^VERSION="[^"]+"' || {
+        echo "ERROR: 拉取的脚本内容异常（可能被篡改或网络返回错误页），已中止" >&2
+        exit 1
+    }
+    _ver="\$(printf '%s\n' "\$_body" | sed -n 's/^VERSION="\\([^"]*\\)".*/\\1/p' | head -n1)"
+    if [ -n "\$_ver" ] && [ "\$_ver" != "\$EXPECT_SB_VER" ]; then
+        echo "⚠️ 线上脚本版本(\$_ver) ≠ 本机期望(\$EXPECT_SB_VER)，可能是 CDN 缓存或拉取异常，可重跑 sb sc 刷新" >&2
+    fi
+    exec bash <(printf '%s\n' "\$_body") "\$@"
+}
+
+if [ -s "\$SB_FOLDER/sb.sh" ]; then
+    exec bash "\$SB_FOLDER/sb.sh" "\$@"
+fi
+
+_body="\$(_fetch "\$SB_URL")"
+[ -z "\$_body" ] && {
+    echo "ERROR: 无法拉取在线脚本（网络错误），已中止" >&2
+    exit 1
+}
+_verify_and_run "\$_body" "\$@"
+EOF
+}
+
 ensure_singbox_shortcut() {
     local wrapper="$SINGBOX_FOLDER_PATH/singbox"
-    local local_script="$SINGBOX_FOLDER_PATH/sb.sh"
 
     # 软链接目标（按优先级）
     local link_local1="$HOME/.local/bin/singbox"
@@ -648,27 +741,8 @@ ensure_singbox_shortcut() {
 
     mkdir -p "$SINGBOX_FOLDER_PATH" "$HOME/.local/bin" "$HOME/bin"
 
-    # ✅ wrapper：优先本地脚本，否则在线拉取脚本（curl/wget 二选一，兼容 Alpine）
-    cat > "$wrapper" << EOF
-#!/usr/bin/env bash
-set -e
-LOCAL_SCRIPT="\$SINGBOX_FOLDER_PATH/sb.sh"
-
-if [ -s "\$LOCAL_SCRIPT" ]; then
-  exec bash "\$LOCAL_SCRIPT" "\$@"
-else
-  if command -v curl >/dev/null 2>&1; then
-    exec bash <(curl -Ls "$SCRIPT_URL") "\$@"
-  elif command -v wget >/dev/null 2>&1; then
-    exec bash <(wget -qO- "$SCRIPT_URL") "\$@"
-  else
-    echo "ERROR: need curl or wget to fetch script." >&2
-    echo "Debian/Ubuntu: apt update && apt install -y curl" >&2
-    echo "Alpine: apk add --no-cache curl" >&2
-    exit 1
-  fi
-fi
-EOF
+    # ✅ wrapper：优先本地脚本，否则在线拉取脚本（最新分支 + 内容/版本校验）
+    gen_online_wrapper > "$wrapper"
     chmod +x "$wrapper" 2> /dev/null || true
 
     # ✅ 用户级入口（建链接）
@@ -750,27 +824,7 @@ ensure_sb_shortcut() {
     local sbw="$SINGBOX_FOLDER_PATH/sb-cmd"
 
     mkdir -p "$SINGBOX_FOLDER_PATH" 2> /dev/null || true
-    cat > "$sbw" << EOF
-#!/usr/bin/env bash
-set -e
-SB_FOLDER="$SINGBOX_FOLDER_PATH"
-LOCAL_SCRIPT="\$SB_FOLDER/sb.sh"
-
-if [ -s "\$LOCAL_SCRIPT" ]; then
-  exec bash "\$LOCAL_SCRIPT" "\$@"
-else
-  if command -v curl >/dev/null 2>&1; then
-    exec bash <(curl -Ls "$SCRIPT_URL") "\$@"
-  elif command -v wget >/dev/null 2>&1; then
-    exec bash <(wget -qO- "$SCRIPT_URL") "\$@"
-  else
-    echo "ERROR: need curl or wget to fetch script." >&2
-    echo "Debian/Ubuntu: apt update && apt install -y curl" >&2
-    echo "Alpine: apk add --no-cache curl" >&2
-    exit 1
-  fi
-fi
-EOF
+    gen_online_wrapper > "$sbw"
     chmod +x "$sbw" 2> /dev/null || true
 
     local done_link=""
@@ -1025,22 +1079,100 @@ export cdn_pt
 
 # ================== 处理tunnel的json ==================
 
-# 随机端口
+# ================== 端口占用登记（在内存中统一记录，随机端口直接查重） ==================
+# 全局关联数组（哈希）：本脚本运行期间所有已被占用的本地端口 → O(1) 查重，替代线性扫描
+declare -A SB_TAKEN_PORTS=()
+# 全局关联数组（哈希）：系统当前监听的 TCP/UDP 端口快照，由 sb_load_system_ports 一次性加载，
+# 避免 rand_port 每次候选都重新 fork ss -ltn / ss -uln 子进程
+declare -A SB_SYS_PORTS=()
+
+# 登记一个端口为“已占用”（幂等；非法/越界端口忽略）
+sb_take_port() {
+    local p="$1"
+    [ -z "$p" ] && return 0
+    # 只接受有效端口号（1-65535）
+    printf '%s' "$p" | grep -qE '^[0-9]+$' || return 0
+    { [ "$p" -ge 1 ] && [ "$p" -le 65535 ]; } || return 0
+    # 幂等：已登记直接返回
+    [ -n "${SB_TAKEN_PORTS[$p]+x}" ] && return 0
+    SB_TAKEN_PORTS[$p]=1
+    return 0
+}
+
+# 判断端口是否已被本脚本登记占用
+sb_port_taken() {
+    local p="$1"
+    [ -n "$p" ] || return 1
+    # +x：只要键存在即命中（值是 1，此处恒真判断用键是否存在）
+    [ -n "${SB_TAKEN_PORTS[$p]+x}" ]
+}
+
+# 一次性把系统当前监听的 TCP/UDP 端口灌进内存（无 ss 时为空集合，
+# rand_port 自动退化为只查本脚本登记端口，等价于旧行为）
+sb_load_system_ports() {
+    SB_SYS_PORTS=()
+    command -v ss > /dev/null 2>&1 || return 0
+    local _lp
+    while read -r _lp; do
+        [ -z "$_lp" ] && continue
+        # "0.0.0.0:8080" / "[::]:8443" / ":::8001" → 提取纯端口
+        _lp="${_lp##*:}"
+        printf '%s' "$_lp" | grep -qE '^[0-9]+$' || continue
+        SB_SYS_PORTS[$_lp]=1
+    done < <( { ss -ltn 2>/dev/null; ss -uln 2>/dev/null; } | awk '{print $4}' )
+}
+
+# 登记所有已知端口：环境变量 / 服务端口 / 已落盘的端口文件
+# 这样 rand_port 随机时会主动避开，避免与其他协议/服务端口冲突
+sb_take_known_ports() {
+    local p f
+    for p in "$port_vm_ws" "$port_vl_ws" "$port_tr" "$port_hy2" "$port_vlr" "$port_tu" "$port_any" "$port_socks5"; do
+        sb_take_port "$p"
+    done
+    sb_take_port "${nginx_pt:-$NGINX_DEFAULT_PORT}"
+    sb_take_port "${argo_pt:-$ARGO_DEFAULT_PORT}"
+    # 已落盘的端口文件（覆盖安装时这些端口仍会被复用，同样算已占用）
+    for f in "$SINGBOX_FOLDER_PATH"/port_*; do
+        [ -s "$f" ] && sb_take_port "$(tr -d '\r\n' < "$f" 2>/dev/null)"
+    done
+}
+
+# 脚本启动时先登记已知端口 + 加载系统监听端口快照（CLI 无交互模式在此就位）
+sb_take_known_ports
+sb_load_system_ports
+
+# 随机端口（最多重试 40 次）
+# 第一层：内存快照快速跳过（已知占用直接跳过，安装时连续分配，单次 ss 快照足够）
+# 第二层：实时 ss 检测兜底（交互菜单停留时间长，系统端口可能变化，必须保证准确性）
 rand_port() {
-    # 优先用 shuf（最常见）
-    if command -v shuf > /dev/null 2>&1; then
-        shuf -i 10000-65535 -n 1
-        return
-    fi
-
-    # 备选：awk + 随机种子（兼容性很好）
-    if command -v awk > /dev/null 2>&1; then
-        awk -v s="$(od -An -N4 -tu4 /dev/urandom 2>/dev/null)" 'BEGIN{srand(s); print int(10000 + rand()*55535)}'
-        return
-    fi
-
-    # 兜底：用时间戳拼一个（保证有结果）
-    echo $((($(date +%s) % 55535) + 10000))
+    local p="" tries=0
+    while [ "$tries" -lt 40 ]; do
+        # 优先用 shuf（最常见）
+        if command -v shuf > /dev/null 2>&1; then
+            p="$(shuf -i 10000-65535 -n 1)"
+        elif command -v awk > /dev/null 2>&1; then
+            # 备选：awk + 随机种子（兼容性很好）
+            p="$(awk -v s="$(od -An -N4 -tu4 /dev/urandom 2>/dev/null)" 'BEGIN{srand(s); print int(10000 + rand()*55535)}')"
+        else
+            # 兜底：用时间戳拼一个（保证有结果）
+            p=$((($(date +%s) % 55535) + 10000))
+        fi
+        tries=$((tries + 1))
+        # 1) 本脚本已登记端口（其他协议/服务端口，含本次运行内已随机出的端口）→ 内存 O(1)
+        sb_port_taken "$p" && continue
+        # 2) 系统当前已监听端口（内存快照预筛；安装流程集中时命中率高，可跳过 ss fork）
+        [ -n "${SB_SYS_PORTS[$p]+x}" ] && continue
+        # 3) 实时 ss 检测（交互场景停顿久、系统端口可能变化，必须保证准确性）
+        if command -v ss > /dev/null 2>&1; then
+            if { ss -ltn 2>/dev/null; ss -uln 2>/dev/null; } | grep -qE "[:.]${p}[[:space:]]"; then
+                continue
+            fi
+        fi
+        break
+    done
+    # 随机成功后自动登记，避免本次运行内后续随机端口重复
+    sb_take_port "$p"
+    echo "$p"
 }
 
 # 生成 UUID v4
@@ -1090,6 +1222,268 @@ init_socks5_credentials() {
     chmod 600 "$SINGBOX_FOLDER_PATH/socks5_user" "$SINGBOX_FOLDER_PATH/socks5_pass" 2> /dev/null || true
 }
 
+# 初始化 socks5 IP白名单配置：从环境变量或文件加载/保存
+init_socks5_whitelist() {
+    # 优先读文件（已安装场景），否则用环境变量
+    if [ -s "$SINGBOX_FOLDER_PATH/socks5_wl_flag" ]; then
+        socks5_wl_flag=$(cat "$SINGBOX_FOLDER_PATH/socks5_wl_flag" | tr -d '\r\n')
+    fi
+    if [ -s "$SINGBOX_FOLDER_PATH/socks5_ips" ]; then
+        socks5_ips=$(cat "$SINGBOX_FOLDER_PATH/socks5_ips" | tr -d '\r\n')
+    fi
+
+    # 环境变量有值时写入文件（覆盖安装场景）
+    if [ -n "${socks5_wl_flag}" ]; then
+        printf '%s\n' "$socks5_wl_flag" > "$SINGBOX_FOLDER_PATH/socks5_wl_flag"
+    fi
+    if [ -n "${socks5_ips}" ]; then
+        printf '%s\n' "$socks5_ips" > "$SINGBOX_FOLDER_PATH/socks5_ips"
+    fi
+}
+
+# 清除本脚本添加的所有 iptables/ip6tables 规则（通过 --comment 标记识别）
+flush_singbox_iptables_rules() {
+    local _cmt
+    for _cmt in "$IPTABLES_COMMENT_SINGBOX" "$IPTABLES_COMMENT_SOCKS5"; do
+        if command -v iptables > /dev/null 2>&1; then
+            while iptables -L INPUT -n --line-numbers 2>/dev/null | grep -q "$_cmt"; do
+                local _ln
+                _ln=$(iptables -L INPUT -n --line-numbers 2>/dev/null | grep "$_cmt" | head -1 | awk '{print $1}')
+                [ -n "$_ln" ] && iptables -D INPUT "$_ln" 2>/dev/null || break
+            done
+        fi
+        if command -v ip6tables > /dev/null 2>&1; then
+            while ip6tables -L INPUT -n --line-numbers 2>/dev/null | grep -q "$_cmt"; do
+                local _ln
+                _ln=$(ip6tables -L INPUT -n --line-numbers 2>/dev/null | grep "$_cmt" | head -1 | awk '{print $1}')
+                [ -n "$_ln" ] && ip6tables -D INPUT "$_ln" 2>/dev/null || break
+            done
+        fi
+    done
+}
+
+# 保存 iptables/ip6tables 规则（跨重启持久化）
+_save_iptables_rules() {
+    local os_name=""
+    [ -f /etc/os-release ] && os_name=$(awk -F= '/^NAME/{print $2}' /etc/os-release 2>/dev/null)
+    mkdir -p /etc/iptables 2>/dev/null
+    if command -v iptables-save > /dev/null 2>&1; then
+        iptables-save > /etc/iptables/rules.v4 2>/dev/null
+    fi
+    if command -v ip6tables-save > /dev/null 2>&1; then
+        ip6tables-save > /etc/iptables/rules.v6 2>/dev/null
+    fi
+    if [[ "$os_name" == *"Debian"* || "$os_name" == *"Ubuntu"* ]]; then
+        command -v netfilter-persistent > /dev/null 2>&1 && netfilter-persistent save 2>/dev/null
+    fi
+}
+
+# 为所有 sing-box 协议端口添加 iptables ACCEPT 规则（通过 --comment 标记识别）
+# socks5 无白名单时用 doraemon_singbox_rule，有白名单时由 apply_socks5_whitelist 处理
+apply_singbox_iptables_rules() {
+    local sbj="$SINGBOX_FOLDER_PATH/sb.json"
+    [ ! -s "$sbj" ] && return 0
+
+    # 获取 socks5 端口和白名单状态
+    local port_socks5=""
+    local wl_flag=""
+    [ -s "$SINGBOX_FOLDER_PATH/socks5_wl_flag" ] && wl_flag=$(cat "$SINGBOX_FOLDER_PATH/socks5_wl_flag" | tr -d '\r\n')
+    port_socks5=$(jq -r '.inbounds[]? | select(.tag == "socks5-sb") | .listen_port // empty' "$sbj" 2>/dev/null)
+    [ -z "$port_socks5" ] && [ -s "$SINGBOX_FOLDER_PATH/port_socks5" ] && port_socks5=$(cat "$SINGBOX_FOLDER_PATH/port_socks5" | tr -d '\r\n')
+
+    # 获取所有协议端口和标签（排除 socks5）
+    local _ports_tags=""
+    _ports_tags=$(jq -r '.inbounds[]? | select(.tag != "socks5-sb") | "\(.tag)\t\(.listen_port // empty)"' "$sbj" 2>/dev/null | sort -t$'\t' -k2 -un)
+
+    local _has_rule=false
+
+    # 根据协议标签判断需要 TCP 还是 UDP
+    # TCP: vmess/trojan/vless/anytls
+    # UDP: hy2/tuic
+    local OLD_IFS="$IFS"
+    IFS=$'\n'
+    for _pt in $_ports_tags; do
+        [ -z "$_pt" ] && continue
+        local _tag="${_pt%%	*}"
+        local _port="${_pt#*	}"
+        [ -z "$_port" ] && continue
+
+        local _need_tcp=false _need_udp=false
+        case "$_tag" in
+            *hy2*)    _need_udp=true ;;
+            *tuic*)   _need_udp=true ;;
+            *)        _need_tcp=true ;;
+        esac
+
+        if command -v iptables > /dev/null 2>&1; then
+            $_need_tcp && iptables -A INPUT -p tcp --dport "$_port" -j ACCEPT -m comment --comment "$IPTABLES_COMMENT_SINGBOX" 2>/dev/null && _has_rule=true
+            $_need_udp && iptables -A INPUT -p udp --dport "$_port" -j ACCEPT -m comment --comment "$IPTABLES_COMMENT_SINGBOX" 2>/dev/null && _has_rule=true
+        fi
+        if command -v ip6tables > /dev/null 2>&1; then
+            $_need_tcp && ip6tables -A INPUT -p tcp --dport "$_port" -j ACCEPT -m comment --comment "$IPTABLES_COMMENT_SINGBOX" 2>/dev/null && _has_rule=true
+            $_need_udp && ip6tables -A INPUT -p udp --dport "$_port" -j ACCEPT -m comment --comment "$IPTABLES_COMMENT_SINGBOX" 2>/dev/null && _has_rule=true
+        fi
+    done
+    IFS="$OLD_IFS"
+
+    # 为 socks5 端口添加 ACCEPT 规则（仅当无白名单时，socks5 只用 TCP）
+    if [ -n "$port_socks5" ] && ! is_true "$wl_flag"; then
+        if command -v iptables > /dev/null 2>&1; then
+            iptables -A INPUT -p tcp --dport "$port_socks5" -j ACCEPT -m comment --comment "$IPTABLES_COMMENT_SINGBOX" 2>/dev/null && _has_rule=true
+        fi
+        if command -v ip6tables > /dev/null 2>&1; then
+            ip6tables -A INPUT -p tcp --dport "$port_socks5" -j ACCEPT -m comment --comment "$IPTABLES_COMMENT_SINGBOX" 2>/dev/null && _has_rule=true
+        fi
+    fi
+
+    # 为 Nginx 订阅端口添加 ACCEPT 规则（仅当 Nginx 确实启用：订阅开启 或 启用了 Argo）
+    # 注：argo_pt 只被 nginx 监听在 127.0.0.1（回源），走 lo 本机回环，无需公网放行
+    if is_true "$(get_subscribe_flag)" || need_argo; then
+        local port_nginx=""
+        [ -s "$SINGBOX_FOLDER_PATH/nginx_port" ] && port_nginx=$(cat "$SINGBOX_FOLDER_PATH/nginx_port" | tr -d '\r\n')
+        [ -z "$port_nginx" ] && port_nginx="${nginx_pt:-$NGINX_DEFAULT_PORT}"
+        if printf '%s' "$port_nginx" | grep -qE '^[0-9]+$' && [ "$port_nginx" -ge 1 ] && [ "$port_nginx" -le 65535 ]; then
+            if command -v iptables > /dev/null 2>&1; then
+                iptables -A INPUT -p tcp --dport "$port_nginx" -j ACCEPT -m comment --comment "$IPTABLES_COMMENT_SINGBOX" 2>/dev/null && _has_rule=true
+            fi
+            if command -v ip6tables > /dev/null 2>&1; then
+                ip6tables -A INPUT -p tcp --dport "$port_nginx" -j ACCEPT -m comment --comment "$IPTABLES_COMMENT_SINGBOX" 2>/dev/null && _has_rule=true
+            fi
+        fi
+    fi
+
+    $_has_rule && _save_iptables_rules
+}
+
+# 统一刷新本脚本的防火墙规则：先清掉旧的（按 --comment 标记识别），再重新按当前配置添加。
+# 端口修改/协议变更/白名单开关等场景都走这里，避免规则重复堆积或旧规则残留
+refresh_firewall_rules() {
+    flush_singbox_iptables_rules
+    apply_singbox_iptables_rules
+    apply_socks5_whitelist
+    _save_iptables_rules
+}
+
+# 工具函数：校验 IP/CIDR（IPv4 逐段校验 + 掩码范围；IPv6 宽松校验 + 掩码范围）用于 socks5 白名单
+is_valid_cidr() {
+    local c="${1:-}" ip="" mask=""
+    [ -n "$c" ] || return 1
+    # 拒绝嵌入 CR/LF（同上，防跨行绕过）
+    [ "$c" = "$(printf '%s' "$c" | tr -d '\r\n')" ] || return 1
+    # IPv4（支持 CIDR）
+    if printf '%s' "$c" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$'; then
+        if printf '%s' "$c" | grep -q '/'; then
+            ip="${c%%/*}"
+            mask="${c##*/}"
+            [ "$mask" -ge 0 ] && [ "$mask" -le 32 ] 2>/dev/null || return 1
+        else
+            ip="$c"
+        fi
+        local o1 o2 o3 o4
+        IFS='.' read -r o1 o2 o3 o4 <<< "$ip"
+        [ "${o1:-0}" -ge 0 ] && [ "${o1:-0}" -le 255 ] && [ "${o2:-0}" -ge 0 ] && [ "${o2:-0}" -le 255 ] \
+            && [ "${o3:-0}" -ge 0 ] && [ "${o3:-0}" -le 255 ] && [ "${o4:-0}" -ge 0 ] && [ "${o4:-0}" -le 255 ]
+        return $?
+    fi
+    # IPv6（宽松：含冒号即认为 IPv6；若带掩码校验 1-128）
+    if printf '%s' "$c" | grep -q ':'; then
+        if printf '%s' "$c" | grep -q '/'; then
+            mask="${c##*/}"
+            [ "$mask" -ge 0 ] && [ "$mask" -le 128 ] 2>/dev/null
+            return $?
+        fi
+        return 0
+    fi
+    return 1
+}
+
+# 用 iptables 在网络层限制 socks5 端口的访问（仅白名单 IP 可连接）
+# 原理：sing-box route rules 的 source_ip_cidr 匹配的是出站流量源IP（服务器自身），
+#       无法过滤客户端连接，因此改用 iptables 在 TCP 层直接拦截非白名单 IP 的连接
+apply_socks5_whitelist() {
+    local sbj="$SINGBOX_FOLDER_PATH/sb.json"
+
+    # 未启用白名单则跳过
+    local wl_flag=""
+    [ -s "$SINGBOX_FOLDER_PATH/socks5_wl_flag" ] && wl_flag=$(cat "$SINGBOX_FOLDER_PATH/socks5_wl_flag" | tr -d '\r\n')
+    is_true "$wl_flag" || return 0
+
+    # 无白名单 IP 列表则跳过
+    [ ! -s "$SINGBOX_FOLDER_PATH/socks5_ips" ] && return 0
+    local ips_raw
+    ips_raw=$(cat "$SINGBOX_FOLDER_PATH/socks5_ips" | tr -d '\r\n')
+    [ -z "$ips_raw" ] && return 0
+
+    # 获取 socks5 端口
+    local port_socks5=""
+    if [ -s "$sbj" ]; then
+        port_socks5=$(jq -r '.inbounds[]? | select(.tag == "socks5-sb") | .listen_port // empty' "$sbj" 2>/dev/null)
+    fi
+    [ -z "$port_socks5" ] && [ -s "$SINGBOX_FOLDER_PATH/port_socks5" ] && port_socks5=$(cat "$SINGBOX_FOLDER_PATH/port_socks5" | tr -d '\r\n')
+    [ -z "$port_socks5" ] && return 0
+
+    # 逐个 IP 添加 ACCEPT 规则（非法格式跳过并警告）
+    local _has_rule=false _valid_ip=false
+    local OLD_IFS="$IFS"
+    IFS=','
+    for ip in $ips_raw; do
+        IFS="$OLD_IFS"
+        ip=$(printf '%s' "$ip" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        [ -z "$ip" ] && continue
+        if ! is_valid_cidr "$ip"; then
+            red "❗ 白名单 IP 格式非法，已跳过：${ip}"
+            continue
+        fi
+        _valid_ip=true
+
+        if printf '%s' "$ip" | grep -q ':'; then
+            # IPv6 → ip6tables
+            if command -v ip6tables > /dev/null 2>&1; then
+                ip6tables -A INPUT -p tcp --dport "$port_socks5" -s "$ip" -j ACCEPT -m comment --comment "$IPTABLES_COMMENT_SOCKS5" 2>/dev/null && _has_rule=true
+            fi
+        else
+            # IPv4 → iptables
+            if command -v iptables > /dev/null 2>&1; then
+                iptables -A INPUT -p tcp --dport "$port_socks5" -s "$ip" -j ACCEPT -m comment --comment "$IPTABLES_COMMENT_SOCKS5" 2>/dev/null && _has_rule=true
+            fi
+        fi
+    done
+    IFS="$OLD_IFS"
+
+    # 有白名单 ACCEPT 规则才添加默认 DROP（拦截其余所有 IP）
+    if $_has_rule; then
+        if command -v iptables > /dev/null 2>&1; then
+            iptables -A INPUT -p tcp --dport "$port_socks5" -j DROP -m comment --comment "$IPTABLES_COMMENT_SOCKS5" 2>/dev/null
+        fi
+        if command -v ip6tables > /dev/null 2>&1; then
+            ip6tables -A INPUT -p tcp --dport "$port_socks5" -j DROP -m comment --comment "$IPTABLES_COMMENT_SOCKS5" 2>/dev/null
+        fi
+        _save_iptables_rules
+        green "✅ Socks5 IP白名单已生效（仅允许：${ips_raw}）"
+    elif [ "$_valid_ip" = false ]; then
+        red "❗ 白名单配置无效（IP 全部非法），本次未生效，socks5 仍对所有 IP 开放"
+        red "   请修改 $SINGBOX_FOLDER_PATH/socks5_ips 后重试"
+    fi
+}
+
+# 校验域名（用于 Argo 固定隧道 / vless SNI 等，防注入）
+is_valid_domain() {
+    local d="${1:-}"
+    [ -n "$d" ] || return 1
+    # 拒绝嵌入 CR/LF（grep 按行匹配，需先整体校验无换行，防止跨行首行匹配绕过）
+    [ "$d" = "$(printf '%s' "$d" | tr -d '\r\n')" ] || return 1
+    printf '%s' "$d" | grep -qE '^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$'
+}
+
+# 校验 Argo token（cloudflared token 是 base64url + 点分隔，不含空格/引号/换行）
+is_valid_argo_token() {
+    local t="${1:-}"
+    [ -n "$t" ] || return 1
+    # 拒绝嵌入 CR/LF（同 is_valid_domain，防跨行绕过）
+    [ "$t" = "$(printf '%s' "$t" | tr -d '\r\n')" ] || return 1
+    printf '%s' "$t" | grep -qE '^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$'
+}
+
 # 用法：
 # prepare_argo_credentials "<ARGO_AUTH>" "<ARGO_DOMAIN>" "<LOCAL_PORT>"
 prepare_argo_credentials() {
@@ -1105,6 +1499,13 @@ prepare_argo_credentials() {
     if [ -z "$auth" ]; then
         debug_log "【调试】prepare_argo_credentials：auth 为空，跳过（ARGO_MODE=none）"
         return
+    fi
+
+    # ---------- 域名校验（固定隧道必填且必须合法，防止拼进 tunnel.yml/service 造成注入） ----------
+    if [ -n "$domain" ] && ! is_valid_domain "$domain"; then
+        red "❌ Argo 固定隧道域名非法：${domain}"
+        red "   域名只能包含字母/数字/'-'/'.'，如 cdn.example.com"
+        return 1
     fi
 
     # ---------- JSON 凭据 ----------
@@ -1123,6 +1524,7 @@ prepare_argo_credentials() {
         # 写入 tunnel.json
         #❗ 如果 ARGO_AUTH 里的 JSON 含有 \n、\r、\uXXXX 之类，echo 在某些 shell/实现里可能会解释转义，导致 tunnel.json 内容被破坏。 改法：用 printf 更可靠
         printf '%s' "$auth" > "$SINGBOX_FOLDER_PATH/tunnel.json"
+        chmod 600 "$SINGBOX_FOLDER_PATH/tunnel.json" 2>/dev/null || true
         debug_log "【调试】prepare_argo_credentials：tunnel.json 已写入（大小=$(wc -c "$SINGBOX_FOLDER_PATH/tunnel.json" 2> /dev/null | awk '{print $1}') 字节）"
 
         # 提取 TunnelID
@@ -1149,6 +1551,7 @@ ingress:
       noTLSVerify: true
   - service: http_status:404
 EOF
+        chmod 600 "$SINGBOX_FOLDER_PATH/tunnel.yml" 2>/dev/null || true
         debug_log "【调试】prepare_argo_credentials：tunnel.yml 已生成（回源到 localhost:${local_port}，hostname=${domain:-<空>}）"
 
         ARGO_MODE="json"
@@ -1156,6 +1559,11 @@ EOF
 
     else
         # token 模式
+        if ! is_valid_argo_token "$auth"; then
+            red "❌ Argo token 格式非法：只能包含字母/数字/'-'/'_'/'.'，且不允许空格、引号、换行"
+            red "   请确认你粘贴的是完整的 cloudflared token（形如 ey...-xxx.xxx）"
+            return 1
+        fi
         ARGO_MODE="token"
         debug_log "【调试】prepare_argo_credentials：识别为 token 凭据（ARGO_MODE=token）"
     fi
@@ -1296,6 +1704,8 @@ v4v6() {
 # Set up name for nodes and IP version preference
 set_sbyx() {
     if [ -n "$name" ]; then
+        # 清洗 name：去掉 CR/LF，防止换行/控制符污染节点名与订阅
+        name="$(printf '%s' "$name" | tr -d '\r\n')"
         sxname=$name-
         echo "$sxname" > "$SINGBOX_FOLDER_PATH/name"
         echo
@@ -1325,6 +1735,15 @@ set_sbyx() {
         sbyx='ipv6_only'
     else
         sbyx='prefer_ipv6' # Default to prefer IPv6 if neither is available
+    fi
+}
+
+# 计算文件 SHA256（sha256sum 优先，openssl dgst 兜底；均无则返回空）
+file_sha256() {
+    if command -v sha256sum > /dev/null 2>&1; then
+        sha256sum "$1" 2>/dev/null | awk '{print $1}'
+    elif command -v openssl > /dev/null 2>&1; then
+        openssl dgst -sha256 -r "$1" 2>/dev/null | awk '{print $1}'
     fi
 }
 
@@ -1367,6 +1786,32 @@ update_singbox() {
         red "❌ 下载失败：${url}"
         exit 1
     fi
+
+    # 可选校验和（供应链加固）：设置 SINGBOX_ARCHIVE_SHA256=<SHA256> 时强制校验归档文件；
+    # 未设置则走原有内容嗅探 + tar 结构 + 版本号三重校验（上游未发布统一 checksum 清单）
+    if [ -n "${SINGBOX_ARCHIVE_SHA256:-}" ]; then
+        local _computed
+        _computed="$(file_sha256 "$tmp_archive")"
+        if [ -z "$_computed" ] || [ "$_computed" != "$SINGBOX_ARCHIVE_SHA256" ]; then
+            red "❌ sing-box 归档 SHA256 校验失败（期望 ${SINGBOX_ARCHIVE_SHA256}，实际 ${_computed:-无法计算}）"
+            rm -f "$tmp_archive" 2> /dev/null
+            exit 1
+        fi
+        green "✅ sing-box 归档 SHA256 校验通过"
+    fi
+
+    # 完整性校验（运行时）：下载内容不是 HTML 错误页，且是合法 tar.gz 并包含 sing-box 二进制
+    if head -c 256 "$tmp_archive" | grep -qiE '<!DOCTYPE|<html|404: Not Found' 2> /dev/null; then
+        red "❌ 下载内容异常（疑似 HTML 错误页）：${url}"
+        rm -f "$tmp_archive" 2> /dev/null
+        exit 1
+    fi
+    if ! tar -tzf "$tmp_archive" 2> /dev/null | grep -q '/sing-box$'; then
+        red "❌ 下载的压缩包内未找到 sing-box 二进制（可能损坏或被劫持）：${url}"
+        rm -f "$tmp_archive" 2> /dev/null
+        exit 1
+    fi
+
     debug_log "【调试】update_singbox：下载完成，解压中…"
 
     tar -xzf "$tmp_archive" -C /tmp/ 2> /dev/null || {
@@ -1378,7 +1823,13 @@ update_singbox() {
     rm -rf "/tmp/sing-box-${sb_ver}-linux-${cpu}" 2> /dev/null || true
 
     chmod +x "$SINGBOX_FOLDER_PATH/sing-box"
+    # 完整性校验：二进制能运行且版本号必须等于期望版本，防止被替换/损坏
     sbcore=$("$SINGBOX_FOLDER_PATH/sing-box" version 2> /dev/null | head -1 | awk '/version/{print $NF}')
+    if [ -z "$sbcore" ] || [ "$sbcore" != "$sb_ver" ]; then
+        red "❌ sing-box 校验失败：期望 v${sb_ver}，实际 ${sbcore:-无法运行}（二进制可能损坏或被劫持）"
+        rm -f "$SINGBOX_FOLDER_PATH/sing-box" 2> /dev/null
+        exit 1
+    fi
     debug_log "【调试】update_singbox：Sing-box 版本为 $sbcore"
     green "✅  已安装 Sing-box 正式版内核：${sbcore}"
 }
@@ -1391,8 +1842,15 @@ insuuid() {
     if [ -z "$uuid" ] && [ ! -e "$SINGBOX_FOLDER_PATH/uuid" ]; then
         uuid=$("$SINGBOX_FOLDER_PATH/sing-box" generate uuid)
         echo "$uuid" > "$SINGBOX_FOLDER_PATH/uuid"
+        chmod 600 "$SINGBOX_FOLDER_PATH/uuid" 2>/dev/null || true
     elif [ -n "$uuid" ]; then
+        # 防注入：uuid 会拼进 nginx location 路径 / 订阅地址 / sb.json，只允许 [0-9a-fA-F-]
+        if ! printf '%s' "$uuid" | grep -qE '^[0-9a-fA-F-]{1,64}$'; then
+            red "❌ uuid 非法（只允许 0-9a-fA-F- 字符，且不含空白/换行）：${uuid}" >&2
+            exit 1
+        fi
         echo "$uuid" > "$SINGBOX_FOLDER_PATH/uuid"
+        chmod 600 "$SINGBOX_FOLDER_PATH/uuid" 2>/dev/null || true
     fi
     uuid=$(cat "$SINGBOX_FOLDER_PATH/uuid")
     yellow "UUID密码：$uuid"
@@ -1490,9 +1948,11 @@ derive_reality_public_key() {
     # 私钥为空直接失败
     [ -z "$priv" ] && return 1
 
-    # 1) 优先本地推导（openssl + xxd）
-    if command -v xxd > /dev/null 2>&1 && command -v openssl > /dev/null 2>&1; then
-        debug_log "🔐 【调试】 derive_reality_public_key: 使用【本地推导】(openssl + xxd)"
+    # 1) 本地推导（仅依赖 openssl + base64，不依赖 xxd）
+    #    ❗ Debian 12/13 起 /usr/bin/xxd 归属独立 xxd 包，vim-common 不再提供，因此这里不再用 xxd，
+    #      改用 printf 直接构造 PKCS#8 DER + openssl pkey -inform DER，只要有 openssl 就能推导。
+    if command -v openssl > /dev/null 2>&1; then
+        debug_log "🔐 【调试】 derive_reality_public_key: 使用【本地推导】(openssl)"
 
         local tmp_dir="$SINGBOX_FOLDER_PATH/.tmp_reality"
         mkdir -p "$tmp_dir" 2> /dev/null
@@ -1534,73 +1994,52 @@ derive_reality_public_key() {
                     debug_log "❗ 【调试】 derive_reality_public_key: 本地解码后长度不为 32 bytes（实际=${priv_len}）"
                     rm -f "$tmp_dir/_x25519_priv_raw" 2> /dev/null
                 else
-                    # PKCS#8 DER 前缀（X25519 固定头）
-                    local prefix_hex="302e020100300506032b656e04220420"
-                    local priv_hex
-                    priv_hex="$(xxd -p -c 256 "$tmp_dir/_x25519_priv_raw" 2> /dev/null | tr -d '\n')"
+                    # 用 printf 直接拼 PKCS#8 DER（X25519 固定头 + 32 字节原始私钥），
+                    # 替代 xxd 的 hex 双向转换，任何 bash + openssl 环境都可用
+                    {
+                        printf '\x30\x2e\x02\x01\x00\x30\x05\x06\x03\x2b\x65\x6e\x04\x22\x04\x20'
+                        cat "$tmp_dir/_x25519_priv_raw"
+                    } > "$tmp_dir/_x25519_priv_der"
 
-                    if [ -n "$priv_hex" ]; then
-                        printf "%s%s" "$prefix_hex" "$priv_hex" | xxd -r -p > "$tmp_dir/_x25519_priv_der" 2> /dev/null || true
+                    if openssl pkey -inform DER -in "$tmp_dir/_x25519_priv_der" -pubout -outform DER > "$tmp_dir/_x25519_pub_der" 2> /dev/null \
+                        && tail -c 32 "$tmp_dir/_x25519_pub_der" > "$tmp_dir/_x25519_pub_raw" 2> /dev/null; then
 
-                        if openssl pkcs8 -inform DER -in "$tmp_dir/_x25519_priv_der" -nocrypt -out "$tmp_dir/_x25519_priv_pem" 2> /dev/null \
-                            && openssl pkey -in "$tmp_dir/_x25519_priv_pem" -pubout -outform DER > "$tmp_dir/_x25519_pub_der" 2> /dev/null \
-                            && tail -c 32 "$tmp_dir/_x25519_pub_der" > "$tmp_dir/_x25519_pub_raw" 2> /dev/null; then
-
-                            # raw 公钥 -> base64url（无 padding）
-                            if command -v base64 > /dev/null 2>&1; then
-                                pub="$(base64 < "$tmp_dir/_x25519_pub_raw" 2> /dev/null | tr -d '\n' | tr '+/' '-_' | sed -E 's/=+$//')"
-                            elif command -v openssl > /dev/null 2>&1; then
-                                pub="$(openssl base64 -A < "$tmp_dir/_x25519_pub_raw" 2> /dev/null | tr '+/' '-_' | sed -E 's/=+$//')"
-                            fi
-
-                            if [ -n "$pub" ]; then
-                                debug_log "✅ 【调试】 derive_reality_public_key: 本地推导成功"
-
-                                # 清理临时文件（可选）
-                                rm -f "$tmp_dir/_x25519_priv_raw" "$tmp_dir/_x25519_priv_der" "$tmp_dir/_x25519_priv_pem" \
-                                    "$tmp_dir/_x25519_pub_der" "$tmp_dir/_x25519_pub_raw" 2> /dev/null
-
-                                echo "$pub"
-                                return 0
-                            else
-                                debug_log "❗ 【调试】 derive_reality_public_key: 本地推导成功但编码公钥失败（缺少 base64 工具？）"
-                            fi
+                        # raw 公钥 -> base64url（无 padding）
+                        if command -v base64 > /dev/null 2>&1; then
+                            pub="$(base64 < "$tmp_dir/_x25519_pub_raw" 2> /dev/null | tr -d '\n' | tr '+/' '-_' | sed -E 's/=+$//')"
                         else
-                            debug_log "❗ 【调试】 derive_reality_public_key: openssl 推导公钥失败（pkcs8/pkey/pubout）"
+                            pub="$(openssl base64 -A < "$tmp_dir/_x25519_pub_raw" 2> /dev/null | tr '+/' '-_' | sed -E 's/=+$//')"
+                        fi
+
+                        if [ -n "$pub" ]; then
+                            debug_log "✅ 【调试】 derive_reality_public_key: 本地推导成功"
+
+                            # 清理临时文件
+                            rm -f "$tmp_dir/_x25519_priv_raw" "$tmp_dir/_x25519_priv_der" \
+                                "$tmp_dir/_x25519_pub_der" "$tmp_dir/_x25519_pub_raw" 2> /dev/null
+
+                            echo "$pub"
+                            return 0
+                        else
+                            debug_log "❗ 【调试】 derive_reality_public_key: 本地推导成功但编码公钥失败"
                         fi
                     else
-                        debug_log "❗ 【调试】 derive_reality_public_key: xxd 读取私钥失败"
+                        debug_log "❗ 【调试】 derive_reality_public_key: openssl 推导公钥失败（pkey/pubout）"
                     fi
                 fi
             fi
         fi
 
-        debug_log "❗ 【调试】 derive_reality_public_key: 本地推导失败，准备在线兜底"
+        debug_log "❗ 【调试】 derive_reality_public_key: 本地推导失败"
     else
-        debug_log "❗ 【调试】 derive_reality_public_key: 缺少 openssl 或 xxd，本地推导不可用"
+        debug_log "❗ 【调试】 derive_reality_public_key: 缺少 openssl，本地推导不可用"
     fi
 
-    # 2) 在线兜底推导（curl/wget）
-    debug_log "🌐 【调试】 derive_reality_public_key: 使用【在线推导】(realitykey.cloudflare.now.cc)"
-
-    if command -v curl > /dev/null 2>&1; then
-        pub="$(curl -s --max-time 2 "https://realitykey.cloudflare.now.cc/?privateKey=${priv}" \
-            | awk -F '"' '/publicKey/{print $4; exit}')"
-    elif command -v wget > /dev/null 2>&1; then
-        pub="$(wget --no-check-certificate -qO- --tries=3 --timeout=2 "https://realitykey.cloudflare.now.cc/?privateKey=${priv}" \
-            | awk -F '"' '/publicKey/{print $4; exit}')"
-    else
-        debug_log "❗ 【调试】 derive_reality_public_key: curl/wget 都不存在，在线推导不可用"
-        return 1
-    fi
-
-    if [ -n "$pub" ]; then
-        debug_log "✅ 【调试】 derive_reality_public_key: 在线推导成功"
-        echo "$pub"
-        return 0
-    fi
-
-    debug_log "❗ 【调试】 derive_reality_public_key: 在线推导失败（未获取到 publicKey）"
+    # ❗ 安全考虑：不再提供“在线推导”兜底。
+    # 旧版会把 reality 私钥以 query 参数（?privateKey=...）明文发给第三方
+    # （realitykey.cloudflare.now.cc），等于把私钥外发。这里直接返回失败，
+    # 由调用方 init_reality_keypair 回退为生成一套新的 keypair。
+    debug_log "❌ 【调试】 derive_reality_public_key: 本地推导失败，已拒绝在线推导（私钥不外发），返回失败"
     return 1
 }
 
@@ -1669,6 +2108,8 @@ init_reality_keypair() {
                 debug_log "✅ 【调试】 init_reality_keypair: 推导公钥成功（pub=${#pub} chars）"
             else
                 debug_log "❗ 【调试】 init_reality_keypair: 推导公钥失败，将回退为生成新 keypair（这会覆盖 reality_private）"
+                yellow "⚠️ 你传入的 reality_private 无法本地推导出公钥，已改用新生成的 keypair"
+                yellow "   （若希望固定节点，请用下方打印的新值作为 reality_private）"
 
                 # 推导失败：生成一套新的 keypair（回退）
                 local kp
@@ -1766,6 +2207,19 @@ gen_self_signed_cert() {
 }
 
 # Install and configure Sing-box
+
+# ⚠️ sb.json 内含全部协议口令，任何 jq 改写（mv 后权限会退化为新建文件的 umask）都必须重新 chmod 600。
+# 统一走本函数写回：只有 tmp 非空且是合法 JSON 才覆盖，成功后收紧权限。
+# 用法：jq ... "$sbj" > "$tmpj" && sbj_save "$tmpj"
+sbj_save() {
+    local _tmp="${1:-}" _sbj="$SINGBOX_FOLDER_PATH/sb.json"
+    [ -s "$_tmp" ] || return 1
+    jq empty "$_tmp" > /dev/null 2>&1 || return 1
+    mv -f "$_tmp" "$_sbj" || return 1
+    chmod 600 "$_sbj" 2>/dev/null || true
+    return 0
+}
+
 installsb() {
     echo
     echo "=========开始下载/安装Sing-box内核========="
@@ -1795,6 +2249,10 @@ installsb() {
     local sbj="$SINGBOX_FOLDER_PATH/sb.json"
     local tmpj="$SINGBOX_FOLDER_PATH/.sb.tmp"
 
+    # 登记本次安装所有已知端口（环境变量 + 服务端口 + 旧端口文件），
+    # 让后续 rand_port 随机端口避开，防止多个协议随机/显式端口互相冲突
+    sb_take_known_ports
+
     # Initialize JSON with log config (matching index.js generateSingBoxConfig style)
     jq -n --arg logfile "$LOGS_DIR/singbox.log" '{log: {disabled: false, level: "info", timestamp: true, output: $logfile}, inbounds: []}' > "$sbj"
 
@@ -1810,6 +2268,7 @@ installsb() {
         fi
         port_tu=$(cat "$SINGBOX_FOLDER_PATH/port_tu")
         yellow "Tuic端口：$port_tu"
+        debug_log " [调试] Tuic端口已写入文件：$SINGBOX_FOLDER_PATH/port_tu"
 
         jq --arg port "$port_tu" --arg uuid "$uuid" \
             --arg cert "$SINGBOX_FOLDER_PATH/cert.pem" --arg key "$SINGBOX_FOLDER_PATH/private.key" '
@@ -1819,7 +2278,7 @@ installsb() {
                 users: [{uuid: $uuid, password: $uuid}],
                 congestion_control: "bbr",
                 tls: {enabled: true, alpn: ["h3"], certificate_path: $cert, key_path: $key}
-            }]' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
+            }]' "$sbj" > "$tmpj" && sbj_save "$tmpj"
     fi
 
     # 添加hy2协议
@@ -1832,6 +2291,7 @@ installsb() {
         fi
         port_hy2=$(cat "$SINGBOX_FOLDER_PATH/port_hy2")
         yellow "Hysteria2端口：$port_hy2"
+        debug_log " [调试] Hysteria2端口已写入文件：$SINGBOX_FOLDER_PATH/port_hy2"
 
         jq --arg port "$port_hy2" --arg uuid "$uuid" \
             --arg cert "$SINGBOX_FOLDER_PATH/cert.pem" --arg key "$SINGBOX_FOLDER_PATH/private.key" '
@@ -1840,7 +2300,7 @@ installsb() {
                 listen_port: ($port | tonumber),
                 users: [{password: $uuid}],
                 tls: {enabled: true, alpn: ["h3"], certificate_path: $cert, key_path: $key}
-            }]' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
+            }]' "$sbj" > "$tmpj" && sbj_save "$tmpj"
     fi
 
     # 添加trojan协议
@@ -1853,6 +2313,7 @@ installsb() {
         fi
         port_tr=$(cat "$SINGBOX_FOLDER_PATH/port_tr")
         yellow "Trojan端口(Argo本地使用)：$port_tr"
+        debug_log " [调试] Trojan端口已写入文件：$SINGBOX_FOLDER_PATH/port_tr"
 
         jq --arg port "$port_tr" --arg uuid "$uuid" '
             .inbounds += [{
@@ -1860,7 +2321,7 @@ installsb() {
                 listen_port: ($port | tonumber),
                 users: [{password: $uuid}],
                 transport: {type: "ws", path: "/\($uuid)-tr"}
-            }]' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
+            }]' "$sbj" > "$tmpj" && sbj_save "$tmpj"
     fi
 
     # 添加vmess协议
@@ -1873,6 +2334,7 @@ installsb() {
         fi
         port_vm_ws=$(cat "$SINGBOX_FOLDER_PATH/port_vm_ws")
         yellow "Vmess-ws端口 (Argo本地使用)：$port_vm_ws"
+        debug_log " [调试] Vmess-ws端口已写入文件：$SINGBOX_FOLDER_PATH/port_vm_ws"
 
         jq --arg port "$port_vm_ws" --arg uuid "$uuid" '
             .inbounds += [{
@@ -1880,7 +2342,7 @@ installsb() {
                 listen_port: ($port | tonumber),
                 users: [{uuid: $uuid, alterId: 0}],
                 transport: {type: "ws", path: "/\($uuid)-vm"}
-            }]' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
+            }]' "$sbj" > "$tmpj" && sbj_save "$tmpj"
     fi
 
     # 添加vless-ws协议（Argo 本地使用）
@@ -1895,8 +2357,14 @@ installsb() {
             port_vl_ws=$(cat "$SINGBOX_FOLDER_PATH/port_vm_ws")
             echo "$port_vl_ws" > "$SINGBOX_FOLDER_PATH/port_vl_ws"
         fi
+        # 兜底：以上分支都未命中（如旧 port_vm_ws 文件为空）时重新随机，避免端口为空导致 jq 失败
+        if [ -z "$port_vl_ws" ]; then
+            port_vl_ws=$(rand_port)
+            echo "$port_vl_ws" > "$SINGBOX_FOLDER_PATH/port_vl_ws"
+        fi
         port_vl_ws=$(cat "$SINGBOX_FOLDER_PATH/port_vl_ws")
         yellow "Vless-ws端口 (Argo本地使用)：$port_vl_ws"
+        debug_log " [调试] Vless-ws端口已写入文件：$SINGBOX_FOLDER_PATH/port_vl_ws"
 
         jq --arg port "$port_vl_ws" --arg uuid "$uuid" '
             .inbounds += [{
@@ -1904,7 +2372,7 @@ installsb() {
                 listen_port: ($port | tonumber),
                 users: [{uuid: $uuid}],
                 transport: {type: "ws", path: "/\($uuid)-vl"}
-            }]' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
+            }]' "$sbj" > "$tmpj" && sbj_save "$tmpj"
     fi
 
     # 添加vless-reality-vision协议
@@ -1917,9 +2385,11 @@ installsb() {
         fi
         port_vlr=$(cat "$SINGBOX_FOLDER_PATH/port_vlr")
         yellow "VLESS-Reality-Vision端口：$port_vlr"
+        debug_log " [调试] VLESS-Reality-Vision端口已写入文件：$SINGBOX_FOLDER_PATH/port_vlr"
 
         if [ ! -f "$SINGBOX_FOLDER_PATH/reality.key" ]; then
             "$SINGBOX_FOLDER_PATH/sing-box" generate reality-keypair > "$SINGBOX_FOLDER_PATH/reality.key"
+            chmod 600 "$SINGBOX_FOLDER_PATH/reality.key" 2>/dev/null || true
         fi
 
         # ✅ Reality Keypair：只传私钥即可（自动算公钥/或复用文件），节点输出保持一致
@@ -1944,7 +2414,7 @@ installsb() {
                         short_id: [$sid]
                     }
                 }
-            }]' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
+            }]' "$sbj" > "$tmpj" && sbj_save "$tmpj"
     fi
 
     # 添加anytls协议
@@ -1967,6 +2437,7 @@ installsb() {
 
         port_any=$(cat "$SINGBOX_FOLDER_PATH/port_any")
         yellow "AnyTLS端口：$port_any"
+        debug_log " [调试] AnyTLS端口已写入文件：$SINGBOX_FOLDER_PATH/port_any"
 
         # 确保证书存在（如果 hy2/tuic 未启用，anytls 需要自己生成）
         if [ ! -s "$SINGBOX_FOLDER_PATH/cert.pem" ] || [ ! -s "$SINGBOX_FOLDER_PATH/private.key" ]; then
@@ -1981,7 +2452,7 @@ installsb() {
                 listen_port: ($port | tonumber),
                 users: [{password: $uuid}],
                 tls: {enabled: true, server_name: $sni, certificate_path: $cert, key_path: $key}
-            }]' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
+            }]' "$sbj" > "$tmpj" && sbj_save "$tmpj"
     fi
 
     # 添加 socks5 协议
@@ -1996,10 +2467,25 @@ installsb() {
         fi
 
         init_socks5_credentials
+        init_socks5_whitelist
         port_socks5=$(cat "$SINGBOX_FOLDER_PATH/port_socks5")
         yellow "Socks5端口：$port_socks5"
+        debug_log " [调试] Socks5端口已写入文件：$SINGBOX_FOLDER_PATH/port_socks5"
         yellow "Socks5用户名：$socks5_username"
         yellow "Socks5密码：$socks5_password"
+        local _wl_flag_val=""
+        [ -s "$SINGBOX_FOLDER_PATH/socks5_wl_flag" ] && _wl_flag_val=$(cat "$SINGBOX_FOLDER_PATH/socks5_wl_flag" | tr -d '\r\n')
+        if is_true "$_wl_flag_val"; then
+            local _wl_ips=""
+            [ -s "$SINGBOX_FOLDER_PATH/socks5_ips" ] && _wl_ips=$(cat "$SINGBOX_FOLDER_PATH/socks5_ips" | tr -d '\r\n')
+            if [ -n "$_wl_ips" ]; then
+                yellow "Socks5白名单：已开启(防火墙规则)（允许：$_wl_ips）"
+            else
+                yellow "Socks5白名单：已开启（IP列表为空，等同于关闭）"
+            fi
+        else
+            yellow "Socks5白名单：未开启（所有IP均可访问）"
+        fi
 
         jq --arg port "$port_socks5" \
             --arg user "$socks5_username" --arg pass "$socks5_password" '
@@ -2007,57 +2493,21 @@ installsb() {
                 type: "socks", tag: "socks5-sb",  listen: "::",
                 listen_port: ($port | tonumber),
                 users: [{username: $user, password: $pass}]
-            }]' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
+            }]' "$sbj" > "$tmpj" && sbj_save "$tmpj"
     fi
 
     rm -f "$tmpj" 2> /dev/null || true
+
+    # sb.json 内含全部协议口令，收紧权限
+    chmod 600 "$sbj" 2>/dev/null || true
 
     # setup_warp_config   # 大陆外 VPS 不需要 WARP，注释掉
 }
-# Netflix/OpenAI/YouTube 走 WARP 解锁，其余直连 (matching index.js:498-560)
-# 这堆配置只做一件事：Netflix/OpenAI/YouTube 的流量走 WARP 隧道出去（用于解锁区域限制）。去掉后：
-#   - 所有代理协议（tuic/hy2/vless/etc.）照常工作
-#   - 只是 Netflix/OpenAI/YouTube 走直连，不再走 WARP
-#   - 如果你的 VPS 不在受限网络（如国内 VPS 或 Serv00），直连就能访问这些服务，完全不需要这部分。
-setup_warp_config() {
-    local sbj="$SINGBOX_FOLDER_PATH/sb.json"
-    local tmpj="$SINGBOX_FOLDER_PATH/.sb.tmp"
+# Netflix/OpenAI/YouTube 走 WARP 解锁，其余直连
+# ❗ setup_warp_config 已删除（调用点早已被注释掉，大陆外 VPS 不需要 WARP）。
+#    sbbout() 里仍保留对旧 .warp_config 文件的读取逻辑，仅用于兼容历史安装，
+#    该文件现在不会再被生成，因此这段分支实际不生效。
 
-    local need_youtube_warp=false
-    if command -v curl > /dev/null 2>&1; then
-        local yt_test
-        yt_test=$(curl -o /dev/null -m 2 -s -w "%{http_code}" https://www.youtube.com 2> /dev/null)
-        [ "$yt_test" != "200" ] && need_youtube_warp=true
-    fi
-    # 保存检测结果给 sbbout 使用
-    printf '%s\n' "$need_youtube_warp" > "$SINGBOX_FOLDER_PATH/.warp_config"
-
-    jq --argjson need_youtube "$need_youtube_warp" '
-        .endpoints = [{
-            type: "wireguard",
-            tag: "wireguard-out",
-            mtu: 1280,
-            address: ["172.16.0.2/32", "2606:4700:110:8dfe:d141:69bb:6b80:925/128"],
-            private_key: "YFYOAdbw1bKTHlNNi+aEjBM3BO7unuFC5rOkMRAz9XY=",
-            peers: [{
-                address: "engage.cloudflareclient.com",
-                port: 2408,
-                public_key: "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
-                allowed_ips: ["0.0.0.0/0", "::/0"],
-                reserved: [78, 135, 76]
-            }]
-        }]
-        | .route.rule_set = [
-            {tag: "netflix", type: "remote", format: "binary", url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/netflix.srs"},
-            {tag: "openai", type: "remote", format: "binary", url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/openai.srs"}
-        ]
-        | .route.final = "direct"
-        | if $need_youtube then
-            .route.rule_set += [{tag: "youtube", type: "remote", format: "binary", url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/youtube.srs"}]
-          else . end
-    ' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
-    rm -f "$tmpj" 2> /dev/null || true
-}
 #  Generate Sing-box configuration file
 sbbout() {
     if [ -e "$SINGBOX_FOLDER_PATH/sb.json" ]; then
@@ -2084,8 +2534,10 @@ sbbout() {
               else
                 .route.rules = [{action: "sniff"}, {action: "resolve", strategy: $sbyx}]
               end
-        ' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
+        ' "$sbj" > "$tmpj" && sbj_save "$tmpj"
         rm -f "$tmpj" 2> /dev/null || true
+        # sb.json 内含全部协议口令，收紧权限（jq 写 tmp+mv 会重建文件，需重新 chmod）
+        chmod 600 "$sbj" 2>/dev/null || true
 
         # 预创建 singbox.log，确保 sing-box 启动时文件已存在
         : > "$LOGS_DIR/singbox.log" 2>/dev/null
@@ -2099,6 +2551,8 @@ After=network.target
 [Service]
 Type=simple
 NoNewPrivileges=yes
+ExecStartPre=/bin/sh -c '[ -f /etc/iptables/rules.v4 ] && iptables-restore < /etc/iptables/rules.v4 2>/dev/null || true'
+ExecStartPre=/bin/sh -c '[ -f /etc/iptables/rules.v6 ] && ip6tables-restore < /etc/iptables/rules.v6 2>/dev/null || true'
 ExecStart=$SINGBOX_FOLDER_PATH/sing-box run -c $SINGBOX_FOLDER_PATH/sb.json
 StandardOutput=append:$LOGS_DIR/singbox.log
 StandardError=append:$LOGS_DIR/singbox.log
@@ -2122,6 +2576,10 @@ command_args="run -c $SINGBOX_FOLDER_PATH/sb.json"
 command_background=yes
 pidfile="/run/sing-box.pid"
 depend() { need net; }
+start_pre() {
+    [ -f /etc/iptables/rules.v4 ] && iptables-restore < /etc/iptables/rules.v4 2>/dev/null || true
+    [ -f /etc/iptables/rules.v6 ] && ip6tables-restore < /etc/iptables/rules.v6 2>/dev/null || true
+}
 EOF
             chmod +x /etc/init.d/sing-box
             if [ "${DEBUG_FLAG:-0}" = "1" ]; then
@@ -2377,9 +2835,9 @@ nginx_status() {
 
 # 确保 cloudflared 如果需要
 ensure_cloudflared_if_needed() {
-    # ✅ 仅当启用 argo=vmpt/trpt/vlpt 且 vmag 存在时才需要 cloudflared
+    # ✅ 仅当启用 argo=vmess/trojan/vless 且 vmag 存在时才需要 cloudflared
     debug_log "【调试】ensure_cloudflared_if_needed：检查是否需要 cloudflared"
-    if { [ "${argo:-}" != "vmpt" ] && [ "${argo:-}" != "trpt" ] && [ "${argo:-}" != "vlpt" ]; } || [ -z "${vmag:-}" ]; then
+    if { [ "${argo:-}" != "vmess" ] && [ "${argo:-}" != "trojan" ] && [ "${argo:-}" != "vless" ]; } || [ -z "${vmag:-}" ]; then
         debug_log "【调试】ensure_cloudflared_if_needed：未启用 Argo（或未启用 vmess/trojan/vless），跳过 cloudflared 下载/安装"
         purple "ℹ️ 未启用 Argo（或未启用 vmess/trojan/vless），跳过 cloudflared 下载/安装"
         return 0
@@ -2433,8 +2891,34 @@ ensure_cloudflared() {
         return 1
     fi
 
+    # 可选校验和（供应链加固）：设置 CLOUDFLARED_SHA256=<SHA256> 时强制校验下载文件
+    if [ -n "${CLOUDFLARED_SHA256:-}" ]; then
+        local _computed
+        _computed="$(file_sha256 "$out")"
+        if [ -z "$_computed" ] || [ "$_computed" != "$CLOUDFLARED_SHA256" ]; then
+            red "❌ cloudflared SHA256 校验失败（期望 ${CLOUDFLARED_SHA256}，实际 ${_computed:-无法计算}）"
+            rm -f "$out" 2> /dev/null
+            return 1
+        fi
+        green "✅ cloudflared SHA256 校验通过"
+    fi
+
+    # 完整性校验（运行时）：确保不是 HTML 错误页 / 截断文件，且版本可解析
+    if head -c 256 "$out" | grep -qiE '<!DOCTYPE|<html|404: Not Found' 2> /dev/null; then
+        red "❌ 下载内容异常（疑似 HTML 错误页）：$out"
+        rm -f "$out" 2> /dev/null
+        return 1
+    fi
+
     debug_log "【调试】ensure_cloudflared：设置 cloudflared 二进制文件权限"
     chmod +x "$out" || return 1
+
+    # 校验二进制能运行且版本格式正确（cloudflared version 2025.11.1）
+    if ! "$out" --version 2> /dev/null | grep -qE '[0-9]{4}\.[0-9]+\.[0-9]+'; then
+        red "❌ cloudflared 二进制校验失败（无法运行或版本异常），可能下载损坏"
+        rm -f "$out" 2> /dev/null
+        return 1
+    fi
 
     debug_log "【调试】ensure_cloudflared：cloudflared 二进制文件权限设置成功"
     return 0
@@ -2449,6 +2933,12 @@ install_argo_service_systemd() {
     if ! command -v systemctl > /dev/null 2>&1; then
         red "系统未检测到 systemd，跳过 systemd 服务安装！"
         return
+    fi
+
+    # 防注入：token 模式必须通过格式校验才能写进 systemd ExecStart
+    if [ "$mode" != "json" ] && ! is_valid_argo_token "$token"; then
+        red "❌ Argo token 格式非法，已中止写入 systemd 服务（防注入）"
+        return 1
     fi
 
     if [ "$mode" = "json" ]; then
@@ -2489,6 +2979,9 @@ WantedBy=multi-user.target
 EOF
     fi
 
+    # token 模式的服务文件内含 cloudflared token（旧版默认 644 世界可读，任何本地用户可窃取）
+    chmod 600 /etc/systemd/system/argo.service 2>/dev/null || true
+
     systemctl daemon-reload
     systemctl enable argo
     systemctl start argo
@@ -2505,6 +2998,12 @@ install_argo_service_openrc() {
     if ! command -v rc-service > /dev/null 2>&1; then
         red "系统未检测到 openrc，跳过 openrc 服务安装！"
         return
+    fi
+
+    # 防注入：token 会写进 /etc/init.d/argo，由 openrc 当作 shell 脚本执行，必须校验格式
+    if [ "$mode" != "json" ] && ! is_valid_argo_token "$token"; then
+        red "❌ Argo token 格式非法，已中止写入 openrc 服务（防注入）"
+        return 1
     fi
 
     local command_path="$SINGBOX_FOLDER_PATH/cloudflared"
@@ -2528,6 +3027,8 @@ pidfile="/run/argo.pid"
 depend() { need net; }
 EOF
 
+    # token 模式的服务文件内含 cloudflared token，收紧权限再赋可执行（700）
+    chmod 600 /etc/init.d/argo 2>/dev/null || true
     chmod +x /etc/init.d/argo
     if [ "${DEBUG_FLAG:-0}" = "1" ]; then
         rc-update add argo default
@@ -2602,10 +3103,11 @@ wait_and_check_argo() {
             argodomain="$(tail -n1 "$ym_log" 2> /dev/null | tr -d '\r\n')"
         fi
 
-        # 简单校验：必须像域名（含点号）
-        if [ -n "$argodomain" ] && echo "$argodomain" | grep -q '\.'; then
+        # 校验：必须是通过 is_valid_domain 的合法域名（防注入）
+        if [ -n "$argodomain" ] && is_valid_domain "$argodomain"; then
             export ARGO_DOMAIN="$argodomain"
             echo "$ARGO_DOMAIN" > "$ym_log" 2> /dev/null
+            chmod 600 "$ym_log" 2>/dev/null || true
             purple "✅ 固定 Argo 域名：$ARGO_DOMAIN"
             return 0
         fi
@@ -2660,7 +3162,7 @@ post_install_finalize_legacy() {
 ensure_nginx_if_needed() {
     # ✅ 需要 Nginx 的条件：
     # 1) 订阅开启 subscribe=true
-    # 2) 启用 argo（vmpt/trpt/vlpt）
+    # 2) 启用 argo（vmess/trojan/vless；旧值 vmpt/trpt/vlpt 已废弃）
     local need_nginx=false
 
     if is_true "$(get_subscribe_flag)"; then
@@ -2869,37 +3371,39 @@ EOF
 
     # D) 输出本地 IP 地址
     green "=========当前服务器本地IP情况========="
-    printf '%s\n' "=========当前服务器本地IP情况=========" >> "$INSTALL_LOG" 2>/dev/null
+    # 该函数在 list/cip 等维护命令里也会被调用，直写日志需受 INSTALL_LOGGING 控制，
+    # 避免污染"仅保留最近一次安装"的日志内容
+    [ "${INSTALL_LOGGING:-0}" = "1" ] && printf '%s\n' "=========当前服务器本地IP情况=========" >> "$INSTALL_LOG" 2>/dev/null
 
     # 输出 IPv4 地址
     if [ -n "$v4_local" ]; then
         echo "$(white "IPV4地址：")$(yellow "${v4_local}")$(white "(服务器地区：")$(green "${v4dq}")$(white ")")"
-        printf '%s\n' "IPV4地址：${v4_local}(服务器地区：${v4dq})" >> "$INSTALL_LOG" 2>/dev/null
+        [ "${INSTALL_LOGGING:-0}" = "1" ] && printf '%s\n' "IPV4地址：${v4_local}(服务器地区：${v4dq})" >> "$INSTALL_LOG" 2>/dev/null
     else
         echo "$(white "IPV4地址：")$(yellow "无IPV4")"
-        printf '%s\n' "IPV4地址：无IPV4" >> "$INSTALL_LOG" 2>/dev/null
+        [ "${INSTALL_LOGGING:-0}" = "1" ] && printf '%s\n' "IPV4地址：无IPV4" >> "$INSTALL_LOG" 2>/dev/null
     fi
 
     # 输出 IPv6 地址
     if [ -n "$v6_local" ]; then
         echo "$(white "IPV6地址：")$(purple "${v6_local}")$(white "(服务器地区：")$(green "${v6dq}")$(white ")")"
-        printf '%s\n' "IPV6地址：${v6_local}(服务器地区：${v6dq})" >> "$INSTALL_LOG" 2>/dev/null
+        [ "${INSTALL_LOGGING:-0}" = "1" ] && printf '%s\n' "IPV6地址：${v6_local}(服务器地区：${v6dq})" >> "$INSTALL_LOG" 2>/dev/null
     else
         echo "$(white "IPV6地址：")$(purple "无IPV6")"
-        printf '%s\n' "IPV6地址：无IPV6" >> "$INSTALL_LOG" 2>/dev/null
+        [ "${INSTALL_LOGGING:-0}" = "1" ] && printf '%s\n' "IPV6地址：无IPV6" >> "$INSTALL_LOG" 2>/dev/null
     fi
 
     echo
-    printf '%s\n' "" >> "$INSTALL_LOG" 2>/dev/null
+    [ "${INSTALL_LOGGING:-0}" = "1" ] && printf '%s\n' "" >> "$INSTALL_LOG" 2>/dev/null
 
     # E) 打印"当前使用的IP"：
     if [ -n "$v4_local" ] && [ "$v4_local" = "$current_server_ip" ]; then
         echo "$(green "✅ 当前使用的IP：")$(yellow "${v4_local}")$(white " (IPv4)")"
-        printf '%s\n' "✅ 当前使用的IP：${v4_local} (IPv4)" >> "$INSTALL_LOG" 2>/dev/null
+        [ "${INSTALL_LOGGING:-0}" = "1" ] && printf '%s\n' "✅ 当前使用的IP：${v4_local} (IPv4)" >> "$INSTALL_LOG" 2>/dev/null
     fi
     if [ -n "$v6_local" ] && [ "$v6_local" = "$current_server_ip" ]; then
         echo "$(green "✅ 当前使用的IP：")$(purple "${v6_local}")$(white " (IPv6)")"
-        printf '%s\n' "✅ 当前使用的IP：${v6_local} (IPv6)" >> "$INSTALL_LOG" 2>/dev/null
+        [ "${INSTALL_LOGGING:-0}" = "1" ] && printf '%s\n' "✅ 当前使用的IP：${v6_local} (IPv6)" >> "$INSTALL_LOG" 2>/dev/null
     fi
 
     # F) 如果出口 IP 发生变化，打印变更提示
@@ -2931,6 +3435,7 @@ ins() {
     installsb
     set_sbyx
     sbbout
+    refresh_firewall_rules
 
     # 把ip写入server_ip
     write_server_ip
@@ -2947,6 +3452,7 @@ ins() {
         debug_log "【调试】已进入 Argo 启动分支（argo=${argo}，vmag=${vmag}）"
         echo
         echo "=========启用Cloudflared-argo内核========="
+        yellow "Argo协议: ${argo}"
 
         # ✅ 3.1 仅在需要 argo 时才确保 cloudflared 存在
         ensure_cloudflared_if_needed || {
@@ -2961,11 +3467,11 @@ ins() {
         echo "$argoport" > "$SINGBOX_FOLDER_PATH/argoport"
 
         # 仍然记录 Argo 输出节点类型（给 cip 用）
-        if [ "$argo" = "vmpt" ]; then
+        if [ "$argo" = "vmess" ]; then
             echo "Vmess" > "$SINGBOX_FOLDER_PATH/vlvm"
-        elif [ "$argo" = "trpt" ]; then
+        elif [ "$argo" = "trojan" ]; then
             echo "Trojan" > "$SINGBOX_FOLDER_PATH/vlvm"
-        elif [ "$argo" = "vlpt" ]; then
+        elif [ "$argo" = "vless" ]; then
             echo "Vless" > "$SINGBOX_FOLDER_PATH/vlvm"
         fi
 
@@ -3006,8 +3512,9 @@ ins() {
 
             # 与原版一致：固定 Argo 域名直接落盘
             echo "$ARGO_DOMAIN" > "$SINGBOX_FOLDER_PATH/argo_domain"
+            chmod 600 "$SINGBOX_FOLDER_PATH/argo_domain" 2>/dev/null || true
             # token 模式下才会有 sbargotoken
-            [ "$ARGO_MODE" = "token" ] && echo "$ARGO_AUTH" > "$SINGBOX_FOLDER_PATH/sbargotoken"
+            [ "$ARGO_MODE" = "token" ] && { echo "$ARGO_AUTH" > "$SINGBOX_FOLDER_PATH/sbargotoken"; chmod 600 "$SINGBOX_FOLDER_PATH/sbargotoken" 2>/dev/null || true; }
         else
             # 临时 Argo（trycloudflare）
             argo_tunnel_type="临时"
@@ -3052,110 +3559,6 @@ write2SingboxFolders() {
 
     # ✅ 订阅开关落盘（默认 false）
     echo "${subscribe}" > "$SINGBOX_FOLDER_PATH/subscribe"
-}
-
-# ⚠️ DEPRECATED（已废弃）：此函数保留供参考/兼容，不再被 cip() 与服务管理菜单调用。
-# 状态显示已统一改用 menu_status_block（主菜单顶部同款：●运行中/■已停止/○未安装/○未启用 + 版本 + 端口）
-singbox_status() {
-    purple "=========当前内核运行状态========="
-
-    debug_log "【调试】进入 singbox_status() 函数，开始判断 sing-box 状态"
-    # 1) sing-box
-    if pgrep -f "$SINGBOX_FOLDER_PATH/sing-box" > /dev/null 2>&1; then
-
-        # sing-box version 1.13.14  → 匹配 1.13.14（只取第一行）
-        local singbox_version
-        singbox_version=$("$SINGBOX_FOLDER_PATH/sing-box" version 2> /dev/null | head -1 | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')
-        echo "Sing-box (版本V${singbox_version:-unknown})：✅ $(green "运行中")"
-    else
-        echo "Sing-box：❌ $(red "未运行")"
-    fi
-
-    # ========= 统一判断：订阅/Argo/Nginx 是否“需要” =========
-    local subscribe_flag argo_needed nginx_needed
-    subscribe_flag="$(get_subscribe_flag)"
-
-    # Argo 是否需要（用 need_argo 函数）
-    argo_needed=false
-    if need_argo; then
-        argo_needed=true
-    fi
-
-    # Nginx 是否需要：订阅开启 或 需要 Argo
-    nginx_needed=false
-    if is_true "$subscribe_flag" || $argo_needed; then
-        nginx_needed=true
-    fi
-
-    debug_log "【调试】进入 singbox_status() 函数，开始判断 cloudflared 状态"
-    # ✅ cloudflared 安装状态（不影响 Argo 是否启用）
-    if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ] || command -v cloudflared > /dev/null 2>&1; then
-        echo "cloudflared：✅ $(green "已安装")"
-    else
-        echo "cloudflared：❌ $(red "未安装")"
-    fi
-
-    # 2) Argo 状态（细分：不需要 / 需要但未运行 / 运行中）
-    if ! $argo_needed; then
-        debug_log "【调试】进入 singbox_status() 函数，当前场景无需 Argo，由于argo_needed=$argo_needed"
-        echo "Argo：✅ $(purple "未启用")（当前场景无需 Argo）"
-    else
-        debug_log "【调试】进入 singbox_status() 函数，开始判断 cloudflared 状态，argo_needed=$argo_needed"
-        if pgrep -f "$SINGBOX_FOLDER_PATH/cloudflared" > /dev/null 2>&1; then
-            # 兼容：cloudflared version 2025.11.1
-            local cloudflared_version
-            cloudflared_version=$("$SINGBOX_FOLDER_PATH/cloudflared" version 2> /dev/null | sed -n 's/.*version \([0-9]\{4\}\.[0-9]\+\.[0-9]\+\).*/\1/p')
-            echo "cloudflared Argo (版本V${cloudflared_version:-unknown})：✅ $(green "运行中")"
-        else
-            echo "Argo：❌ 未运行（已启用 Argo）"
-            yellow "❗ 已启用 Argo，但 cloudflared 未运行"
-
-        fi
-    fi
-
-    # 3) Nginx + subscribe 状态（细分：不需要 / 未安装 / 未运行 / 运行中）
-    debug_log "【调试】进入 singbox_status() 函数，开始判断 Nginx 状态"
-    local nginx_port sub_desc
-    nginx_port="${nginx_pt:-$NGINX_DEFAULT_PORT}"
-    [ -s "$SINGBOX_FOLDER_PATH/nginx_port" ] && nginx_port="$(cat "$SINGBOX_FOLDER_PATH/nginx_port" 2> /dev/null)"
-
-    if is_true "$subscribe_flag"; then
-        sub_desc="✅ $(green "订阅已开启")"
-    else
-        sub_desc="⛔ $(purple "订阅未开启")"
-    fi
-
-    # ✅ 不需要 nginx 的场景：明确说明（既不安装也不启动）
-    if ! $nginx_needed; then
-        echo "Nginx：✅ $(purple "未安装/未启用")（符合 subscribe=false 且未启用 Argo）"
-        return 0
-    fi
-
-    debug_log "【调试】进入 singbox_status() 函数，开始判断 Nginx 状态，进一步区分未安装/未运行/运行中,nginx_needed=$nginx_needed"
-    # ✅ 需要 nginx：进一步区分未安装/未运行/运行中
-    if ! command -v nginx > /dev/null 2>&1; then
-        echo "Nginx：❌ $(red "未安装")（${sub_desc}，端口：${nginx_port}）"
-        if is_true "$subscribe_flag"; then
-            yellow "❗ 订阅已开启，但系统未安装 Nginx：请重新执行安装或手动安装 nginx"
-        fi
-        if $argo_needed; then
-            yellow "❗ 已启用 Argo，但系统未安装 Nginx：cloudflared 回源将无法工作"
-        fi
-        return 0
-    fi
-
-    # Check if Nginx is running
-    if ps aux | grep -v grep | grep -q nginx; then
-        echo "Nginx：✅ $(green "运行中")（${sub_desc}，端口：${nginx_port}）"
-    else
-        echo "Nginx：❌ $(red "未运行")（${sub_desc}，端口：${nginx_port}）"
-        if is_true "$subscribe_flag"; then
-            yellow "❗ 订阅已开启，但 Nginx 未运行：请重启 nginx"
-        fi
-        if $argo_needed; then
-            yellow "❗ 已启用 Argo，但 Nginx 未运行：cloudflared 回源将无法工作"
-        fi
-    fi
 }
 
 # ================== 订阅：生成订阅内容 ==================
@@ -3258,6 +3661,9 @@ show_sub_url() {
         server_ip=$(add_ipv6_brackets "$server_ip") # 确保 IPv6 地址加上中括号
     fi
 
+    # ❗ 安全提示：无 Argo 时订阅只能走明文 HTTP，会暴露订阅 URL（内含所有节点口令）
+    #    只应在可信网络使用；如需公网安全订阅请启用固定/临时 Argo（https）或关闭订阅
+    yellow "⚠️ 订阅走明文 HTTP，且订阅 URL 内含全部节点口令，请勿在不可信网络分享/抓包"
     echo "http://${server_ip}:${port}/sub/${sub_uuid}"
 }
 
@@ -3285,9 +3691,12 @@ print_reality_key() {
 
 append_jh() {
     # 只写纯文本到聚合文件，禁止任何颜色码污染订阅
-    # 用 echo -e 是为了支持变量里自带的 \n 换行
-    echo -e "$1" >> "$SINGBOX_FOLDER_PATH/jh.txt"
+    # ❗ 用 printf '%s\n' 而非 echo -e：防止节点名/域名里带 \n、\x.. 时被解释成转义注入订阅内容
+    printf '%s\n' "$1" >> "$SINGBOX_FOLDER_PATH/jh.txt"
 }
+
+# 节点名称片段统一做 URL 编码（防空格/#/?/& 等特殊字符破坏链接，同时防换行污染订阅）
+node_frag() { url_encode_component "$1"; }
 
 url_encode_component() {
     local s="${1:-}"
@@ -3449,7 +3858,8 @@ regenerate_links_and_sub() {
     rm -rf "$SINGBOX_FOLDER_PATH/jh.txt"
     uuid=$(cat "$SINGBOX_FOLDER_PATH/uuid")
     server_ip=$(cat "$SINGBOX_FOLDER_PATH/server_ip" 2> /dev/null)
-    sxname=$(cat "$SINGBOX_FOLDER_PATH/name" 2> /dev/null)
+    # 清洗 name（去掉 CR/LF，防跨行注入订阅）
+    sxname=$(cat "$SINGBOX_FOLDER_PATH/name" 2> /dev/null | tr -d '\r\n')
 
     echo "*********************************************************"
     purple "Singbox脚本输出节点配置如下："
@@ -3459,7 +3869,7 @@ regenerate_links_and_sub() {
         port_hy2=$(cat "$SINGBOX_FOLDER_PATH/port_hy2")
         hy_sni=$(cat "$SINGBOX_FOLDER_PATH/hy_sni")
         SHA256_hy2=$(openssl x509 -in "$SINGBOX_FOLDER_PATH/cert.pem" -outform DER 2>/dev/null | sha256sum | awk '{print $1}')
-        hy2_link="hysteria2://$uuid@$server_ip:$port_hy2/?sni=${hy_sni}&insecure=1&pinSHA256=${SHA256_hy2}&alpn=h3&obfs=none#${sxname}hy2-$hostname"
+        hy2_link="hysteria2://$uuid@$server_ip:$port_hy2/?sni=${hy_sni}&insecure=1&pinSHA256=${SHA256_hy2}&alpn=h3&obfs=none#$(node_frag "${sxname}hy2-${hostname}")"
         yellow "🎯【 Hysteria2 】(直连协议)"
         green "$hy2_link"
         append_jh "$hy2_link"
@@ -3472,7 +3882,7 @@ regenerate_links_and_sub() {
         tu_sni=$(cat "$SINGBOX_FOLDER_PATH/tu_sni")
         password=$uuid
 
-        tuic_link="tuic://${uuid}:${password}@${server_ip}:${port_tu}?sni=${tu_sni}&congestion_control=bbr&security=tls&udp_relay_mode=native&alpn=h3&allow_insecure=1#${sxname}tuic-$hostname"
+        tuic_link="tuic://${uuid}:${password}@${server_ip}:${port_tu}?sni=${tu_sni}&congestion_control=bbr&security=tls&udp_relay_mode=native&alpn=h3&allow_insecure=1#$(node_frag "${sxname}tuic-${hostname}")"
         yellow "🎯【 TUIC 】(直连协议)"
         green "$tuic_link"
         append_jh "$tuic_link"
@@ -3487,7 +3897,7 @@ regenerate_links_and_sub() {
 
         debug_log "【调试】regenerate_links_and_sub函数中的short_id,值为:$short_id"
 
-        vless_link="vless://${uuid}@${server_ip}:${port_vlr}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${vl_sni}&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#${sxname}vless-reality-$hostname"
+        vless_link="vless://${uuid}@${server_ip}:${port_vlr}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${vl_sni}&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#$(node_frag "${sxname}vless-reality-${hostname}")"
         yellow "🎯【 VLESS-Reality-Vision 】(直连协议)"
         green "$vless_link"
         append_jh "$vless_link"
@@ -3501,7 +3911,7 @@ regenerate_links_and_sub() {
         port_any=$(cat "$SINGBOX_FOLDER_PATH/port_any")
         any_sni=$(cat "$SINGBOX_FOLDER_PATH/any_sni")
 
-        anytls_link="anytls://${uuid}@${server_ip}:${port_any}?security=tls&sni=${any_sni}&fp=firefox&insecure=1&allowInsecure=1&type=tcp#${sxname}anytls-$hostname"
+        anytls_link="anytls://${uuid}@${server_ip}:${port_any}?security=tls&sni=${any_sni}&fp=firefox&insecure=1&allowInsecure=1&type=tcp#$(node_frag "${sxname}anytls-${hostname}")"
         yellow "🔐【 AnyTLS 】(直连协议)"
         green "$anytls_link"
         append_jh "$anytls_link"
@@ -3522,16 +3932,16 @@ regenerate_links_and_sub() {
         vlvm=$(cat "$SINGBOX_FOLDER_PATH/vlvm" 2> /dev/null)
         uuid=$(cat "$SINGBOX_FOLDER_PATH/uuid")
         if [ "$vlvm" = "Vmess" ]; then
-            vmatls_link1="vmess://$(printf '%s' "{\"v\":\"2\",\"ps\":\"${sxname}vmess-ws-tls-argo-$hostname-${cdn_pt}\",\"add\":\"${cdn_host}\",\"port\":\"${cdn_pt}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":\"$argodomain\",\"path\":\"/${uuid}-vm\",\"tls\":\"tls\",\"sni\":\"$argodomain\"}" | base64 | tr -d '\n\r')"
+            vmatls_link1="vmess://$(printf '%s' "{\"v\":\"2\",\"ps\":$(json_escape_string "${sxname}vmess-ws-tls-argo-${hostname}-${cdn_pt}"),\"add\":$(json_escape_string "${cdn_host}"),\"port\":\"${cdn_pt}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":$(json_escape_string "${argodomain}"),\"path\":\"/${uuid}-vm\",\"tls\":\"tls\",\"sni\":$(json_escape_string "${argodomain}")}" | base64 | tr -d '\n\r')"
 
             vlessws_link1=""
             tratls_link1=""
         elif [ "$vlvm" = "Trojan" ]; then
-            tratls_link1="trojan://${uuid}@${cdn_host}:${cdn_pt}?security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-tr&sni=${argodomain}&fp=chrome#${sxname}trojan-ws-tls-argo-$hostname-${cdn_pt}"
+            tratls_link1="trojan://${uuid}@${cdn_host}:${cdn_pt}?security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-tr&sni=${argodomain}&fp=chrome#$(node_frag "${sxname}trojan-ws-tls-argo-${hostname}-${cdn_pt}")"
             vmatls_link1=""
             vlessws_link1=""
         elif [ "$vlvm" = "Vless" ]; then
-            vlessws_link1="vless://${uuid}@${cdn_host}:${cdn_pt}?encryption=none&security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-vl&sni=${argodomain}&fp=chrome#${sxname}vless-ws-tls-argo-$hostname-${cdn_pt}"
+            vlessws_link1="vless://${uuid}@${cdn_host}:${cdn_pt}?encryption=none&security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-vl&sni=${argodomain}&fp=chrome#$(node_frag "${sxname}vless-ws-tls-argo-${hostname}-${cdn_pt}")"
             vmatls_link1=""
             tratls_link1=""
         fi
@@ -3565,15 +3975,31 @@ regenerate_links_and_sub() {
 
         socks5_user_enc=$(url_encode_component "$socks5_username")
         socks5_pass_enc=$(url_encode_component "$socks5_password")
-        socks5_link="socks5://${socks5_user_enc}:${socks5_pass_enc}@${server_ip}:${port_socks5}#${sxname}socks5-$hostname"
+        socks5_link="socks5://${socks5_user_enc}:${socks5_pass_enc}@${server_ip}:${port_socks5}#$(node_frag "${sxname}socks5-${hostname}")"
         yellow "🧦【 Socks5 】(此协议请不要直接在客户端里直连使用)"
         green "$socks5_link"
+        local _wl_flag_val=""
+        [ -s "$SINGBOX_FOLDER_PATH/socks5_wl_flag" ] && _wl_flag_val=$(cat "$SINGBOX_FOLDER_PATH/socks5_wl_flag" | tr -d '\r\n')
+        if is_true "$_wl_flag_val"; then
+            local _wl_ips_val=""
+            [ -s "$SINGBOX_FOLDER_PATH/socks5_ips" ] && _wl_ips_val=$(cat "$SINGBOX_FOLDER_PATH/socks5_ips" | tr -d '\r\n')
+            if [ -n "$_wl_ips_val" ]; then
+                yellow "   ↳ 入站白名单已开启(防火墙规则)，仅允许: ${_wl_ips_val}"
+            else
+                yellow "   ↳ 入站白名单已开启（IP列表为空，等同于关闭）"
+            fi
+        else
+            yellow "   ↳ 入站白名单未开启，所有IP均可访问"
+        fi
         append_jh " "
         append_jh "$socks5_link"
         echo
     fi
 
     update_subscription_file
+
+    # jh.txt 内含全部节点口令，收紧权限
+    chmod 600 "$SINGBOX_FOLDER_PATH/jh.txt" 2>/dev/null || true
 }
 
 # SNI/端口等配置修改后统一调用：先刷新订阅，最后重启 sing-box 使新配置生效
@@ -3622,11 +4048,14 @@ cleandel() {
 
     # 处理 crontab，兼容 Debian 和 Alpine
     white "  ▸ 清理定时任务..."
-    crontab -l > /tmp/crontab.tmp 2> /dev/null || touch /tmp/crontab.tmp
-    sed -i '/.*singbox.*/d' /tmp/crontab.tmp
-    sed -i '/.*agsb.*/d' /tmp/crontab.tmp
-    crontab /tmp/crontab.tmp > /dev/null 2>&1
-    rm /tmp/crontab.tmp
+    # 用 mktemp 避免固定路径 /tmp/crontab.tmp 被本地用户 symlink 劫持
+    local ct_tmp
+    ct_tmp="$(mktemp /tmp/crontab.XXXXXX 2> /dev/null)" || ct_tmp="/tmp/crontab.tmp.$$"
+    crontab -l > "$ct_tmp" 2> /dev/null || : > "$ct_tmp"
+    sed -i '/.*singbox.*/d' "$ct_tmp"
+    sed -i '/.*agsb.*/d' "$ct_tmp"
+    crontab "$ct_tmp" > /dev/null 2>&1
+    rm -f "$ct_tmp"
 
     # 删除快捷命令（兼容两个名称）
     if [ -d "$HOME/bin/singbox" ]; then
@@ -3666,6 +4095,12 @@ cleandel() {
     # 清理 nginx
     white "  ▸ 清理 Nginx..."
     cleanup_nginx
+
+    # 清理本脚本添加的 iptables/ip6tables 规则
+    white "  ▸ 清理防火墙规则..."
+    flush_singbox_iptables_rules
+    _save_iptables_rules
+    green "  ✓ 防火墙规则已清理"
 
     # 清理文件夹
     white "  ▸ 清理配置文件..."
@@ -3814,7 +4249,10 @@ echo() {
 # 清空旧日志并写入头部
 install_log_begin() {
     mkdir -p "$LOGS_DIR" 2> /dev/null
+    # 安装日志内含 UUID / reality 私钥 / socks5 口令等敏感信息，收紧权限防其他用户读取
+    chmod 700 "$LOGS_DIR" 2>/dev/null || true
     : > "$INSTALL_LOG" 2> /dev/null
+    chmod 600 "$INSTALL_LOG" 2>/dev/null || true
     {
         echo "==================================================="
         echo " Sing-box 脚本安装日志（每次安装覆盖重写）"
@@ -3868,28 +4306,16 @@ install_step() {
 
     debug_log "【调试】安装各种乱七八糟的依赖完成"
 
-    if command -v iptables > /dev/null 2>&1; then
-        setenforce 0 > /dev/null 2>&1
-        iptables -F
-        iptables -P INPUT ACCEPT
-        iptables -P FORWARD ACCEPT
-        iptables -P OUTPUT ACCEPT
+    # ⚠️ SELinux 处理：仅在 SELinux 处于 Enforcing 时才临时禁用它，并明确提示用户（不写入配置文件）
+    if command -v getenforce > /dev/null 2>&1 && [ "$(getenforce 2>/dev/null)" = "Enforcing" ]; then
+        yellow "⚠️ 检测到 SELinux 为 Enforcing，为兼容 sing-box 端口绑定，本脚本将临时执行 setenforce 0"
+        yellow "   （仅本次生效，重启后恢复；如不希望关闭请先自行处理 SELinux 策略）"
+        setenforce 0 > /dev/null 2>&1 || red "⚠️ setenforce 0 执行失败，请手动处理 SELinux，否则端口可能被拦截"
     fi
+    flush_singbox_iptables_rules
 
-    # 检查是否是Debian/Ubuntu系统
-    if [[ "$os_name" == *"Debian"* || "$os_name" == *"Ubuntu"* ]]; then
-        command -v netfilter-persistent > /dev/null 2>&1 && netfilter-persistent save > /dev/null 2>&1
-        mkdir -p /etc/iptables 2> /dev/null
-        command -v iptables-save > /dev/null 2>&1 && iptables-save > /etc/iptables/rules.v4 2> /dev/null
-        debug_print echo "iptables执行开放所有端口 (Debian/Ubuntu)"
-    elif [[ "$os_name" == *"Alpine"* ]]; then
-        # Alpine没有netfilter-persistent，可以直接保存iptables规则
-        mkdir -p /etc/iptables 2> /dev/null
-        command -v iptables-save > /dev/null 2>&1 && iptables-save > /etc/iptables/rules.v4 2> /dev/null
-        debug_print echo "iptables执行开放所有端口 (Alpine)"
-    else
-        echo "不支持此操作系统"
-    fi
+    _save_iptables_rules
+    debug_print echo "覆盖安装：已清除旧防火墙规则并保存当前状态"
     ins
     green "Singbox脚本安装完成！即将打印节点信息……"
     # 显示节点信息 这里的key是一个定值，为了打印私钥
@@ -3927,7 +4353,8 @@ check_port_conflicts_or_exit() {
     fi
 
     # 固定检查协议端口；subscribe=true 时才额外检查 nginx_pt
-    local vars="vmpt vlpt trpt vlrt hypt tupt anypt socks5pt"
+    # 注：vmpt/vlpt/trpt 已彻底废弃（不再读取），不参与端口冲突检查
+    local vars="vlrt hypt tupt anypt socks5pt"
     if $need_nginx; then
         vars="$vars argo_pt nginx_pt"
     fi
@@ -3974,6 +4401,21 @@ check_port_conflicts_or_exit() {
         echo
         exit 1
     fi
+
+    # ⚠️ 系统已监听端口检测（非阻断，仅提示）：ss 可用时，确认端口没被其他进程占用
+    #     本脚本栈自带的 sing-box/cloudflared/nginx 监听不算冲突（rep 覆盖安装前旧实例还在，马上会被清理）
+    if command -v ss > /dev/null 2>&1; then
+        local p_check _tcp _udp
+        for p_check in "${!used[@]}"; do
+            _tcp="$(ss -ltnp 2>/dev/null | grep -E "[:.]${p_check} " | head -n1)"
+            _udp="$(ss -ulnp 2>/dev/null | grep -E "[:.]${p_check} " | head -n1)"
+            [ -z "$_tcp" ] && [ -z "$_udp" ] && continue
+            if [ -n "$_tcp" ] && printf '%s' "$_tcp" | grep -qE 'sing-box|cloudflared|nginx'; then _tcp=""; fi
+            if [ -n "$_udp" ] && printf '%s' "$_udp" | grep -qE 'sing-box|cloudflared|nginx'; then _udp=""; fi
+            [ -z "$_tcp" ] && [ -z "$_udp" ] && continue
+            yellow "⚠️ 端口 ${p_check}（${used[$p_check]}）当前已被其他进程监听，安装后可能无法绑定"
+        done
+    fi
 }
 # ================== 端口冲突检测 END ================
 
@@ -3982,6 +4424,12 @@ check_port_conflicts_or_exit() {
 
 reading() {
     read -r -p "$(yellow "$1")" "$2"
+}
+
+# 静默输入（用于 token / 密码 / 私钥，防终端回显与 shoulder-surfing）
+reading_secret() {
+    read -r -s -p "$(yellow "$1")" "$2"
+    echo >&2
 }
 
 is_installed_sb() {
@@ -4153,19 +4601,25 @@ menu_status_block() {
 # 根据 *pt 环境变量重新推导协议开关与端口变量（交互模式设置环境变量后调用）
 menu_reload_proto_flags() {
     trp=; vmag=; hyp=; vmp=; vlp=; vlr=; tup=; anyp=; socksp=
-    [ -n "${trpt+x}" ] && { trp=yes; vmag=yes; }
     [ -n "${hypt+x}" ] && hyp=yes
-    [ -n "${vmpt+x}" ] && { vmp=yes; vmag=yes; }
-    [ -n "${vlpt+x}" ] && { vlp=yes; vmag=yes; }
     [ -n "${vlrt+x}" ] && vlr=yes
     [ -n "${tupt+x}" ] && tup=yes
     [ -n "${anypt+x}" ] && anyp=yes
     [ -n "${socks5pt+x}" ] && socksp=yes
+    # vmess/trojan/vless 由 argo 驱动（三选一；旧变量 trpt/vmpt/vlpt 已废弃）
+    case "${argo:-}" in
+        trojan) trp=yes; vmag=yes ;;
+        vmess)  vmp=yes; vmag=yes ;;
+        vless)  vlp=yes; vmag=yes ;;
+    esac
     export trp hyp vmp vlp vlr tup anyp socksp vmag
     # 重新绑定端口变量（与文件顶部一致）
-    export port_vm_ws=${vmpt:-''} port_vl_ws=${vlpt:-''} port_tr=${trpt:-''} port_hy2=${hypt:-''} \
+    # 注：vmpt/vlpt/trpt 已彻底废弃（不再读取），端口由脚本随机/复用落盘文件
+    export port_vm_ws='' port_vl_ws='' port_tr='' port_hy2=${hypt:-''} \
            port_vlr=${vlrt:-''} port_tu=${tupt:-''} port_any=${anypt:-''} \
            port_socks5=${socks5pt:-''}
+    # 交互模式端口确定后重新登记，让后续随机端口避开已选定的端口
+    sb_take_known_ports
 }
 
 # 读取端口；空则返回空（表示随机生成）
@@ -4203,7 +4657,12 @@ query_ip_region() {
     local _ip="$1" _json _region _rn _ci
     _region="$(awk -F= -v ip="$_ip" '$1==ip{print $2}' "$GEO_OUT_FILE" 2>/dev/null | tail -n1)"
     [ -n "$_region" ] && { echo "$_region"; return 0; }
-    _json="$(curl -s -m5 "http://ip-api.com/json/${_ip}?fields=status,country,regionName,city" 2>/dev/null)"
+    # 优先 https；免费版 ip-api 可能仅支持 http，失败时回退
+    _json="$(curl -s -m5 "https://ip-api.com/json/${_ip}?fields=status,country,regionName,city" 2>/dev/null)"
+    case "$_json" in
+        *'"status":"success"'*) : ;;
+        *) _json="$(curl -s -m5 "http://ip-api.com/json/${_ip}?fields=status,country,regionName,city" 2>/dev/null)" ;;
+    esac
     case "$_json" in
         *'"status":"success"'*)
             _region="$(printf '%s' "$_json" | sed -nE 's/.*"country":"([^"]*)".*/\1/p')"
@@ -4326,10 +4785,10 @@ menu_collect_install() {
     reading "输入选项 (回车=不选): " _ans
     _ans="$(printf '%s' "$_ans" | tr '[:upper:]' '[:lower:]')"
     case "$_ans" in
-        *g*) _ch="$_ch g"; green "  ↳ Argo 协议: Trojan-WS-TLS" ;;
-        *v*) _ch="$_ch v"; green "  ↳ Argo 协议: Vless-WS-TLS" ;;
-        *f*) _ch="$_ch f"; green "  ↳ Argo 协议: Vmess-WS-TLS" ;;
-        *) : ; green "  ↳ Argo 协议: 不选 (默认)" ;;
+        *g*) export argo=trojan; green "  ↳ Argo 协议: Trojan-WS-TLS" ;;
+        *v*) export argo=vless;  green "  ↳ Argo 协议: Vless-WS-TLS" ;;
+        *f*) export argo=vmess;  green "  ↳ Argo 协议: Vmess-WS-TLS" ;;
+        *)   export argo="";     green "  ↳ Argo 协议: 不选 (默认)" ;;
     esac
 
     # Socks5 协议：可要可不要
@@ -4348,9 +4807,6 @@ menu_collect_install() {
             c) export hypt="" ;;
             d) export tupt="" ;;
             e) export anypt="" ;;
-            f) export vmpt="" ;;
-            g) export trpt="" ;;
-            v) export vlpt="" ;;
             h) export socks5pt="" ;;
             *) yellow "  跳过未知选项: $_sel" ;;
         esac
@@ -4366,9 +4822,8 @@ menu_collect_install() {
     reading "输入选择 (回车默认=2): " _ans
     if [ -z "$_ans" ] || [ "$_ans" = "2" ]; then
         green "  ↳ 端口: 逐个自定义 (默认)"
-        [ -n "$trp" ] && export trpt="$(menu_ask_port "Trojan-WS (Argo)")"
-        [ -n "$vmp" ] && export vmpt="$(menu_ask_port "Vmess-WS (Argo)")"
-        [ -n "$vlp" ] && export vlpt="$(menu_ask_port "Vless-WS (Argo)")"
+        # Argo 三协议本地回源端口不接受外部指定，一律随机；仅直连协议才询问端口
+        [ -n "$trp$vmp$vlp" ] && green "  ↳ Argo (vmess/trojan/vless) 本地回源端口：自动随机（不接受外部指定）"
         for _sel in vlr hyp tup anyp; do
             case "$_sel" in
                 vlr)  [ -n "$vlr" ]  && export vlrt="$(menu_ask_port "VLESS-Reality")" ;;
@@ -4380,9 +4835,8 @@ menu_collect_install() {
         [ -n "$trp$vmp$vlp" ] && export argo_pt="$(menu_ask_port "Argo" 8001)"
     else
         green "  ↳ 端口: 全部随机生成"
-        [ -n "$trp" ] && { trpt="$(rand_port)"; export trpt; green "  ↳ Trojan-WS (Argo) 端口: ${trpt} (随机)"; }
-        [ -n "$vmp" ] && { vmpt="$(rand_port)"; export vmpt; green "  ↳ Vmess-WS (Argo) 端口: ${vmpt} (随机)"; }
-        [ -n "$vlp" ] && { vlpt="$(rand_port)"; export vlpt; green "  ↳ Vless-WS (Argo) 端口: ${vlpt} (随机)"; }
+        # Argo 三协议本地回源端口不接受外部指定，一律随机；仅直连协议走随机
+        [ -n "$trp$vmp$vlp" ] && green "  ↳ Argo (vmess/trojan/vless) 本地回源端口：自动随机（不接受外部指定）"
         [ -n "$vlr" ] && { vlrt="$(rand_port)"; export vlrt; green "  ↳ VLESS-Reality 端口: ${vlrt} (随机)"; }
         [ -n "$hyp" ] && { hypt="$(rand_port)"; export hypt; green "  ↳ Hysteria2 端口: ${hypt} (随机)"; }
         [ -n "$tup" ] && { tupt="$(rand_port)"; export tupt; green "  ↳ TUIC 端口: ${tupt} (随机)"; }
@@ -4392,17 +4846,7 @@ menu_collect_install() {
 
     menu_reload_proto_flags
 
-    # Argo 隧道配置（vmess/trojan/vless 已强制三选一，这里最多启用一个）
-    if [ -n "$vmp" ]; then
-        export argo=vmpt
-    elif [ -n "$trp" ]; then
-        export argo=trpt
-    elif [ -n "$vlp" ]; then
-        export argo=vlpt
-    else
-        export argo=""
-    fi
-
+    # Argo 隧道配置（argo 已在“选择 Argo 隧道协议”处设置，这里直接使用）
     if [ -n "$argo" ]; then
         echo ""
         purple "===== Argo 隧道配置 ====="
@@ -4417,7 +4861,7 @@ menu_collect_install() {
             reading "  请输入 Argo 域名: " _ans
             [ -n "$_ans" ] && export ARGO_DOMAIN="$_ans"
             green "  ↳ Argo 域名: ${ARGO_DOMAIN:-未设置}"
-            reading "  请输入 Argo Token 或粘贴 JSON 凭据: " _ans
+            reading_secret "  请输入 Argo Token 或粘贴 JSON 凭据（输入不回显）: " _ans
             [ -n "$_ans" ] && export ARGO_AUTH="$_ans"
             green "  ↳ Argo Token/JSON: 已设置"
         fi
@@ -4443,7 +4887,7 @@ menu_collect_install() {
     # VLESS 才询问 reality_private
     if [ -n "$vlr" ]; then
         echo ""
-        reading "reality_private (回车=自动生成): " _ans
+        reading_secret "reality_private (回车=自动生成): " _ans
         if [ -n "$_ans" ]; then
             export reality_private="$_ans"
             green "  ↳ reality_private: 已输入"
@@ -4704,7 +5148,7 @@ update_inbound_port() {
     jq --arg tag "$_tag" --argjson p "$_port" \
         '(.inbounds[]? | select(.tag == $tag)) .listen_port = $p' \
         "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" \
-        && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
+        && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"
 }
 
 # 刷新 nginx 配置并重启（trojan/vmess/argo 端口变更时需要）
@@ -4781,6 +5225,8 @@ edit_ports_menu() {
 
         update_inbound_port "$_tag" "$_port"
         [ -n "$_need_nginx" ] && regen_nginx_and_restart
+        # 监听端口已变更，刷新防火墙放行新端口、回收旧端口
+        refresh_firewall_rules
         refresh_sb_and_sub
         green "✅ ${_desc} 端口修改操作已完成！新端口: ${_port}"
         menu_pause
@@ -4816,6 +5262,7 @@ edit_subscription_menu() {
                 export nginx_pt="$_np"
                 export subscribe="$(get_subscribe_flag)"
                 setup_nginx_subscribe > /dev/null 2>&1 && nginx_restart
+                refresh_firewall_rules
                 update_subscription_file
                 green "✅ 订阅端口修改操作已完成！新端口: ${_np}"
                 green "  新订阅地址: $(show_sub_url)"
@@ -4825,6 +5272,8 @@ edit_subscription_menu() {
                 echo "false" > "$SINGBOX_FOLDER_PATH/subscribe"
                 export subscribe="false"
                 setup_nginx_subscribe > /dev/null 2>&1 && nginx_restart
+                # 取消订阅后若也未启用 Argo，回收 nginx 端口的放行规则
+                refresh_firewall_rules
                 green "✅ 取消节点订阅操作已完成！订阅已关闭。"
                 menu_pause
                 ;;
@@ -4891,7 +5340,7 @@ edit_snis_menu() {
                 echo "$_val" > "$SINGBOX_FOLDER_PATH/vl_sni"
                 [ -s "$SINGBOX_FOLDER_PATH/sb.json" ] && \
                     jq --arg v "$_val" '(.inbounds[]? | select(.tag == "vless-reality-vision-sb")) .tls.server_name = $v | (.inbounds[]? | select(.tag == "vless-reality-vision-sb")) .tls.reality.handshake.server = $v' \
-                    "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
+                    "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"
                 refresh_sb_and_sub
                 green "✅ VLESS 伪装域名修改操作已完成！新值: ${_val}"
                 menu_pause
@@ -4902,7 +5351,7 @@ edit_snis_menu() {
                 _val="$NEW_PORT"
                 echo "$_val" > "$SINGBOX_FOLDER_PATH/vl_sni_pt"
                 jq --argjson p "$_val" '(.inbounds[]? | select(.tag == "vless-reality-vision-sb")) .tls.reality.handshake.server_port = $p' \
-                    "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
+                    "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"
                 refresh_sb_and_sub
                 green "✅ VLESS 伪装端口修改操作已完成！新值: ${_val}"
                 menu_pause
@@ -4921,7 +5370,7 @@ edit_snis_menu() {
                 echo "$_val" > "$SINGBOX_FOLDER_PATH/any_sni"
                 [ -s "$SINGBOX_FOLDER_PATH/sb.json" ] && \
                     jq --arg v "$_val" '(.inbounds[]? | select(.tag == "anytls-sb")) .tls.server_name = $v' \
-                    "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
+                    "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"
                 refresh_sb_and_sub
                 green "✅ AnyTLS 伪装域名修改操作已完成！新值: ${_val}"
                 menu_pause
@@ -4964,15 +5413,23 @@ edit_argo_menu() {
             1)
                 reading "请输入 Argo 域名: " _d
                 [ -z "$_d" ] && { red "❌ 域名不能为空"; menu_pause; continue; }
-                reading "请输入 Argo Token 或粘贴 JSON 凭据: " _a
+                if ! is_valid_domain "$_d"; then
+                    red "❌ 域名非法（只能含字母/数字/'-'/'.'）：${_d}"; menu_pause; continue
+                fi
+                reading_secret "请输入 Argo Token 或粘贴 JSON 凭据: " _a
                 [ -z "$_a" ] && { red "❌ Token/JSON 不能为空"; menu_pause; continue; }
-                echo "$_d" > "$SINGBOX_FOLDER_PATH/argo_domain"
                 rm -f "$SINGBOX_FOLDER_PATH/tunnel.yml" "$SINGBOX_FOLDER_PATH/tunnel.json" "$SINGBOX_FOLDER_PATH/sbargotoken"
-                prepare_argo_credentials "$_a" "$_d" "$(cat "$SINGBOX_FOLDER_PATH/argoport" 2>/dev/null)"
+                # 先校验（含域名/凭据格式），通过后再落盘，避免失败时留下不一致状态
+                if ! prepare_argo_credentials "$_a" "$_d" "$(cat "$SINGBOX_FOLDER_PATH/argoport" 2>/dev/null)"; then
+                    red "❌ Argo 凭据校验失败，未切换"; menu_pause; continue
+                fi
+                echo "$_d" > "$SINGBOX_FOLDER_PATH/argo_domain"
+                chmod 600 "$SINGBOX_FOLDER_PATH/argo_domain" 2>/dev/null || true
                 if [ "$ARGO_MODE" = "json" ]; then
                     echo "" > /dev/null
                 elif [ "$ARGO_MODE" = "token" ]; then
                     echo "$_a" > "$SINGBOX_FOLDER_PATH/sbargotoken"
+                    chmod 600 "$SINGBOX_FOLDER_PATH/sbargotoken" 2>/dev/null || true
                 fi
                 argorestart
                 green "✅ 切换固定 Argo 隧道操作已完成！"
@@ -4986,7 +5443,7 @@ edit_argo_menu() {
                 ;;
             3)
                 pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null
-                [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ] && pkill -15 -f "cloudflared" 2> /dev/null
+                [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ] && pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null
                 rm -f "$SINGBOX_FOLDER_PATH/tunnel.yml" "$SINGBOX_FOLDER_PATH/tunnel.json" "$SINGBOX_FOLDER_PATH/sbargotoken" "$SINGBOX_FOLDER_PATH/argo_domain" "$LOGS_DIR/argo.log"
                 green "✅ 取消使用 Argo 隧道操作已完成！"
                 menu_pause
@@ -5045,6 +5502,106 @@ edit_argo_protocol_menu() {
     done
 }
 
+# ================== Socks5 IP白名单管理 ==================
+# 重建白名单：先清除旧的 iptables 规则，再重新插入（复用统一刷新函数）
+_rebuild_socks5_whitelist_rules() {
+    refresh_firewall_rules
+}
+
+edit_socks5_whitelist_menu() {
+    local _ch
+    while true; do
+        clear
+        green "========= Socks5 IP白名单管理 ========="
+        echo ""
+
+        # 显示当前状态
+        local _wl_flag=""
+        local _wl_ips=""
+        [ -s "$SINGBOX_FOLDER_PATH/socks5_wl_flag" ] && _wl_flag=$(cat "$SINGBOX_FOLDER_PATH/socks5_wl_flag" | tr -d '\r\n')
+        [ -s "$SINGBOX_FOLDER_PATH/socks5_ips" ] && _wl_ips=$(cat "$SINGBOX_FOLDER_PATH/socks5_ips" | tr -d '\r\n')
+
+        if [ "$_wl_flag" = "true" ]; then
+            green "  当前状态：✅ 已开启"
+            if [ -n "$_wl_ips" ]; then
+                green "  白名单IP：${_wl_ips}"
+            else
+                yellow "  白名单IP：（空，等同于关闭）"
+            fi
+        else
+            yellow "  当前状态：❌ 未开启（所有IP均可访问）"
+        fi
+        echo ""
+        green "  1) 开启白名单"
+        green "  2) 关闭白名单"
+        green "  3) 修改白名单IP列表"
+        green "  4) 查看当前白名单IP"
+        purple "  0) 返回上级菜单"
+        reading "请输入选择: " _ch
+        case "$_ch" in
+            0) return ;;
+            1)
+                printf '%s\n' "true" > "$SINGBOX_FOLDER_PATH/socks5_wl_flag"
+                if [ -s "$SINGBOX_FOLDER_PATH/socks5_ips" ] && [ -n "$(cat "$SINGBOX_FOLDER_PATH/socks5_ips" | tr -d '\r\n')" ]; then
+                    _rebuild_socks5_whitelist_rules
+                    sbrestart
+                    green "✅ Socks5 IP白名单已开启"
+                else
+                    yellow "⚠️ 白名单已开启，但IP列表为空，请先设置白名单IP"
+                    green "   设置后才会生效"
+                fi
+                menu_pause
+                ;;
+            2)
+                printf '%s\n' "false" > "$SINGBOX_FOLDER_PATH/socks5_wl_flag"
+                _rebuild_socks5_whitelist_rules
+                sbrestart
+                green "✅ Socks5 IP白名单已关闭（所有IP均可访问）"
+                menu_pause
+                ;;
+            3)
+                echo ""
+                yellow "请输入允许访问Socks5的IP地址（支持IP和CIDR）"
+                yellow "多个IP用逗号分隔，如：1.2.3.4,5.6.7.0/24,10.0.0.1"
+                yellow "留空则清除所有白名单IP"
+                local _input=""
+                reading "白名单IP: " _input
+                if [ -n "$_input" ]; then
+                    # 去除首尾空格
+                    _input=$(printf '%s' "$_input" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+                    printf '%s\n' "$_input" > "$SINGBOX_FOLDER_PATH/socks5_ips"
+                    green "✅ 白名单IP已更新：${_input}"
+                    # 自动开启白名单
+                    printf '%s\n' "true" > "$SINGBOX_FOLDER_PATH/socks5_wl_flag"
+                    _rebuild_socks5_whitelist_rules
+                    sbrestart
+                    green "✅ Socks5 IP白名单已生效"
+                else
+                    printf '' > "$SINGBOX_FOLDER_PATH/socks5_ips"
+                    printf '%s\n' "false" > "$SINGBOX_FOLDER_PATH/socks5_wl_flag"
+                    _rebuild_socks5_whitelist_rules
+                    sbrestart
+                    yellow "白名单IP已清空，白名单已关闭"
+                fi
+                menu_pause
+                ;;
+            4)
+                echo ""
+                if [ -s "$SINGBOX_FOLDER_PATH/socks5_ips" ] && [ -n "$(cat "$SINGBOX_FOLDER_PATH/socks5_ips" | tr -d '\r\n')" ]; then
+                    green "当前白名单IP列表："
+                    cat "$SINGBOX_FOLDER_PATH/socks5_ips" | tr ',' '\n' | while read -r _ip; do
+                        [ -n "$_ip" ] && green "  - $_ip"
+                    done
+                else
+                    yellow "白名单IP列表为空"
+                fi
+                menu_pause
+                ;;
+            *) yellow "无效选项"; sleep 1 ;;
+        esac
+    done
+}
+
 # 节点配置修改主菜单
 node_config_menu() {
     local _ch
@@ -5057,6 +5614,15 @@ node_config_menu() {
         green "  3) SNI / CDN 设置修改"
         green "  4) Argo 隧道修改"
         green "  5) 切换 Argo 使用协议 (Vmess-WS-TLS / Trojan-WS-TLS / Vless-WS-TLS)"
+        if grep -q "socks5-sb" "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null; then
+            local _wl_status="未开启"
+            local _wl_menu_flag=""
+            [ -s "$SINGBOX_FOLDER_PATH/socks5_wl_flag" ] && _wl_menu_flag=$(cat "$SINGBOX_FOLDER_PATH/socks5_wl_flag" | tr -d '\r\n')
+            if is_true "$_wl_menu_flag"; then
+                _wl_status="已开启"
+            fi
+            green "  6) Socks5 IP白名单管理 (当前：${_wl_status})"
+        fi
         purple "  0) 返回主菜单"
         reading "请输入选择: " _ch
         case "$_ch" in
@@ -5066,6 +5632,7 @@ node_config_menu() {
             3) edit_snis_menu ;;
             4) edit_argo_menu ;;
             5) edit_argo_protocol_menu ;;
+            6) edit_socks5_whitelist_menu ;;
             *) yellow "无效选项"; sleep 1 ;;
         esac
     done
@@ -5139,37 +5706,6 @@ interactive_log_menu() {
     done
 }
 
-# ⚠️ DEPRECATED（已废弃）：一级菜单已直接提供「卸载全部并清理 (delall)」，此子菜单不再被调用，保留供参考/兼容。
-interactive_uninstall_menu() {
-    local _ch _ans
-    while true; do
-        clear
-        green "========= [8] 卸载 ========="
-        red "  1) 卸载 (保留 sing-box/cloudflared 二进制)"
-        red "  2) 彻底卸载 (全部删除)"
-        purple "  0) 返回主菜单"
-        reading "请输入选择: " _ch
-        case "$_ch" in
-            0) return ;;
-            1)
-                reading "确认卸载? (y/N): " _ans
-                if [ "$_ans" = "y" ] || [ "$_ans" = "Y" ]; then
-                    cleandel
-                    green "✅ 卸载完成"
-                fi
-                menu_pause ;;
-            2)
-                reading "确认彻底卸载? (y/N): " _ans
-                if [ "$_ans" = "y" ] || [ "$_ans" = "Y" ]; then
-                    cleandel delall
-                    green "✅ 已彻底卸载"
-                fi
-                menu_pause ;;
-            *) yellow "无效选项"; sleep 1 ;;
-        esac
-    done
-}
-
 # ================== 分流管理 (rt) ==================
 # 参照 lwsb.sh 的 WARP 分流管理实现，适配 sb00 单文件配置 (sb.json)
 # 分流规则插入在 sniff 之后、resolve 之前，保留 sing-box 默认行为
@@ -5207,7 +5743,7 @@ rt_ensure_wireguard() {
                 allowed_ips: ["0.0.0.0/0", "::/0"],
                 reserved: [78, 135, 76]
             }]
-        }]' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$sbj"
+        }]' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"
 }
 
 # 确保 route.rule_set 中已定义该 tag 的远程规则集
@@ -5220,7 +5756,7 @@ rt_ensure_rule_set() {
         | if ([.route.rule_set[] | .tag] | index($tag)) == null then
             .route.rule_set += [{tag: $tag, type: "remote", format: "binary", url: $url, download_detour: "direct"}]
           else . end
-    ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$sbj"
+    ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"
 }
 
 # 清理 route.rule_set 中已无规则引用的定义
@@ -5232,7 +5768,7 @@ rt_remove_unused_rule_sets() {
         | ([ $R[] | .rule_set[]? ] | unique) as $used
         | $doc
         | .route.rule_set = [.route.rule_set[]? | select((.tag // "") as $t | $used | index($t))]
-    )' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$sbj"
+    )' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"
 }
 
 # 读取现有 resolve 规则的 DNS 策略（无则用 prefer_ipv6）
@@ -5420,7 +5956,7 @@ edit_protocol_proxy() {
             | ($R | map(select(.action != "sniff" and .action != "resolve" and (.inbound == null or ((.inbound | index($p)) | not))))) as $splits
             | $doc
             | .route.rules = $sniff + $splits + $resolve
-        ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$sbj"; then
+        ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"; then
             sbrestart
             green "✅ $_tag 已改为直连（原IP出口）"
         else
@@ -5450,7 +5986,7 @@ edit_protocol_proxy() {
                 {inbound: [$proto], outbound: $p}
             end
           ] | sort_by(if .rule_set != null then 0 elif .inbound != null then 1 else 2 end)) + $resolve
-    ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$sbj"; then
+    ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"; then
         sbrestart
         green "✅ $_tag 已改用代理: $_p"
     else
@@ -5544,7 +6080,7 @@ add_rule_menu() {
             .route.rules = $sniff + ($splits + [{rule_set: [$tag], outbound: $out}]
                 | sort_by(if .rule_set != null then 0 elif .inbound != null then 1 else 2 end)) + $resolve
           end
-    ' "$sbj" > "$tmpj" && mv "$tmpj" "$sbj"
+    ' "$sbj" > "$tmpj" && sbj_save "$tmpj"
     rm -f "$tmpj" 2> /dev/null || true
 
     sbrestart
@@ -5583,7 +6119,7 @@ delete_rule_menu() {
         | $doc
         | .route.rules = $sniff + ([$splits[] | if .rule_set != null then .rule_set -= [$tag] | select((.rule_set | length) > 0) else . end]
             | sort_by(if .rule_set != null then 0 elif .inbound != null then 1 else 2 end)) + $resolve
-    ' "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
+    ' "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"
     rt_remove_unused_rule_sets
     sbrestart
     green "规则集 '${_tag}' 已禁用。"
@@ -5593,7 +6129,7 @@ delete_rule_menu() {
 # 添加 Socks5/HTTP 代理出站
 add_socks5_proxy() {
      local _proxy_url _proto _outbound_type _after_proto _tag_from_url _user_pass _host_port
-     local _user _password _decoded _server _port _check_proto _is_local _proxy_auth
+     local _user _password _decoded _server _port _check_proto _proxy_auth
      local _tag _force_add _test_result
      clear
      green "========= [5][3] 分流管理 → 添加 Socks5/HTTP 出站 ========="
@@ -5642,41 +6178,19 @@ add_socks5_proxy() {
 
     [[ "$_proto" == "socks" || "$_proto" == "socks5" ]] && _check_proto="socks5" || _check_proto="$_proto"
 
-    # 本地地址跳过外部 API 检测，直接用 curl 测试
-    _is_local=false
-    if [[ "$_server" == "127.0.0.1" || "$_server" == "::1" || "$_server" == "localhost" ]]; then
-        _is_local=true
-    fi
-
     _proxy_auth=""
     [ -n "$_user" ] && [ -n "$_password" ] && _proxy_auth="${_user}:${_password}@" || \
         { [ -n "$_user" ] && _proxy_auth="${_user}@"; }
 
-    if [ "$_is_local" = true ]; then
-        yellow "检测到本地代理 ${_check_proto}://${_server}:${_port}，跳过外部API检测，正在用curl测试连通性..."
-        _test_result=$(curl -s --max-time 8 --proxy "${_check_proto}://${_proxy_auth}${_server}:${_port}" "https://api.ip.sb/ip" 2>/dev/null)
-        if [ -z "$_test_result" ]; then
-            yellow "警告：通过本地代理访问外网失败，请确认代理服务正在运行。"
-            reading "是否仍然添加此代理？(y/n): " _force_add
-            [[ ! "$_force_add" =~ ^[yY]$ ]] && { yellow "已取消"; menu_pause; return; }
-        else
-            green "本地代理可用，出口IP: $_test_result"
-        fi
+    # 一律用本机 curl 穿代理自测：--proxy 直接交给代理本身，账号密码只到达代理这一方，
+    # 不把含凭据的代理 URL 发给任何第三方检测 API（旧版发给 check.socks5.cmliussss.net 会泄露凭据）
+    _test_result=$(curl -s --max-time 8 --proxy "${_check_proto}://${_proxy_auth}${_server}:${_port}" "https://api.ip.sb/ip" 2>/dev/null)
+    if [ -z "$_test_result" ]; then
+        yellow "警告：经代理访问外网失败（请确认代理在运行、账号密码正确）"
+        reading "是否仍然添加此代理？(y/n): " _force_add
+        [[ ! "$_force_add" =~ ^[yY]$ ]] && { yellow "已取消"; menu_pause; return; }
     else
-        yellow "正在测试代理 ${_check_proto}://${_server}:${_port} ..."
-        local _api_response _success _error_msg _exit_ip
-        _api_response=$(curl -s --max-time 8 -G \
-            --data-urlencode "proxy=${_check_proto}://${_proxy_auth}${_server}:${_port}" \
-            "https://check.socks5.cmliussss.net/check" 2>/dev/null)
-        [ -z "$_api_response" ] && { red "API 请求失败"; menu_pause; return; }
-        _success=$(echo "$_api_response" | jq -r '.success')
-        if [ "$_success" != "true" ]; then
-            _error_msg=$(echo "$_api_response" | jq -r '.error // "未知错误"')
-            red "代理不可用: $_error_msg"; menu_pause; return
-        fi
-        _exit_ip=$(echo "$_api_response" | jq -r '.exit.ip // empty')
-        green "代理可用"
-        [ -n "$_exit_ip" ] && green "出口 IP: $_exit_ip"
+        green "代理可用，出口IP: $_test_result"
     fi
 
     [ -n "$_tag_from_url" ] && _tag="$_tag_from_url" || _tag="${_outbound_type}-${_server}-${_port}"
@@ -5694,12 +6208,12 @@ add_socks5_proxy() {
         jq --arg type "$_outbound_type" --arg tag "$_tag" --arg server "$_server" \
            --arg port "$_port" --arg user "$_user" --arg password "$_password" \
            '.outbounds = (.outbounds // []) + [{"type":$type,"tag":$tag,"server":$server,"server_port":($port|tonumber),"username":$user,"password":$password}]' \
-           "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
+           "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"
     else
         jq --arg type "$_outbound_type" --arg tag "$_tag" --arg server "$_server" \
            --arg port "$_port" \
            '.outbounds = (.outbounds // []) + [{"type":$type,"tag":$tag,"server":$server,"server_port":($port|tonumber)}]' \
-           "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
+           "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"
     fi
 
     sbrestart
@@ -5757,7 +6271,7 @@ delete_socks5_proxy() {
         fi
     fi
 
-    jq --arg tag "$_tag" 'del(.outbounds[] | select(.tag == $tag))' "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$SINGBOX_FOLDER_PATH/sb.json"
+    jq --arg tag "$_tag" 'del(.outbounds[] | select(.tag == $tag))' "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"
     # 同步删除引用该出站的分流规则
     jq --arg tag "$_tag" '
         . as $doc
@@ -5768,7 +6282,7 @@ delete_socks5_proxy() {
         | $doc
         | .route.rules = $sniff + ([$splits[] | select(.outbound != $tag)]
             | sort_by(if .rule_set != null then 0 elif .inbound != null then 1 else 2 end)) + $resolve
-    ' "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp2" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp2" "$SINGBOX_FOLDER_PATH/sb.json"
+    ' "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp2" && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp2"
     rt_remove_unused_rule_sets
     sbrestart
     green "$_tag 代理出站已删除。"
@@ -5865,7 +6379,7 @@ attach_socks5_proxy() {
           else
             .route.rules = $sniff + $splits + $resolve
           end
-    ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$sbj"; then
+    ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"; then
         sbrestart
         if [ "$_attach_input" = "0" ]; then
             green "✅ $_tag 关联已清除"
@@ -5940,7 +6454,7 @@ set_global_outbound() {
     jq --arg out "$_selected_out" --arg strat "$_strat" '
         .route.final = $out
         | .route.rules = [{action: "sniff"}, {action: "resolve", strategy: $strat}]
-    ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$sbj"
+    ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"
     sbrestart
     green "已设置全局代理出站：$_selected_out"
     yellow "所有流量将通过 $_selected_out 转发，如需恢复请选择「恢复服务器原IP出站」"
@@ -5955,7 +6469,7 @@ restore_direct_outbound() {
     # 确保 direct 出站存在（不存在则插入到数组最前面）
     if ! jq -e '.outbounds[]? | select(.tag == "direct")' "$sbj" > /dev/null 2>&1; then
         jq '.outbounds = [{"type": "direct", "tag": "direct"}] + .outbounds' \
-            "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$sbj"
+            "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"
     fi
 
     _strat="$(rt_get_strategy)"
@@ -5963,7 +6477,7 @@ restore_direct_outbound() {
     jq --arg strat "$_strat" '
         .route.final = "direct"
         | .route.rules = [{action: "sniff"}, {action: "resolve", strategy: $strat}]
-    ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && mv "$SINGBOX_FOLDER_PATH/.sb.tmp" "$sbj"
+    ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"
     sbrestart
     _sip=$(cat "$SINGBOX_FOLDER_PATH/server_ip" 2> /dev/null)
     if [ -n "$_sip" ]; then
