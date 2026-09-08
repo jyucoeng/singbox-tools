@@ -113,12 +113,12 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 - `vlrt`+`vl_sni` = VLESS-Reality；`hypt`+`hy_sni` = Hysteria2；`tupt`+`tu_sni` = TUIC；`anypt` = AnyTLS；`socks5pt` = Socks5 → 端口行删除即不装对应协议
 - `socks5_username` / `socks5_password`：Socks5 认证账号密码（密码含特殊字符时必须用单引号包裹）
 - `socks5_wl_flag` / `socks5_ips`：Socks5 白名单开关，以及放行 IP（逗号分隔，支持掩码如 `1.2.3.0/24`）
-- `argo`：Argo 协议，逗号分隔可多选 `vmess/trojan/vless`；`argo_pt` 为 Argo 本地回源端口（默认 8001，一般不改）；固定隧道另配 `agn`（域名）或 `agk`（Token/JSON），不配则用临时 trycloudflare 域名
+- `argo`：Argo 协议，逗号分隔可多选 `vmess,trojan,vless`；`argo_pt` 为 Argo 本地回源端口（默认 8001，一般不改）；固定隧道另配 `agn`（域名）或 `agk`（Token/JSON），不配则用临时 trycloudflare 域名
 - `argo_cf_host` / `argo_cf_pt`：共享 CF 优选域名/端口（所有 Argo 协议共用，未填默认 `saas.sin.fan`/`443`）；每协议可单独指定，如 `argo_vless_cf_host` / `argo_vless_cf_pt`、`argo_vmess_*`、`argo_trojan_*`
-- `ws_cdn`：CDN 回源（经自己 CDN 反代到 nginx，与 Argo 二选一），逗号分隔可多选 `vmess/vless/trojan`
+- `ws_cdn`：CDN 回源（经自己 CDN 反代到 nginx，与 Argo 可共存），逗号分隔可多选 `vmess,vless,trojan`
 - `ws_cdn_cf_host` / `ws_cdn_sni` / `ws_cdn_cf_pt`：CDN 回源域名/SNI/端口（每协议可单独指定，如 `ws_cdn_vless_cf_host` / `ws_cdn_vless_sni` / `ws_cdn_vless_cf_pt`）
 - `subscribe` / `nginx_pt`：开启订阅及订阅端口
-- `reality_private`：传上次安装的 Reality 私钥可保持节点一致，不传则自动生成；`reality_public` 一般不传（脚本自动由私钥推导公钥）
+- `reality_private`：传上次安装的 Reality 私钥可保持节点一致，不传则自动生成；
 - `name`：节点名称前缀
 - `DEBUG_FLAG`：日志调试开关（`0`=关，`1`=开，调试输出写入 `doraemon/debug.log`）
 
@@ -265,6 +265,24 @@ Nginx 只在以下任一情况满足时才安装/配置：
 > 即使不开启订阅，只要启用 Argo 就会安装 Nginx：因为 Argo 的数据链路是
 > `cloudflared → 127.0.0.1:8001(Nginx) → sing-box 对应 ws 端口`，Nginx 负责按路径反代。
 
+**Nginx 反代各协议路径一览：**
+
+Nginx 的一份配置里同时监听 `nginx_pt`（默认 8080，对外）和 `127.0.0.1:argo_pt`（默认 8001，仅本机给 cloudflared 回源），`server_name _` 按路径分发到 sing-box 各协议本地端口：
+
+| 场景 | Nginx location 路径 | 反代目标（sing-box 本地端口） | 说明 |
+|---|---|---|---|
+| VMess-WS（Argo 回源） | `/{uuid}-vm` | `http://127.0.0.1:{vm_port}` | `{vm_port}` = `port_vm_ws`；链路：cloudflared → 127.0.0.1:argo_pt → `/{uuid}-vm` |
+| VLESS-WS（Argo 回源） | `/{uuid}-vl` | `http://127.0.0.1:{vl_port}` | `{vl_port}` = `port_vl_ws` |
+| Trojan-WS（Argo 回源） | `/{uuid}-tr` | `http://127.0.0.1:{tr_port}` | `{tr_port}` = `port_tr` |
+| VMess-WS（ws_cdn 回源） | `/{uuid}-vm-cdn` | `http://127.0.0.1:{cdn_vm_port}` | `{cdn_vm_port}` = `port_vmess_ws_cdn`；链路：CDN → nginx_pt → `/{uuid}-vm-cdn` |
+| VLESS-WS（ws_cdn 回源） | `/{uuid}-vl-cdn` | `http://127.0.0.1:{cdn_vl_port}` | `{cdn_vl_port}` = `port_vless_ws_cdn` |
+| Trojan-WS（ws_cdn 回源） | `/{uuid}-tr-cdn` | `http://127.0.0.1:{cdn_tr_port}` | `{cdn_tr_port}` = `port_trojan_ws_cdn` |
+| 订阅输出 | `^~ /sub/{uuid}` | alias `/var/www/singbox/sub.txt` | subscribe=true 才生成；对外地址 `http://IP:nginx_pt/sub/{uuid}` |
+| 其他所有路径 | `/` | 无（`return 404`） | 兜底，防端口扫描 |
+
+> `{uuid}` 为安装时的 UUID；`port_vm_ws / port_vl_ws / port_tr` 为 Argo 共用的本地 ws 端口，`port_vmess_ws_cdn / port_vless_ws_cdn / port_trojan_ws_cdn` 为 ws_cdn 独立回源端口（均由脚本自动随机或复用落盘文件，不对外公开）。
+> 直连协议（VLESS-Reality / Hysteria2 / TUIC / AnyTLS / Socks5）**不走 Nginx**，客户端直接连各自端口 `vlrt / hypt / tupt / anypt / socks5pt`。
+
 ## 7、 subscribe 订阅开关，默认值为false，即不需要nginx订阅。
 
 - false → 默认 不生成订阅；但若启用了 Argo，Nginx 仍会因回源反代被安装
@@ -302,11 +320,11 @@ Nginx 只在以下任一情况满足时才安装/配置：
 | 变量 | 说明 | 默认 |
 |------|------|------|
 | `ws_cdn` | 开关：vmess/vless/trojan 逗号分隔 | 空（不启用） |
-| `ws_cdn_vmess_cf_host` 等 | 各协议专属 CF 优选域名（连接地址 add） | 回退共享 ws_cdn_cf_host |
-| `ws_cdn_vmess_sni` 等 | 各协议专属回源域名（host/SNI） | 回退共享 ws_cdn_sni |
-| `ws_cdn_vmess_cf_pt` 等 | 各协议专属 CF 优选端口 | 回退共享 ws_cdn_cf_pt |
-| `ws_cdn_cf_host` | 共享 CF 优选域名（各协议**连接地址 add** 兜底；可填优选 IP/域名） | 回退默认 saas.sin.fan |
-| `ws_cdn_sni` | 共享回源域名（真实回源域名；作为节点 host/SNI 与**订阅地址**域名，Cloudflare 按此域名匹配回源规则转发到你的 nginx_pt） | 回退 ws_cdn_eff_host |
+| `ws_cdn_vmess_cf_host` 等 | 各协议专属 CF 优选域名（连接地址 add） | 为空时回退共享 ws_cdn_cf_host |
+| `ws_cdn_vmess_sni` 等 | 各协议专属回源域名（host/SNI） | 为空时回退共享 ws_cdn_sni |
+| `ws_cdn_vmess_cf_pt` 等 | 各协议专属 CF 优选端口 | 为空时回退共享 ws_cdn_cf_pt |
+| `ws_cdn_cf_host` | 共享 CF 优选域名（各协议**连接地址 add** 兜底；可填优选 IP/域名） | 为空时回退默认 saas.sin.fan |
+| `ws_cdn_sni` | 共享回源域名（真实回源域名；作为节点 host/SNI 与**订阅地址**域名，Cloudflare 按此域名匹配回源规则转发到你的 nginx_pt） | 为空时回退 ws_cdn_eff_host |
 | `ws_cdn_cf_pt` | 共享 CDN 端口（仅限 https 系端口） | 443 |
 
 **示例**（vless 和 trojan 用不同回源域名，vmess 用共享）：
@@ -321,17 +339,17 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 **回源端口**：CDN 回源到服务器 `nginx_pt`（默认 8080），去 Cloudflare 后台把 origin 指向该端口（或用 origin rule 泛域名回源）。
 
-**订阅地址域名（show_sub_url）取值顺序**（自动判定，不接受 sub_domain 手动强制）：
+**订阅地址域名（show_sub_url）取值顺序**（自动判定）：
 
 ```
-① 固定 Argo 隧道域名（不以 trycloudflare.com 结尾，且隧道存活）        ← 第一顺位
+① 固定 Argo 隧道域名（不以 trycloudflare.com 结尾的固定隧道，且隧道存活）        ← 第一顺位
 ② 共享回源域名 ws_cdn_sni
 ③ 专属回源域名（固定顺序 vmess→vless→trojan，取第一个非空）
 ④ 临时 Argo 域名（含 trycloudflare，隧道存活才用）
-⑤ http://服务器IP:nginx_port（兜底，含节点口令，仅建议可信网络使用）
+⑤ http://服务器IP:nginx_port（兜底，含节点口令，一般只安了直连节点会直接用这个,仅建议可信网络使用）
 ```
 
-> 脚本自动按 ①→②→③→④→⑤ 判定，没有手动强制项；选哪个、填不填取决于你实际配置了哪些域名。
+> 脚本自动按 ①→②→③→④→⑤ 判定，自动选哪个取决于你实际配置了哪些域名。
 >
 > **✅ 有固定 Argo 隧道时，后面全部不用填**：一旦配了固定 Argo（①），订阅地址自动就是 `https://固定Argo域名/sub/{uuid}`，`ws_cdn_sni` 和 `ws_cdn_vmess_sni`/`ws_cdn_vless_sni`/`ws_cdn_trojan_sni` 这些回源域名**一个都不用写**，省心。
 > 回源域名（②③）唯一的意义是：**没有固定 Argo 时**（或想强制走 CDN）也能让订阅走一个稳定 https 域名，而不是跌到明文 HTTP。
@@ -350,7 +368,6 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 > ⑤ http://服务器IP:nginx_port/sub/{uuid}（明文 HTTP，含节点口令，仅建议可信网络）
 > ```
 >
-> > ①~② 手动强制可在默认顺序前"插队"：`sub_domain=argo` 直接取 Argo 域名；`sub_domain=cdn` 直接取 ②③ 的回源域名（共享→专属顺延，取到任一非空即用）。
 >
 > **为什么任意一个回源域名都行**：回源域名在 Cloudflare 里按 Origin Rule/DNS 回源到**同一个 nginx 端口（nginx_pt，默认 8080）**，而 nginx 是 `server_name _`（不分 hostname、按路径干活）。所以 `vmess.example.com/sub/{uuid}`、`vless.example.com/sub/{uuid}`、`trojan.example.com/sub/{uuid}` **任何一个都能访问订阅**——用哪个都通。
 >
@@ -384,7 +401,7 @@ WS-CDN 回源链路：`客户端 → CDN(ws_cdn_cf_pt) → 服务器 nginx_pt(�
   - 点击 **And**，再选 **SSL/HTTPS**，**等于**，**确保这一行后面的开关要选上（打勾）**
 - 然后下面的**目标端口** 重写到 **31007**（这个 31007 端口就是你的 **nginx 订阅端口 nginx_pt** 的值，按你实际配置的 `nginx_pt` 填写）
 
-> 规则里的 `*node.xxxx.nyc.mn` 通配符要能覆盖你实际用的三个回源域名：`vmess` / `vless` / `trojan`（这3个协议可以共用一个回源域名，也可以用三个不同的域名）。
+> 规则里的 `*node.xxxx.nyc.mn` 通配符能覆盖你实际用的三个回源域名：`vmess` / `vless` / `trojan`（这3个协议可以共用一个回源域名，也可以用三个不同的域名）。
 
 #### 2、域名 `xxxx.nyc.mn` 的 DNS 记录
 
@@ -800,11 +817,6 @@ tail -f /root/doraemon/logs/argo.log
 # 查看最新 200 行
 tail -200 /root/doraemon/logs/argo.log
 ```
-
-## 感谢
-感谢以下开发者的贡献：
-
-- [77160860大佬](https://github.com/77160860/proxy)
 
 
 ## 防火墙规则排查（Debian/Ubuntu/Alpine 通用）
