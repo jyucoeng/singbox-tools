@@ -32,7 +32,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="2.0.32(2026-09-08)"
+VERSION="2.0.33(2026-09-08)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -3784,7 +3784,7 @@ ins() {
         green "  WS-CDN 回源: 未启用（未传 ws_cdn）"
     fi
     green "  Socks5: $([ -n "$socksp" ] && echo 安装 || echo 不安装)"
-    green "  端口: VLESS-Reality=${vlrt:-随机} Hysteria2=${hypt:-随机} TUIC=${tupt:-随机} AnyTLS=${anypt:-随机}"
+    green "  直连端口: VLESS-Reality=${vlrt:-随机} Hysteria2=${hypt:-随机} TUIC=${tupt:-随机} AnyTLS=${anypt:-随机}"
     green "  伪装SNI: Hysteria2=${hy_sni:-www.apple.com} VLESS=${vl_sni:-www.apple.com} VLESS端口=${vl_sni_pt:-443} TUIC=${tu_sni:-www.apple.com} AnyTLS=${any_sni:-www.apple.com}"
     if [ -n "$argo" ]; then
         if [ -n "${ARGO_DOMAIN:-}" ] && [ -n "${ARGO_AUTH:-}" ]; then
@@ -3806,12 +3806,11 @@ ins() {
         if [ "$_all_shared" = "1" ]; then
             green "  Argo CF 优选: 域名=${_argosh} 端口=${_argosp}"
         else
-            local _agcf=""
+            green "  Argo CF 优选:"
             for _agx in $(argo_proto_list | tr ',' ' '); do
                 _aghx="$(argo_eff_host "$_agx")"; _agpx="$(argo_eff_pt "$_agx")"
-                _agcf="$_agcf ${_agx}=${_aghx}:${_agpx}"
+                green "    ${_agx}=${_aghx}:${_agpx}"
             done
-            green "  Argo CF 优选:${_agcf}"
         fi
     fi
     if [ -n "$ws_cdn" ]; then
@@ -3830,12 +3829,11 @@ ins() {
             [ -n "$_wss" ] && _wss=" 回源SNI=${_wss}"
             green "  WS-CDN: 域名=${_wsh} 端口=${_wsp}${_wss}"
         else
-            local _wmcf=""
+            green "  WS-CDN:"
             for _wmx in $(printf '%s' "$ws_cdn" | tr ',' ' '); do
                 _wmhx="$(ws_cdn_eff_host "$_wmx")"; _wmpx="$(ws_cdn_eff_pt "$_wmx")"; _wmsx="$(ws_cdn_eff_sni "$_wmx")"
-                _wmcf="$_wmcf ${_wmx}=${_wmhx}:${_wmpx} sni=${_wmsx}"
+                green "    ${_wmx}=${_wmhx}:${_wmpx} (sni=${_wmsx})"
             done
-            green "  WS-CDN:${_wmcf}"
         fi
     fi
     green "  订阅: ${_sub_txt}"
