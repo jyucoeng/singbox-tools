@@ -756,7 +756,7 @@ _fetch() {
 }
 
 _verify_and_run() {
-    local _body="\$1" _ver=""
+    local _body="\$1" _ver="" _tmp
     # 内容自检：必须有 VERSION 声明，防止错误页/被篡改内容被当脚本执行
     printf '%s\n' "\$_body" | grep -qE '^VERSION="[^"]+"' || {
         echo "ERROR: 拉取的脚本内容异常（可能被篡改或网络返回错误页），已中止" >&2
@@ -766,7 +766,12 @@ _verify_and_run() {
     if [ -n "\$_ver" ] && [ "\$_ver" != "\$EXPECT_SB_VER" ]; then
         echo "⚠️ 线上脚本版本(\$_ver) ≠ 本机期望(\$EXPECT_SB_VER)，可能是 CDN 缓存或拉取异常，可重跑 sb sc 刷新" >&2
     fi
-    exec bash <(printf '%s\n' "\$_body") "\$@"
+    # 先落盘临时文件再用 bash 执行文件路径，避免把整份脚本塞进 argv 触发
+    # "Argument list too long"（ARG_MAX 限制），同时也更可审计
+    _tmp="\$(mktemp "${SB_FOLDER}/.sb-online.XXXXXX" 2>/dev/null || mktemp)"
+    printf '%s\n' "\$_body" > "\$_tmp"
+    chmod +x "\$_tmp" 2>/dev/null || true
+    exec bash "\$_tmp" "\$@"
 }
 
 if [ -s "\$SB_FOLDER/sb.sh" ]; then
@@ -3978,10 +3983,16 @@ update_subscription_file() {
 # 输出订阅链接
 # 域名优先级（自动判定，不接受 sub_domain 手动强制）：
 #   固定 Argo > 共享 ws_cdn_cf_host > 任意 Argo(含临时 trycloudflare) > http://IP:nginx_port
-# Argo 隧道实际可用性：cloudflared 已安装 且 进程在运行
+# Argo 隧道实际可用性：cloudflared 已存在（PATH 或自定义目录 $SINGBOX_FOLDER_PATH）且 进程在运行
 # （否则 AGN 域名只是"配置了 Argo"，隧道没连上，走它做订阅会 530）
 argo_tunnel_alive() {
-    command -v cloudflared >/dev/null 2>&1 || return 1
+    if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ]; then
+        :  # 自定义目录安装（默认 /root/doraemon/cloudflared，不在 PATH）
+    elif command -v cloudflared >/dev/null 2>&1; then
+        :
+    else
+        return 1
+    fi
     pgrep -f "cloudflared" >/dev/null 2>&1 || return 1
     return 0
 }
