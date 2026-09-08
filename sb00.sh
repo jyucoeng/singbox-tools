@@ -32,7 +32,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="2.0.25(2026-09-08)"
+VERSION="2.0.28(2026-09-08)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -3727,24 +3727,51 @@ EOF
 ins() {
     debug_log "【调试】进入 ins() 安装流程"
     debug_log "【调试】关键参数：argo=${argo:-<空>}，ws_cdn=${ws_cdn:-<空>}，vmag=${vmag:-<空>}，subscribe=$(get_subscribe_flag 2> /dev/null || echo ${subscribe:-false})，nginx_pt=${nginx_pt:-<空>}，argo_pt=${argo_pt:-<空>}"
-    # 提升协议开关可见性：无论是否启用都在终端打印 argo / ws_cdn 的值（含单选/已多选个数）
+    # 无交互/交互统一：按「交互式菜单安装」顺序打印安装参数日志（仅展示，不影响流程与下载顺序）
     local _a_c _a_n _w_c _w_n _a_sfx="" _w_sfx=""
     if [ -n "${argo:-}" ]; then
         _a_c="${argo//[!,]/}"; _a_n=$((${#_a_c}+1))
         if [ "$_a_n" -eq 1 ]; then _a_sfx="(单选，${_a_n}个)"; else _a_sfx="(已多选，${_a_n}个)"; fi
-    else
-        _a_sfx="未启用（未传 argo）"
     fi
     if [ -n "${ws_cdn:-}" ]; then
         _w_c="${ws_cdn//[!,]/}"; _w_n=$((${#_w_c}+1))
         if [ "$_w_n" -eq 1 ]; then _w_sfx="(单选，${_w_n}个)"; else _w_sfx="(已多选，${_w_n}个)"; fi
-    else
-        _w_sfx="未启用（未传 ws_cdn）"
     fi
+    local _dlist="" _d_c _d_n _d_sfx=""
+    [ -n "$vlr" ]  && _dlist="$_dlist,vless-reality"
+    [ -n "$hyp" ]  && _dlist="$_dlist,hysteria2"
+    [ -n "$tup" ]  && _dlist="$_dlist,tuic"
+    [ -n "$anyp" ] && _dlist="$_dlist,anytls"
+    _dlist="${_dlist#,}"
+    [ -n "$_dlist" ] && { _d_c="${_dlist//[!,]/}"; _d_n=$((${#_d_c}+1)); if [ "$_d_n" -eq 1 ]; then _d_sfx="(单选，${_d_n}个)"; else _d_sfx="(已多选，${_d_n}个)"; fi; }
+    local _sub_txt="不开启"
+    [ "${subscribe:-false}" = "true" ] && _sub_txt="开启 (nginx_pt=${nginx_pt})"
     green ""
-    green "========= 协议开关 ========="
-    green "  Argo  : ${argo:-}${_a_sfx}"
-    green "  ws_cdn: ${ws_cdn:-}${_w_sfx}"
+    green "========= 安装参数 ========="
+    green "  日志调试: ${DEBUG_FLAG:-0}"
+    green "  IP偏好: ${ippz:-自动}"
+    green "  出口 IP: ${out_ip:-自动检测}"
+    green "  UUID: ${uuid:-自动生成}"
+    green "  直连协议: ${_dlist:-<未选>} ${_d_sfx}"
+    green "  Argo 协议: $([ -n "$argo" ] && echo "${argo} ${_a_sfx}" || echo "未启用（未传 argo）")"
+    green "  WS-CDN 回源: $([ -n "$ws_cdn" ] && echo "${ws_cdn} ${_w_sfx}" || echo "未启用（未传 ws_cdn）")"
+    green "  Socks5: $([ -n "$socksp" ] && echo 安装 || echo 不安装)"
+    green "  端口: VLESS-Reality=${vlrt:-随机} Hysteria2=${hypt:-随机} TUIC=${tupt:-随机} AnyTLS=${anypt:-随机}"
+    green "  伪装SNI: Hysteria2=${hy_sni:-www.apple.com} VLESS=${vl_sni:-www.apple.com} VLESS端口=${vl_sni_pt:-443} TUIC=${tu_sni:-www.apple.com}"
+    if [ -n "$argo" ]; then
+        if [ -n "${ARGO_DOMAIN:-}" ] && [ -n "${ARGO_AUTH:-}" ]; then
+            green "  Argo 隧道: 固定 (域名=${ARGO_DOMAIN})"
+        else
+            green "  Argo 隧道: 临时"
+        fi
+        green "  Argo CF 优选: 域名=${argo_cf_host:-saas.sin.fan} 端口=${argo_cf_pt:-443}"
+    fi
+    if [ -n "$ws_cdn" ]; then
+        green "  WS-CDN: 域名=${ws_cdn_cf_host:-saas.sin.fan} 端口=${ws_cdn_cf_pt:-443} 回源SNI=${ws_cdn_sni:-<未设>}"
+    fi
+    green "  订阅: ${_sub_txt}"
+    [ -n "$vlr" ] && green "  reality_private: ${reality_private:-自动生成}"
+    green "  节点名称前缀: ${name:-跳过}"
     green "============================"
     echo
     # =====================================================
@@ -5436,6 +5463,34 @@ menu_collect_install() {
 
     menu_reload_proto_flags
 
+    # SNI 值设定：直连协议伪装 SNI 的设置（Argo 优选域名/端口在专属的「Argo 隧道 · CF 优选域名/端口设置」中设置）
+    echo ""
+    purple "===== 直连协议伪装SNI 设置 ====="
+    green "  1) 全部使用默认值(偷懒就用默认)"
+    green "     默认值：Hysteria2 伪装域名=www.apple.com, VLESS 伪装域名=www.apple.com,"
+    green "             VLESS 伪装端口=443, TUIC 伪装域名=www.apple.com"
+    green "  2) 逐个展开单独设置（可自定义，推荐）"
+    reading "输入选择 (回车默认=1): " _ans
+    if [ "$_ans" = "2" ]; then
+        green "  ↳ SNI: 逐个设置"
+        reading "  Hysteria2 伪装域名 (默认=www.apple.com): " _ans
+        [ -n "$_ans" ] && export hy_sni="$_ans"
+        green "  ↳ Hysteria2 伪装域名: ${hy_sni:-www.apple.com}"
+        reading "  VLESS 伪装域名 (默认=www.apple.com): " _ans
+        [ -n "$_ans" ] && export vl_sni="$_ans"
+        green "  ↳ VLESS 伪装域名: ${vl_sni:-www.apple.com}"
+        reading "  VLESS 伪装端口 (默认=443): " _ans
+        [ -n "$_ans" ] && export vl_sni_pt="$_ans"
+        green "  ↳ VLESS 伪装端口: ${vl_sni_pt:-443}"
+        reading "  TUIC 伪装域名 (默认=www.apple.com): " _ans
+        [ -n "$_ans" ] && export tu_sni="$_ans"
+        green "  ↳ TUIC 伪装域名: ${tu_sni:-www.apple.com}"
+    else
+        green "  ↳ SNI: 全部使用默认值"
+        green "  ↳ Hysteria2 伪装域名=${hy_sni:-www.apple.com}, VLESS 伪装域名=${vl_sni:-www.apple.com},"
+        green "  ↳ VLESS 伪装端口=${vl_sni_pt:-443}, TUIC 伪装域名=${tu_sni:-www.apple.com}"
+    fi
+
     # Argo 隧道配置（argo 已在“选择 Argo 隧道协议”处设置，这里直接使用）
     if [ -n "$argo" ]; then
         echo ""
@@ -5455,10 +5510,8 @@ menu_collect_install() {
             [ -n "$_ans" ] && export ARGO_AUTH="$_ans"
             green "  ↳ Argo Token/JSON: 已设置"
         fi
-    fi
 
         # Argo 多协议：CF 优选域名/端口填写（统一设置或分开设置；与 ws_cdn 一致）
-    if [ -n "$argo" ]; then
         echo ""
         purple "===== Argo 隧道 · CF 优选域名/端口设置 ====="
         green "  CDN 域名填写方式：1) 统一（所有已选 Argo 协议共用同一个 CF 优选域名/端口）  2) 分开（各协议独立填写）"
@@ -5671,57 +5724,6 @@ menu_collect_install() {
                 green "  ↳ reality_private: 自动生成 (默认)"
             fi
         fi
-    fi
-
-    # SNI / CDN 值设定
-    echo ""
-    purple "===== SNI / CDN 设置 ====="
-    green "  1) 全部使用默认值(偷懒就用默认)"
-    green "     默认值：Argo CF 优选域名=saas.sin.fan, Argo CF 优选端口=443(仅限 HTTPS 系端口 ${HTTPS_CDN_PORTS_TEXT}),"
-    green "             Hysteria2 伪装域名=www.apple.com, VLESS 伪装域名=www.apple.com,"
-    green "             VLESS 伪装端口=443, TUIC 伪装域名=www.apple.com"
-    green "  2) 逐个展开单独设置（可自定义，推荐）"
-    reading "输入选择 (回车默认=1): " _ans
-    if [ "$_ans" = "2" ]; then
-        green "  ↳ SNI/CDN: 逐个设置"
-        reading "  Argo CF 优选域名 argo_cf_host (默认=saas.sin.fan): " _ans
-        [ -n "$_ans" ] && export argo_cf_host="$_ans"
-        green "  ↳ Argo CF 优选域名: ${argo_cf_host:-saas.sin.fan}"
-        yellow "  可选 CDN 优选端口(仅限 HTTPS 系端口)：${HTTPS_CDN_PORTS_TEXT}"
-        reading "  Argo CF 优选端口 argo_cf_pt (默认=443): " _ans
-        if [ -n "$_ans" ]; then
-            local _p _cdn_ok=false
-            for _p in "${HTTPS_CDN_PORTS[@]}"; do
-                [ "$_ans" = "$_p" ] && { _cdn_ok=true; break; }
-            done
-            if $_cdn_ok; then
-                export argo_cf_pt="$_ans"
-                green "  ↳ Argo CF 优选端口: ${argo_cf_pt}"
-            else
-                yellow "  ❌ CDN 端口仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS_TEXT})，已用默认 443"
-                export argo_cf_pt="443"
-                green "  ↳ Argo CF 优选端口: ${argo_cf_pt} (默认)"
-            fi
-        else
-            green "  ↳ Argo CF 优选端口: ${argo_cf_pt:-443} (默认)"
-        fi
-        reading "  Hysteria2 伪装域名 (默认=www.apple.com): " _ans
-        [ -n "$_ans" ] && export hy_sni="$_ans"
-        green "  ↳ Hysteria2 伪装域名: ${hy_sni:-www.apple.com}"
-        reading "  VLESS 伪装域名 (默认=www.apple.com): " _ans
-        [ -n "$_ans" ] && export vl_sni="$_ans"
-        green "  ↳ VLESS 伪装域名: ${vl_sni:-www.apple.com}"
-        reading "  VLESS 伪装端口 (默认=443): " _ans
-        [ -n "$_ans" ] && export vl_sni_pt="$_ans"
-        green "  ↳ VLESS 伪装端口: ${vl_sni_pt:-443}"
-        reading "  TUIC 伪装域名 (默认=www.apple.com): " _ans
-        [ -n "$_ans" ] && export tu_sni="$_ans"
-        green "  ↳ TUIC 伪装域名: ${tu_sni:-www.apple.com}"
-    else
-        green "  ↳ SNI/CDN: 全部使用默认值"
-        green "  ↳ Argo CF 优选域名=${argo_cf_host:-saas.sin.fan}, Argo CF 优选端口=${argo_cf_pt:-443},"
-        green "  ↳ Hysteria2 伪装域名=${hy_sni:-www.apple.com}, VLESS 伪装域名=${vl_sni:-www.apple.com},"
-        green "  ↳ VLESS 伪装端口=${vl_sni_pt:-443}, TUIC 伪装域名=${tu_sni:-www.apple.com}"
     fi
 
     # 节点名称前缀（最后询问）
