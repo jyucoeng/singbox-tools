@@ -32,7 +32,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="2.0.19(2026-09-08)"
+VERSION="2.0.21(2026-09-08)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -2413,7 +2413,7 @@ ws_cdn_proto_enabled() {
 # 订阅的 CDN 域名：共享 ws_cdn_cf_host > vmess 专属 > vless 专属 > trojan 专属，取第一个非空。
 # 专属 host 仅在对应协议启用了 ws_cdn 时才借用；固定顺序与 ws_cdn 传参顺序无关，保证可预期
 # 订阅的 CDN 域名：共享回源域名 ws_cdn_sni > vmess 专属 > vless 专属 > trojan 专属，取第一个非空。
-# ⚠️ 订阅 https 域名必须是「回源域名」(ws_cdn_sni 系列/真实子域名)，CF 按 Host/SNI 路由回源到 nginx_pt；
+# ⚠️ 订阅 https 域名必须是「回源域名」(ws_cdn_sni 系列/真实回源域名)，CF 按 Host/SNI 路由回源到 nginx_pt；
 #    用 CF 优选域名(ws_cdn_cf_host 系列)做订阅地址会因不匹配回源规则而 530
 ws_cdn_sub_host() {
     local h=""
@@ -4406,20 +4406,20 @@ regenerate_links_and_sub() {
         _ws_p="$(ws_cdn_eff_pt "$_p")"
         # SNI 缺失提示：host 是优选 IP 或未配置任何 sni 时，wss 无法做 TLS 校验，明确提示用户
         if [ -z "$_ws_s" ]; then
-            yellow "⚠️ ${_p}-WS-CDN：连接地址(${_ws_h})是 IP/域名但未提供真实子域名 SNI，客户端将无法校验 TLS。"
-            yellow "   请设置 ws_cdn_${_p}_sni（或共享 ws_cdn_sni）为真实子域名，或在菜单「node → SNI/CDN 设置」中修改。"
+            yellow "⚠️ ${_p}-WS-CDN：连接地址(${_ws_h})是 IP/域名但未提供真实回源域名 SNI，客户端将无法校验 TLS。"
+            yellow "   请设置 ws_cdn_${_p}_sni（或共享 ws_cdn_sni）为真实回源域名，或在菜单「node → SNI/CDN 设置」中修改。"
         fi
         case "$_p" in
             vless)
-                # add/host 连接地址用 _ws_h（CF 优选域名/优选IP），host 头与 SNI 用真实子域名 _ws_s
+                # add/host 连接地址用 _ws_h（CF 优选域名/优选IP），host 头与 SNI 用真实回源域名 _ws_s
                 _ws_link="vless://${uuid}@${_ws_h}:${_ws_p}?encryption=none&security=tls&type=ws&host=${_ws_s}&path=%2F${uuid}-vl-cdn&sni=${_ws_s}&fp=chrome#$(node_frag "${sxname}vless-ws-cdn-${hostname}")"
                 ;;
             vmess)
-                # add 连接地址用 _ws_h（优选域名/优选IP），host 头与 SNI 用真实子域名 _ws_s
+                # add 连接地址用 _ws_h（优选域名/优选IP），host 头与 SNI 用真实回源域名 _ws_s
                 _ws_link="vmess://$(printf '%s' "{\"v\":\"2\",\"ps\":$(json_escape_string "${sxname}vmess-ws-cdn-${hostname}"),\"add\":$(json_escape_string "${_ws_h}"),\"port\":\"${_ws_p}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":$(json_escape_string "${_ws_s}"),\"path\":\"/${uuid}-vm-cdn\",\"tls\":\"tls\",\"sni\":$(json_escape_string "${_ws_s}")}" | base64 | tr -d '\n\r')"
                 ;;
             trojan)
-                # add/host 连接地址用 _ws_h，host 头与 SNI 用真实子域名 _ws_s
+                # add/host 连接地址用 _ws_h，host 头与 SNI 用真实回源域名 _ws_s
                 _ws_link="trojan://${uuid}@${_ws_h}:${_ws_p}?security=tls&type=ws&host=${_ws_s}&path=%2F${uuid}-tr-cdn&sni=${_ws_s}&fp=chrome#$(node_frag "${sxname}trojan-ws-cdn-${hostname}")"
                 ;;
         esac
@@ -5292,7 +5292,10 @@ menu_collect_install() {
     fi
     if [ -n "$_argo_list" ]; then
         export argo="$_argo_list"
-        green "  ↳ Argo 协议: ${_argo_list} (可多选)"
+        _argo_comma="${_argo_list//[!,]/}"
+        _argo_n=$((${#_argo_comma}+1))
+        if [ "$_argo_n" -eq 1 ]; then _argo_sfx="单选，${_argo_n}个"; else _argo_sfx="已多选，${_argo_n}个"; fi
+        green "  ↳ Argo 协议: ${_argo_list} (${_argo_sfx})"
     else
         export argo=""
         green "  ↳ Argo 协议: 不选 (默认)"
@@ -5340,7 +5343,10 @@ menu_collect_install() {
         _ws_list="${_ws_list#,}"
         if [ -n "$_ws_list" ]; then
             export ws_cdn="$_ws_list"
-            green "  ↳ WS-CDN 回源 启用: ${_ws_list}（回源端口 = nginx_pt，稍后订阅步骤可设置，默认 8080）"
+            _ws_comma="${_ws_list//[!,]/}"
+            _ws_n=$((${#_ws_comma}+1))
+            if [ "$_ws_n" -eq 1 ]; then _ws_sfx="单选，${_ws_n}个"; else _ws_sfx="已多选，${_ws_n}个"; fi
+            green "  ↳ WS-CDN 回源 启用: ${_ws_list}（${_ws_sfx}，回源端口 = nginx_pt，稍后订阅步骤可设置，默认 8080）"
             # 各协议的专属 CF 优选域名/SNI 在下方「Argo 隧道配置」之后、开启订阅之前另行填写
         fi
     else
@@ -5496,7 +5502,7 @@ menu_collect_install() {
     if [ -n "$ws_cdn" ]; then
         echo ""
         purple "===== WS-CDN 回源 · 域名设置 ====="
-        green "  CDN 域名填写方式：1) 统一（所有选中协议共用同一个 CF 优选域名/子域名）  2) 分开（各协议独立填写）"
+        green "  CDN 域名填写方式：1) 统一（所有选中协议共用同一个 CF 优选域名/回源域名）  2) 分开（各协议独立填写）"
         reading "  选择 (回车=1 统一): " _ws_mode
         if [ "$_ws_mode" = "2" ]; then
             # ---- 分开设置：逐协议填写专属 CF 优选域名/端口/SNI（相同回车沿用上一个） ----
@@ -5545,9 +5551,9 @@ menu_collect_install() {
                 _wsn=""
                 while true; do
                     if [ -n "$_prev_sni" ]; then
-                        reading "  ${_wn}-WS-CDN 专属子域名 SNI (回车=沿用 ${_prev_sni}；或输入): " _wsn
+                        reading "  ${_wn}-WS-CDN 专属回源域名 SNI (回车=沿用 ${_prev_sni}；或输入): " _wsn
                     else
-                        reading "  ${_wn}-WS-CDN 专属子域名 SNI (必填，真实域名，如 ${_ws_p}.example.com): " _wsn
+                        reading "  ${_wn}-WS-CDN 专属回源域名 SNI (必填，真实域名，如 ${_ws_p}.example.com): " _wsn
                     fi
                     if [ -z "$_wsn" ] && [ -n "$_prev_sni" ]; then
                         _wsn="$_prev_sni"
@@ -5558,7 +5564,7 @@ menu_collect_install() {
                         continue
                     fi
                     if ! is_valid_domain "$_wsn"; then
-                        red "  ❌ SNI 非法：不能是 IP，需为真实子域名（如 ${_ws_p}.example.com）"
+                        red "  ❌ SNI 非法：不能是 IP，需为真实回源域名（如 ${_ws_p}.example.com）"
                         continue
                     fi
                     break
@@ -5578,9 +5584,9 @@ menu_collect_install() {
             green "  ↳ WS-CDN 共享 CF 优选域名: ${ws_cdn_cf_host:-saas.sin.fan}"
             local _usn=""
             while true; do
-                reading "  共享子域名 SNI ws_cdn_sni（真实域名，必填）: " _usn
+                reading "  共享回源域名 SNI ws_cdn_sni（真实域名，必填）: " _usn
                 if [ -z "$_usn" ]; then red "  ❌ SNI 必填，不能留空"; continue; fi
-                if ! is_valid_domain "$_usn"; then red "  ❌ SNI 非法：不能是 IP，需为真实子域名"; continue; fi
+                if ! is_valid_domain "$_usn"; then red "  ❌ SNI 非法：不能是 IP，需为真实回源域名"; continue; fi
                 break
             done
             export ws_cdn_sni="$_usn"
@@ -6058,7 +6064,7 @@ edit_snis_menu() {
         green "  ── WS-CDN 回源参数 ──"
         green "  8)  WS-CDN 共享域名 (连接入口/CDN 优选)"
         yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/ws_cdn_cf_host" 2>/dev/null)"
-        green "  9)  WS-CDN 共享 SNI (真实子域名)"
+        green "  9)  WS-CDN 共享 SNI (真实回源域名)"
         yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/ws_cdn_sni" 2>/dev/null)"
         green " 10)  WS-CDN 共享端口 (仅限 HTTPS 系 ${HTTPS_CDN_PORTS_TEXT})"
         yellow "       当前: $(read_port_file ws_cdn_cf_pt)"
@@ -6151,7 +6157,7 @@ edit_snis_menu() {
                 menu_pause
                 ;;
             9)
-                reading "请输入新的 WS-CDN 共享 SNI（真实子域名，Host/SNI 用，留空=取消）: " _val
+                reading "请输入新的 WS-CDN 共享 SNI（真实回源域名，Host/SNI 用，留空=取消）: " _val
                 [ -z "$_val" ] && { yellow "已取消"; menu_pause; continue; }
                 echo "$_val" > "$SINGBOX_FOLDER_PATH/ws_cdn_sni"
                 refresh_sb_and_sub

@@ -83,7 +83,7 @@ ws_cdn='vmess,vless,trojan' \
 ws_cdn_cf_host='cdn.example.com' \
 ws_cdn_sni='cdn.example.com' \
 ws_cdn_cf_pt=443 \
-# 每协议可选不同专属子域名（Cloudflare origin rule 多子域名同 A 记录）：
+# 每协议可选不同专属回源域名（Cloudflare origin rule 多回源域名同 A 记录）：
 # ws_cdn_vless_cf_host='vless.example.com' 或 ws_cdn_trojan_cf_host='trojan.example.com'，对应再配 ws_cdn_vless_sni / ws_cdn_trojan_sni
 ws_cdn_vless_cf_host='vless.example.com' \
 ws_cdn_trojan_cf_host='trojan.example.com' \
@@ -271,7 +271,7 @@ Nginx 只在以下任一情况满足时才安装/配置：
 
 **开关**：`ws_cdn=vmess,vless,trojan`（逗号分隔，可多选）
 
-**域名支持每个协议不同**（适用于 Cloudflare origin rule 泛域名 + 多子域名同 A 记录），优先级：`协议专属 > 共享 ws_cdn_* > 默认 saas.sin.fan/443`
+**域名支持每个协议不同**（适用于 Cloudflare origin rule 泛域名 + 多回源域名同 A 记录），优先级：`协议专属 > 共享 ws_cdn_* > 默认 saas.sin.fan/443`
 
 | 变量 | 说明 | 默认 |
 |------|------|------|
@@ -280,10 +280,10 @@ Nginx 只在以下任一情况满足时才安装/配置：
 | `ws_cdn_vmess_sni` 等 | 各协议专属回源域名（host/SNI） | 回退共享 ws_cdn_sni |
 | `ws_cdn_vmess_cf_pt` 等 | 各协议专属 CF 优选端口 | 回退共享 ws_cdn_cf_pt |
 | `ws_cdn_cf_host` | 共享 CF 优选域名（各协议**连接地址 add** 兜底；可填优选 IP/域名） | 回退默认 saas.sin.fan |
-| `ws_cdn_sni` | 共享回源域名（真实子域名；作为节点 host/SNI 与**订阅地址**域名，Cloudflare 按此域名匹配回源规则转发到你的 nginx_pt） | 回退 ws_cdn_eff_host |
+| `ws_cdn_sni` | 共享回源域名（真实回源域名；作为节点 host/SNI 与**订阅地址**域名，Cloudflare 按此域名匹配回源规则转发到你的 nginx_pt） | 回退 ws_cdn_eff_host |
 | `ws_cdn_cf_pt` | 共享 CDN 端口（仅限 https 系端口） | 443 |
 
-**示例**（vless 和 trojan 用不同子域名，vmess 用共享）：
+**示例**（vless 和 trojan 用不同回源域名，vmess 用共享）：
 ```bash
 ws_cdn='vmess,vless,trojan' \
 ws_cdn_cf_host='cdn.example.com' \
@@ -344,7 +344,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ### 8.5.1、 CF（Cloudflare）回源规则如何配置？
 
-WS-CDN 回源链路：`客户端 → CDN(ws_cdn_cf_pt) → 服务器 nginx_pt(默认 8080)`。要让 Cloudflare 把你的子域名请求回源到你服务器的 nginx，需要三步：**Origin Rules（回源端口）** + **DNS 记录** + **SSL 加密模式设为「灵活」**，缺一不可。
+WS-CDN 回源链路：`客户端 → CDN(ws_cdn_cf_pt) → 服务器 nginx_pt(默认 8080)`。要让 Cloudflare 把你的回源域名请求回源到你服务器的 nginx，需要三步：**Origin Rules（回源端口）** + **DNS 记录** + **SSL 加密模式设为「灵活」**，缺一不可。
 
 #### 1、如何添加一个回源端口规则（Origin Rules）？
 
@@ -358,7 +358,7 @@ WS-CDN 回源链路：`客户端 → CDN(ws_cdn_cf_pt) → 服务器 nginx_pt(�
   - 点击 **And**，再选 **SSL/HTTPS**，**等于**，**确保这一行后面的开关要选上（打勾）**
 - 然后下面的**目标端口** 重写到 **31007**（这个 31007 端口就是你的 **nginx 订阅端口 nginx_pt** 的值，按你实际配置的 `nginx_pt` 填写）
 
-> 规则里的 `*node.xxxx.nyc.mn` 通配符要能覆盖你实际用的三个子域名：`vmess-node.xxxx.nyc.mn` / `vless-node.xxxx.nyc.mn` / `trojan-node.xxxx.nyc.mn`（或多个节点共用的其它域名）。
+> 规则里的 `*node.xxxx.nyc.mn` 通配符要能覆盖你实际用的三个回源域名：`vmess-node.xxxx.nyc.mn` / `vless-node.xxxx.nyc.mn` / `trojan-node.xxxx.nyc.mn`（或多个节点共用的其它域名）。
 
 #### 2、域名 `xxxx.nyc.mn` 的 DNS 记录
 
@@ -373,7 +373,7 @@ trojan-node.xxxx.nyc.mn  →  192.9.100.***   （小黄云开不开都可以）
 > 三条记录指向**同一个 IPv4**（同一台服务器），配合上面的 Origin Rules 泛域名回源到 nginx_pt；
 > `小黄云`（Cloudflare 橙色云代理）开或不开都可以——开=走 CDN+CDN TLS 终结，关=仅 CDN 反代一样能到 nginx。
 
-> **⚠️ 每个实际用到的 SNI 子域名都必须有 DNS 记录**。节点里的 `sni/host` 用的分别是 `ws_cdn_vmess_sni` / `ws_cdn_vless_sni` / `ws_cdn_trojan_sni`（没设专属就回退共享 `ws_cdn_sni`），**凡是当 SNI 用的子域名，每个都必须在 DNS 里有一条记录**，缺哪个哪个节点就是 **530（Origin DNS Error）**。
+> **⚠️ 每个实际用到的 SNI 回源域名都必须有 DNS 记录**。节点里的 `sni/host` 用的分别是 `ws_cdn_vmess_sni` / `ws_cdn_vless_sni` / `ws_cdn_trojan_sni`（没设专属就回退共享 `ws_cdn_sni`），**凡是当 SNI 用的回源域名，每个都必须在 DNS 里有一条记录**，缺哪个哪个节点就是 **530（Origin DNS Error）**。
 
 #### 3、SSL 加密模式必须设成「灵活（Flexible）」（否则回源必定 525）
 
@@ -404,10 +404,10 @@ trojan-node.xxxx.nyc.mn  →  192.9.100.***   （小黄云开不开都可以）
 
 | 你在哪填 | 对应的脚本变量 | 说明 |
 |---|---|---|
-| 上面三条 A 记录的子域名 | `ws_cdn_vmess_cf_host` / `ws_cdn_vless_cf_host` / `ws_cdn_trojan_cf_host` | 各协议的专属子域名（连接地址 add 可以仍用优选域名/IP） |
+| 上面三条 A 记录的回源域名 | `ws_cdn_vmess_cf_host` / `ws_cdn_vless_cf_host` / `ws_cdn_trojan_cf_host` | 各协议的专属回源域名（连接地址 add 可以仍用优选域名/IP） |
 | Origin Rules 的目标端口 | `nginx_pt`（默认 8080） | CDN 回源到服务器 nginx 的端口 |
 | 客户端连 CDN 的端口 | `ws_cdn_cf_pt`（默认 443） | CDN 对外 HTTPS 端口 |
-| 各协议/共享 SNI（真实域名） | `ws_cdn_vmess_sni` 等 / `ws_cdn_sni` | 对应上面 A 记录的某个子域名 |
+| 各协议/共享 SNI（真实域名） | `ws_cdn_vmess_sni` 等 / `ws_cdn_sni` | 对应上面 A 记录的某个回源域名 |
 | CF 的 SSL/TLS 加密模式 | 无脚本变量（Cloudflare 后台） | node 子域必须「灵活」，否则回源 525 |
 
 #### 8.5.2、排错：三个 CDN 节点连不上？先对号入座
@@ -417,7 +417,7 @@ trojan-node.xxxx.nyc.mn  →  192.9.100.***   （小黄云开不开都可以）
 | 表现 | Cloudflare 错误码 | 原因 | 解决 |
 |---|---|---|---|
 | vmess/vless/trojan-WS-CDN 全不通，Argo/直连正常 | **525** | 橙云记录 + SSL 模式「完全/完全严格」，Cloudflare 用 TLS 回源，而 nginx_pt 只讲 HTTP | 按上面**第 3 步**把 node 子域 SSL 加密模式设成「灵活」 |
-| trojan-WS-CDN（或某个协议）单独不通 | **530**（Origin DNS Error） | 该协议当 SNI 用的子域名（如 `trojan-cdn-node.xxxx.nyc.mn`）**没有 DNS 记录** | 在 DNS 里补一条 A/CNAME 记录，见**第 2 步**警告 |
+| trojan-WS-CDN（或某个协议）单独不通 | **530**（Origin DNS Error） | 该协议当 SNI 用的回源域名（如 `trojan-cdn-node.xxxx.nyc.mn`）**没有 DNS 记录** | 在 DNS 里补一条 A/CNAME 记录，见**第 2 步**警告 |
 | 所有 WS / Argo 都不通 | 521 / 522 / 523 | nginx 没运行、回源端口被防火墙挡、Origin Rules 端口没对上 | 检查 `nginx` 状态、防火墙放行 nginx_pt、Origin Rules 目标端口是否正确 |
 
 ## 9、 agn / agk（Argo 固定隧道）
@@ -505,7 +505,7 @@ argo_cf_pt=8443 \
 # ---- CDN 回源（ws_cdn，经你自己的 CDN 反代到服务器 nginx，不用 Argo；可多选） ----
 # ws_cdn='vmess,trojan,vless' \
 # ws_cdn_cf_host='saas.sin.fan' \              # 共享 CF 优选域名（各协议连接地址 add 兜底）
-# ws_cdn_sni='cdn.example.com' \               # 共享回源域名（真实子域名，也是订阅地址域名）
+# ws_cdn_sni='cdn.example.com' \               # 共享回源域名（真实回源域名，也是订阅地址域名）
 # ws_cdn_vless_cf_host='vless.example.com' \   # 每个协议可选不同专属 CF 优选域名
 # ws_cdn_vless_sni='vless.example.com' \       # 各协议专属回源域名（Host/SNI，未填回退共享 ws_cdn_sni）
 # ------------------------------------------------------------------------
@@ -659,7 +659,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 ### 三个协议用一个共享 CF 优选域名 + 共享回源域名
 
 ```bash
-# ws_cdn_cf_host=共享 CF 优选域名（各协议连接地址 add 兜底）；ws_cdn_sni=共享回源域名（真实子域名，也是订阅地址域名）
+# ws_cdn_cf_host=共享 CF 优选域名（各协议连接地址 add 兜底）；ws_cdn_sni=共享回源域名（真实回源域名，也是订阅地址域名）
 ws_cdn='vmess,vless,trojan' \
 ws_cdn_cf_host='saas.sin.fan' \
 ws_cdn_sni='cdn.example.com' \
@@ -667,7 +667,7 @@ subscribe=true \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
-### 每个协议不同专属域名（CF 优选域名 + 回源域名，Cloudflare origin rule 泛域名 + 多子域名同 A 记录）
+### 每个协议不同专属域名（CF 优选域名 + 回源域名，Cloudflare origin rule 泛域名 + 多回源域名同 A 记录）
 
 ```bash
 # 各协议可选不同专属 CF 优选域名（连接地址）与专属回源域名（Host/SNI）
@@ -850,13 +850,13 @@ v2.0.4 (2026-09-08)
  v2.0.3 (2026-09-08)
  - **新增 ws_cdn 功能**：Vmess/Vless/Trojan WS 走 CDN 直连（不使用 Argo）
  - 新增开关 `ws_cdn=vmess,vless,trojan`（逗号分隔，可多选）；与 Argo 共存时节点两者都输出
- - 域名支持每个协议不同（适用 Cloudflare origin rule 泛域名 + 多子域名同 A 记录）：`ws_cdn_vmess_cf_host` / `ws_cdn_vless_cf_host` / `ws_cdn_trojan_cf_host`（+ 各自 `_sni`/`_pt`）
+ - 域名支持每个协议不同（适用 Cloudflare origin rule 泛域名 + 多回源域名同 A 记录）：`ws_cdn_vmess_cf_host` / `ws_cdn_vless_cf_host` / `ws_cdn_trojan_cf_host`（+ 各自 `_sni`/`_pt`）
  - 共享兜底参数：`ws_cdn_cf_host` / `ws_cdn_sni` / `ws_cdn_cf_pt`（默认 443）；优先级「协议专属 > 共享 > 默认 saas.sin.fan/443」
  - 复用现有本地 ws 端口（port_vm_ws / port_vl_ws / port_tr）与 nginx 反代（/${uuid}-vm/-vl/-tr），**不新增端口文件 / 不新增 inbound / 不新增 nginx location**
  - CDN 回源端口 = 服务器 `nginx_pt`（默认 8080）；nginx 安装条件与 8080 防火墙放行加入 ws_cdn 场景
  - 订阅地址新优先级（show_sub_url）：固定 Argo（隧道存活）> 共享回源域名 ws_cdn_sni > 专属回源域名 ws_cdn_{p}_sni > 临时 Argo > http；支持 `sub_domain=argo/cdn` 强制指定
  - 新增生效值解析函数 `ws_cdn_val / ws_cdn_eff_host/sni/pt / ws_cdn_proto_enabled`；配置落盘 + 环境变量优先
- - 交互菜单新增「Vmess/Vless/Trojan WS 走 CDN 直连」选择块（多选协议 + 逐协议子域名 + 共享 host/sni/端口）
+ - 交互菜单新增「Vmess/Vless/Trojan WS 走 CDN 直连」选择块（多选协议 + 逐协议回源域名 + 共享 host/sni/端口）
  - 安全：所有动态赋值（落盘/菜单注入）改用间接展开 + `printf -v`，不再用 `eval`
  - 顺带修复：端口设置菜单按 `vmag` 判断是否需要 Argo 端口（此前 ws_cdn 触发 vmp/vlp/trp 会误问 Argo 端口）
 
