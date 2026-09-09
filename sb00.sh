@@ -32,7 +32,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="3.0.5(2026-09-09)"
+VERSION="3.0.6(2026-09-09)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -3825,6 +3825,9 @@ ins() {
     green "  IP偏好: ${ippz:-自动}"
     green "  出口 IP: ${_exit_ip:-自动检测}${_exit_label}${_exit_region}"
     green "  直连对外域名: ${_dh:-未设置}${_dhr}"
+    if [ -n "$_dh_unknown" ]; then
+        yellow "    ⚠️ 该域名查不到地区：可能是乱写的/未注册域名，或 DNS 记录未生效，请核实后再用（否则直连节点会连不上）"
+    fi
     green "  UUID: ${uuid:-自动生成}"
     echo ""
     # ---- 直连块：协议 / Socks5 / 直连端口 / 伪装SNI ----
@@ -5561,6 +5564,9 @@ menu_collect_install() {
             _dhq="$(query_ip_region "$_ans" 2>/dev/null)"
             if [ -n "$_dhq" ]; then _dhq2=" (${_dhq})"; else _dhq2=" （地区: 未知）"; fi
             green "  ↳ 使用对外域名 (direct_host): ${_ans}${_dhq2} → 直连协议(hy2/tuic/vless/anytls/socks5)链接将用域名替换服务器 IP"
+            if [ -z "$_dhq" ]; then
+                yellow "    ⚠️ 该域名查不到地区：可能是乱写的/未注册域名，或 DNS 记录未生效，请核实后再继续（否则直连节点会连不上）"
+            fi
             # 计算该域名应绑的 IP（真正要绑的地址）：out_ip 优先（真实出口），否则用检测到的 IP
             # IPv4 → A 记录，IPv6 → AAAA 记录（按 IP 类型自动算）；两类都有则两条都提示；DNS 记录里不带 []
             _va1=""; _va6=""
