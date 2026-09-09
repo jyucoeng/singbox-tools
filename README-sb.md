@@ -780,7 +780,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 ## 2、 如何卸载呢？
 ```bash
 
-bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)  del
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)  delall
 
 > `delall`：与 `del` 效果类似，但会**完全删除** sing-box 文件夹（不保留二进制文件 / 配置），相当于彻底卸载。
 ```
