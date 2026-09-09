@@ -32,7 +32,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="3.0.4(2026-09-09)"
+VERSION="3.0.5(2026-09-09)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -4387,6 +4387,29 @@ strip_ip_brackets() {
 
 # 直连对外域名(direct_host)的 Cloudflare DNS 绑定提醒：A/AAAA 按 server_ip（真实对外 IP）类型自动算，并提醒关闭小黄云
 # 有 direct_host 才打印；无则静默。server_ip 文件里的地址就是直连链接实际使用的地址，即"真正要绑的 IP"。
+# 返回本机已安装的直连协议（按 inbound tag 判断，逗号分隔，如 hysteria2,tuic,socks5；均无则返回空）
+direct_installed_proto_list() {
+    local _cfg="$SINGBOX_FOLDER_PATH/sb.json" _plist=""
+    [ -s "$_cfg" ] || { printf '%s' ""; return 0; }
+    grep -q "hy2-sb"                  "$_cfg" 2>/dev/null && _plist="$_plist,hysteria2"
+    grep -q "tuic-sb"                 "$_cfg" 2>/dev/null && _plist="$_plist,tuic"
+    grep -q "vless-reality-vision-sb" "$_cfg" 2>/dev/null && _plist="$_plist,vless-reality"
+    grep -q "anytls-sb"               "$_cfg" 2>/dev/null && _plist="$_plist,anytls"
+    grep -q "socks5-sb"               "$_cfg" 2>/dev/null && _plist="$_plist,socks5"
+    printf '%s' "${_plist#,}"
+}
+
+# 菜单里提示 direct_host 会影响哪些本机已装的直连协议
+print_direct_proto_affected() {
+    local _plist
+    _plist="$(direct_installed_proto_list)"
+    if [ -n "$_plist" ]; then
+        yellow "  📌 将影响本机已安装的直连协议: ${_plist}"
+    else
+        yellow "  📌 当前未启用任何直连协议（本设置不影响任何节点）"
+    fi
+}
+
 print_direct_host_dns_hint() {
     local _dh=""
     [ -s "$SINGBOX_FOLDER_PATH/direct_host" ] || return 0
@@ -4394,8 +4417,15 @@ print_direct_host_dns_hint() {
     [ -n "$_dh" ] || return 0
     local _sip=""
     _sip="$(cat "$SINGBOX_FOLDER_PATH/server_ip" 2>/dev/null | tr -d '[]\r\n')"
+    # 统计本机实际安装的直连协议（按 inbound tag 判断），提醒时只列真正受影响的已装协议
+    local _plist
+    _plist="$(direct_installed_proto_list)"
     echo ""
-    purple "  ⚠️ 记得去 Cloudflare DNS 给该域名添加解析记录（否则直连节点连不上）："
+    if [ -n "$_plist" ]; then
+        purple "  ⚠️ direct_host 对外域名「${_dh}」会影响本机已安装的直连协议（${_plist}）链接，请去 Cloudflare DNS 添加解析记录："
+    else
+        purple "  ⚠️ direct_host 对外域名「${_dh}」已设置，但当前未启用任何直连协议（此项可忽略），请去 Cloudflare DNS 添加解析记录："
+    fi
     if [ -n "$_sip" ] && echo "$_sip" | grep -q ':'; then
         green "    AAAA 记录:  ${_dh} → ${_sip}"
     elif [ -n "$_sip" ]; then
@@ -4404,6 +4434,7 @@ print_direct_host_dns_hint() {
         yellow "    （未读取到 server_ip，请把该域名绑定到你当前出口 IP）"
     fi
     yellow "    ⛔ 小黄云(Proxy)务必关闭（灰云/DNS only）；开着则 UDP 直连(hy2/tuic)会失败"
+    yellow "    （Argo / CDN 回源(ws_cdn)协议有自己的 CDN 域名，不受 direct_host 影响）"
 }
 
 # show nodes
@@ -4423,9 +4454,6 @@ cip() {
     show_local_ip_info_with_out_ip_hint
 
     regenerate_links_and_sub "$1"
-
-    # 若设置了直连对外域名，提醒在 Cloudflare DNS 绑定 A/AAAA 记录并关闭小黄云
-    print_direct_host_dns_hint
 
     echo
     yellow "📌 节点订阅地址："
@@ -4658,6 +4686,9 @@ regenerate_links_and_sub() {
         append_jh "$socks5_link"
         echo
     fi
+
+    # 直连块结束：若设置了 direct_host（对外域名），提醒 Cloudflare DNS 绑定 + 关小黄云（仅直连协议受影响，显示一次）
+    print_direct_host_dns_hint
 
     update_subscription_file
 
@@ -6898,6 +6929,7 @@ edit_mask_host_menu() {
             fi
             # 反查该域名当前真正解析到的 IP，并与服务器 IP 比对
             print_domain_resolve_and_check "$_cur_dh"
+            print_direct_proto_affected
         else
             yellow "  📌 当前对外域名: 未设置（直连链接使用真实 IP）"
         fi
@@ -6919,10 +6951,9 @@ edit_mask_host_menu() {
                     else
                         yellow "✅ 对外域名已设置: ${_in}（⚠️ 未获取到地区，请确认已在 Cloudflare DNS 添加该域名的 A/AAAA 记录且已生效；也可能本机无法访问地区服务 ip-api.com）"
                     fi
-                    # 随后打印 Cloudflare DNS 绑定 A/AAAA + 关小黄云 提醒（按 server_ip 类型自动算）
-                    print_direct_host_dns_hint
                     # 反查该域名当前解析到的 IP，并与服务器 IP 比对
                     print_domain_resolve_and_check "$_in"
+                    print_direct_proto_affected
                     refresh_sb_and_sub
                 else
                     yellow "❗ 输入无效或已取消（需为合法域名，如 node.example.com）"
