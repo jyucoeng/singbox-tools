@@ -8,9 +8,10 @@
 
 <a id="c1"></a>
 
-📌 **快速定位：**
-- [**① 基础命令**](#mod-1)　[**② 直连协议片段**](#mod-2)　[**③ Argo 协议片段**](#mod-3)　[**④ 回源协议片段**](#mod-4)　[**⑤ Nginx 模块**](#mod-5)
-- [**综合示例（直连 + Argo + 回源全开，整段可复制）**](#full-example)　[**CF（Cloudflare）回源规则部署**](#cf-origin)　[第 1 章 · 安装与卸载](#c1)　[第 2 章 · 其余说明（聚合/卸载/日志/防火墙/版本/快捷指令）](#c2)
+#### 📌 快速定位
+#### [**① 基础命令**](#mod-1)　[**② 直连协议片段**](#mod-2)　[**③ Argo 协议片段**](#mod-3)　[**④ 回源协议片段**](#mod-4)　[**⑤ Nginx 模块**](#mod-5)
+#### [**综合示例（直连 + Argo + 回源全开，整段可复制）**](#full-example)　[**如何卸载**](#uninstall)　
+#### [**CF（Cloudflare）回源规则部署**](#cf-origin)　[**第 1 章 · 安装与卸载**](#c1)　[**第 2 章 · 其余说明**](#c2)
 
 # 1、 singbox 安装以及卸载
 ## singbox 一键安装脚本（vmess argo/trojan argo/vless argo 可多选 + hy2+vless-Reality+tuic+anytls+socks5 + ws_cdn 三协议 CDN 回源，这些协议可自由组合）
@@ -718,44 +719,71 @@ Nginx 的一份配置里同时监听 `nginx_pt`（默认 8080，对外）和 `12
 <a id="full-example"></a>
 ## 1、 聚合节点文件（所有已选协议都会输出到 jh.txt）
 
-### 这里给列出一些基础变量
 ```bash
-# 所有已选协议的节点都会写入 /root/doraemon/jh.txt；整段可直接运行，删除某行即为不启用对应功能
+# 综合示例：直连 + Argo + 回源 全开，所有环境变量都在这（整段可复制；删除某行=不启用对应功能；带“你的”字样的占位请改成真实值）
+# ===== 基础命令 =====
 uuid=0631a7f3-09f8-4144-acf2-a4f5bd9ed200 \
 ippz=4 \
+name='小叮当-美国加州' \
+nginx_pt=41007 \
+subscribe=true \
+out_ip='特殊出口IP' \
+direct_host='你的对外域名' \
+DEBUG_FLAG=0 \
+# ===== 直连：伪装 SNI =====
+hy_sni='www.apple.com' \
+vl_sni='www.apple.com' \
+vl_sni_pt=443 \
+tu_sni='www.apple.com' \
+any_sni='www.apple.com' \
+# ===== 直连：端口 =====
 vlrt=41003 \
 hypt=41004 \
 tupt=41005 \
 anypt=41006 \
-argo='vmess,vless' \
-argo_cf_host='saas.sin.fan' \
-argo_cf_pt=8443 \
-socks5pt=31017 \
+reality_private='GHxxxxxxxxxxxxx-xxxxxx-VnXH6FjxxA' \
+# ===== Socks5 =====
+socks5pt=41017 \
 socks5_username='zhangsan' \
 socks5_password='Zsztm4gdsg!' \
 socks5_wl_flag=true \
 socks5_ips='1.2.3.4,5.6.7.0/24' \
-nginx_pt=41007 \
-subscribe=true \
-reality_private='GHxxxxxxxxxxxxx-xxxxxx-VnXH6FjxxA' \
-name='小叮当-美国加州' \
+# ===== Argo：共有 =====
+argo='vmess,vless,trojan' \
+argo_cf_host='saas.sin.fan' \
+argo_cf_pt=443 \
+argo_pt=8001 \
+agn='固定Argo隧道域名' \
+agk='固定Argo隧道token' \
+# ===== Argo：各协议独有 =====
+argo_vmess_cf_host='vm.example.com' \
+argo_vmess_cf_pt=443 \
+argo_vless_cf_host='vl.example.com' \
+argo_vless_cf_pt=443 \
+argo_trojan_cf_host='tr.example.com' \
+argo_trojan_cf_pt=443 \
+# ===== 回源（ws_cdn）：共有 =====
+ws_cdn='vmess,vless,trojan' \
+ws_cdn_cf_host='cdn.example.com' \
+ws_cdn_sni='cdn.example.com' \
+ws_cdn_cf_pt=443 \
+# ===== 回源（ws_cdn）：各协议独有 =====
+ws_cdn_vmess_cf_host='vm-cdn.example.com' \
+ws_cdn_vmess_sni='vm-cdn.example.com' \
+ws_cdn_vmess_cf_pt=443 \
+ws_cdn_vless_cf_host='vl-cdn.example.com' \
+ws_cdn_vless_sni='vl-cdn.example.com' \
+ws_cdn_vless_cf_pt=443 \
+ws_cdn_trojan_cf_host='tr-cdn.example.com' \
+ws_cdn_trojan_sni='tr-cdn.example.com' \
+ws_cdn_trojan_cf_pt=443 \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
-
-# 以下为可选功能：需要时取消 # 注释并填真实值
-# ws_cdn='vmess,trojan,vless' \
-# ws_cdn_cf_host='saas.sin.fan' \
-# ws_cdn_sni='cdn.example.com' \
-# ws_cdn_vless_cf_host='vless.example.com' \
-# ws_cdn_vless_sni='vless.example.com' \
-# agn='california.xxxx.xyz' \
-# agk='ey开头的那一大串'
 ```
 
 
 
 
-
-
+<a id="uninstall"></a>
 ## 2、 如何卸载呢？
 ```bash
 
