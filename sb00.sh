@@ -6921,15 +6921,20 @@ edit_mask_host_menu() {
         echo ""
         if [ -s "$SINGBOX_FOLDER_PATH/direct_host" ]; then
             _cur_dh="$(cat "$SINGBOX_FOLDER_PATH/direct_host" 2>/dev/null | tr -d '\r\n')"
-            _cur_rg="$(safe_query_region "$_cur_dh")"
-            if [ -n "$_cur_rg" ]; then
-                green "  📌 当前对外域名: ${_cur_dh}（地区: ${_cur_rg}）"
+            if [ -z "$_cur_dh" ]; then
+                # 文件存在但内容为空/纯空白 → 视为未设置，不联网、不反查
+                yellow "  📌 当前对外域名: 未设置（直连链接使用真实 IP，残留文件已忽略）"
             else
-                yellow "  📌 当前对外域名: ${_cur_dh}（⚠️ 未获取到地区：域名可能未在 DNS 生效，或本机无法访问地区服务 ip-api.com）"
+                _cur_rg="$(safe_query_region "$_cur_dh")"
+                if [ -n "$_cur_rg" ]; then
+                    green "  📌 当前对外域名: ${_cur_dh}（地区: ${_cur_rg}）"
+                else
+                    yellow "  📌 当前对外域名: ${_cur_dh}（⚠️ 未获取到地区：域名可能未在 DNS 生效，或本机无法访问地区服务 ip-api.com）"
+                fi
+                # 反查该域名当前真正解析到的 IP，并与服务器 IP 比对
+                print_domain_resolve_and_check "$_cur_dh"
+                print_direct_proto_affected
             fi
-            # 反查该域名当前真正解析到的 IP，并与服务器 IP 比对
-            print_domain_resolve_and_check "$_cur_dh"
-            print_direct_proto_affected
         else
             yellow "  📌 当前对外域名: 未设置（直连链接使用真实 IP）"
         fi
