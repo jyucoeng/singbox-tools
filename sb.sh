@@ -32,7 +32,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="3.0.3(2026-09-08)"
+VERSION="3.0.6(2026-09-09)"
 AUTHOR="littleDoraemon"
 
 # Environment variables for controlling CDN host and SNI values
@@ -61,8 +61,14 @@ export socks5_password=${socks5_password:-''}
 export socks5_wl_flag=${socks5_wl_flag:-''}  # socks5 IP白名单开关: true/1=开启, 空/其他=关闭(默认)
 export socks5_ips=${socks5_ips:-''}      # socks5 IP白名单列表, 逗号分隔 (如 "1.2.3.4,5.6.7.0/24")
 
-# 获取到的IP和出口ip不一样的时候，优先使用出口ip也就是out_ip
+# 出口 IP(out_ip)：仅接受合法 IP（原逻辑不变）；当本机检测 IP 与实际出口 IP 不一致时，用 out_ip 覆盖 server_ip
 export out_ip=${out_ip:-''}
+
+# 直连协议对外域名(direct_host)：专门用于"掩盖IP"的域名，与 out_ip / server_ip 逻辑互不干扰
+# - 有值且为合法域名 → 写入 direct_host 文件，直连协议(hy2/tuic/vless-reality/anytls/socks5)链接 host 用域名替换真实 IP
+# - 未设置/为空/非法   → 不影响；保留已落盘的 direct_host 文件（覆盖重装不丢）
+# 说明：Argo/回源协议各有自己的 CDN 域名，不受 direct_host 影响
+export direct_host=${direct_host:-''}
 
 # Argo 相关环境变量
 # argo 取值：vmess / vless / trojan（可多选，逗号分隔，如 argo=vmess,vless；旧单值照常）
@@ -3618,7 +3624,7 @@ EOF
 
     debug_log "【调试】pick_server_ip_for_install：开始对比out_ip与server_ip，out_ip=${out_ip}，server_ip=${server_ip}"
 
-    # 8) 处理 out_ip：去括号后再比较；若 out_ip 合法且与 server_ip 不同，则 out_ip 覆盖server_ip的值
+    # 8) 处理 out_ip：去括号后再比较；若 out_ip 合法且与 server_ip 不同，则 out_ip 覆盖server_ip的值（原逻辑不变）
     local out_norm
     out_norm="$(strip_ip_brackets_all "${out_ip:-}")"
     if is_valid_ip_simple "$out_norm" && [ -n "$out_norm" ]; then
@@ -3627,6 +3633,17 @@ EOF
             debug_log "【调试】pick_server_ip_for_install：out_ip合法且与server_ip不同，out_norm=${out_norm}，server_ip=${server_ip}"
             server_ip="$out_norm"
         fi
+    fi
+
+    # 8-1) 处理 direct_host：直连协议对外域名（专用掩盖IP，不影响 out_ip / server_ip 逻辑）
+    #      - direct_host 有值且为合法域名 → 写入 direct_host 文件（直连链接 host 换域名）
+    #      - 未设置/为空/非法             → 不改变已落盘的 direct_host 文件（覆盖重装不丢掩码）
+    if is_valid_domain "${direct_host:-}"; then
+        mkdir -p "$SINGBOX_FOLDER_PATH" 2> /dev/null || true
+        printf '%s\n' "$direct_host" > "$SINGBOX_FOLDER_PATH/direct_host"
+        debug_log "【调试】pick_server_ip_for_install：direct_host=${direct_host}，已写入 direct_host 文件，server_ip 保持 ${server_ip}"
+    else
+        debug_log "【调试】pick_server_ip_for_install：direct_host 为空或非法（'${direct_host:-空}'），保留已落盘 direct_host 掩码"
     fi
 
     debug_log "【调试】pick_server_ip_for_install：最终选择的服务器IP，server_ip=$server_ip"
@@ -3783,9 +3800,22 @@ ins() {
     elif [ -n "$_ipv6" ] && [ "$_exit_ip" = "$_ipv6" ]; then
         _exit_label=" (IPv6)"
     fi
-    # 国家/城市：geo_get_ip 返回如 "日本, 东京"，命中 geo 缓存则无网络开销
+    # 国家/城市：geo_get_ip 返回如 "日本, 东京"，命中 geo 缓存则无网络开销（原逻辑不变）
     [ -n "$_exit_ip" ] && _exit_region="$(geo_get_ip "$_exit_ip")"
     [ -n "$_exit_region" ] && _exit_region=" ($_exit_region)"
+    # 直连对外域名预告（direct_host：优先环境变量，否则已落盘文件；用 ip-api.com 查地区，支持域名）
+    local _dh="" _dhr="" _dh_unknown=""
+    _dh="${direct_host:-}"
+    [ -z "$_dh" ] && [ -s "$SINGBOX_FOLDER_PATH/direct_host" ] && _dh="$(cat "$SINGBOX_FOLDER_PATH/direct_host" 2>/dev/null | tr -d '\r\n')"
+    if [ -n "$_dh" ] && is_valid_domain "$_dh"; then
+        _dhr="$(query_ip_region "$_dh" 2>/dev/null)"
+        if [ -n "$_dhr" ]; then
+            _dhr=" ($_dhr)"
+        else
+            _dhr=" （地区: 未知）"
+            _dh_unknown=1
+        fi
+    fi
     # 无交互安装才打印「安装参数」日志（交互式已通过菜单逐项展示值，这里只展示接收到的环境变量，不影响流程）
     if [ "${_INTERACTIVE_MODE:-0}" != "1" ]; then
     green ""
@@ -3794,6 +3824,10 @@ ins() {
     green "  日志调试: ${DEBUG_FLAG:-0}"
     green "  IP偏好: ${ippz:-自动}"
     green "  出口 IP: ${_exit_ip:-自动检测}${_exit_label}${_exit_region}"
+    green "  直连对外域名: ${_dh:-未设置}${_dhr}"
+    if [ -n "$_dh_unknown" ]; then
+        yellow "    ⚠️ 该域名查不到地区：可能是乱写的/未注册域名，或 DNS 记录未生效，请核实后再用（否则直连节点会连不上）"
+    fi
     green "  UUID: ${uuid:-自动生成}"
     echo ""
     # ---- 直连块：协议 / Socks5 / 直连端口 / 伪装SNI ----
@@ -4359,6 +4393,59 @@ strip_ip_brackets() {
     echo "$ip"
 }
 
+# 直连对外域名(direct_host)的 Cloudflare DNS 绑定提醒：A/AAAA 按 server_ip（真实对外 IP）类型自动算，并提醒关闭小黄云
+# 有 direct_host 才打印；无则静默。server_ip 文件里的地址就是直连链接实际使用的地址，即"真正要绑的 IP"。
+# 返回本机已安装的直连协议（按 inbound tag 判断，逗号分隔，如 hysteria2,tuic,socks5；均无则返回空）
+direct_installed_proto_list() {
+    local _cfg="$SINGBOX_FOLDER_PATH/sb.json" _plist=""
+    [ -s "$_cfg" ] || { printf '%s' ""; return 0; }
+    grep -q "hy2-sb"                  "$_cfg" 2>/dev/null && _plist="$_plist,hysteria2"
+    grep -q "tuic-sb"                 "$_cfg" 2>/dev/null && _plist="$_plist,tuic"
+    grep -q "vless-reality-vision-sb" "$_cfg" 2>/dev/null && _plist="$_plist,vless-reality"
+    grep -q "anytls-sb"               "$_cfg" 2>/dev/null && _plist="$_plist,anytls"
+    grep -q "socks5-sb"               "$_cfg" 2>/dev/null && _plist="$_plist,socks5"
+    printf '%s' "${_plist#,}"
+}
+
+# 菜单里提示 direct_host 会影响哪些本机已装的直连协议
+print_direct_proto_affected() {
+    local _plist
+    _plist="$(direct_installed_proto_list)"
+    if [ -n "$_plist" ]; then
+        yellow "  📌 将影响本机已安装的直连协议: ${_plist}"
+    else
+        yellow "  📌 当前未启用任何直连协议（本设置不影响任何节点）"
+    fi
+}
+
+print_direct_host_dns_hint() {
+    local _dh=""
+    [ -s "$SINGBOX_FOLDER_PATH/direct_host" ] || return 0
+    _dh="$(cat "$SINGBOX_FOLDER_PATH/direct_host" 2>/dev/null | tr -d '\r\n')"
+    [ -n "$_dh" ] || return 0
+    local _sip=""
+    _sip="$(cat "$SINGBOX_FOLDER_PATH/server_ip" 2>/dev/null | tr -d '[]\r\n')"
+    # 统计本机实际安装的直连协议（按 inbound tag 判断），提醒时只列真正受影响的已装协议
+    local _plist
+    _plist="$(direct_installed_proto_list)"
+    if [ -n "$_plist" ]; then
+        purple "  ⚠️ direct_host 对外域名「${_dh}」会影响本机已安装的直连协议（${_plist}）链接，请去 Cloudflare DNS 添加解析记录："
+    else
+        purple "  ⚠️ direct_host 对外域名「${_dh}」已设置，但当前未启用任何直连协议（此项可忽略），请去 Cloudflare DNS 添加解析记录："
+    fi
+    if [ -n "$_sip" ] && echo "$_sip" | grep -q ':'; then
+        green "    AAAA 记录:  ${_dh} → ${_sip}"
+    elif [ -n "$_sip" ]; then
+        green "    A 记录:     ${_dh} → ${_sip}"
+    else
+        yellow "    （未读取到 server_ip，请把该域名绑定到你当前出口 IP）"
+    fi
+    yellow "    ⛔ 小黄云(Proxy)务必关闭（灰云/DNS only）；开着则 UDP 直连(hy2/tuic)会失败"
+    yellow "    （Argo / CDN 回源(ws_cdn)协议有自己的 CDN 域名，不受 direct_host 影响）"
+    echo ""
+    echo ""
+}
+
 # show nodes
 cip() {
     echo
@@ -4416,6 +4503,11 @@ regenerate_links_and_sub() {
     rm -rf "$SINGBOX_FOLDER_PATH/jh.txt"
     uuid=$(cat "$SINGBOX_FOLDER_PATH/uuid")
     server_ip=$(cat "$SINGBOX_FOLDER_PATH/server_ip" 2> /dev/null)
+    # 直连协议对外域名（direct_host 落盘的文件）→ 有掩码时直连链接地址用域名，无则用真实 server_ip
+    # 说明：direct_host 只影响直连协议，Argo/回源协议的链接用各自 CDN 域名，不受影响
+    local addr
+    addr="$(cat "$SINGBOX_FOLDER_PATH/direct_host" 2> /dev/null | tr -d '\r\n')"
+    addr="${addr:-$server_ip}"
     # 清洗 name（去掉 CR/LF，防跨行注入订阅）
     sxname=$(cat "$SINGBOX_FOLDER_PATH/name" 2> /dev/null | tr -d '\r\n')
 
@@ -4428,7 +4520,7 @@ regenerate_links_and_sub() {
         port_hy2=$(cat "$SINGBOX_FOLDER_PATH/port_hy2")
         hy_sni=$(cat "$SINGBOX_FOLDER_PATH/hy_sni")
         SHA256_hy2=$(openssl x509 -in "$SINGBOX_FOLDER_PATH/cert.pem" -outform DER 2>/dev/null | sha256sum | awk '{print $1}')
-        hy2_link="hysteria2://$uuid@$server_ip:$port_hy2/?sni=${hy_sni}&insecure=1&pinSHA256=${SHA256_hy2}&alpn=h3&obfs=none#$(node_frag "${sxname}hy2-${hostname}")"
+        hy2_link="hysteria2://$uuid@$addr:$port_hy2/?sni=${hy_sni}&insecure=1&pinSHA256=${SHA256_hy2}&alpn=h3&obfs=none#$(node_frag "${sxname}hy2-${hostname}")"
         yellow "🎯【 Hysteria2 】(直连协议)"
         green "$hy2_link"
         append_jh "$hy2_link"
@@ -4441,7 +4533,7 @@ regenerate_links_and_sub() {
         tu_sni=$(cat "$SINGBOX_FOLDER_PATH/tu_sni")
         password=$uuid
 
-        tuic_link="tuic://${uuid}:${password}@${server_ip}:${port_tu}?sni=${tu_sni}&congestion_control=bbr&security=tls&udp_relay_mode=native&alpn=h3&allow_insecure=1#$(node_frag "${sxname}tuic-${hostname}")"
+        tuic_link="tuic://${uuid}:${password}@${addr}:${port_tu}?sni=${tu_sni}&congestion_control=bbr&security=tls&udp_relay_mode=native&alpn=h3&allow_insecure=1#$(node_frag "${sxname}tuic-${hostname}")"
         yellow "🎯【 TUIC 】(直连协议)"
         green "$tuic_link"
         append_jh "$tuic_link"
@@ -4456,7 +4548,7 @@ regenerate_links_and_sub() {
 
         debug_log "【调试】regenerate_links_and_sub函数中的short_id,值为:$short_id"
 
-        vless_link="vless://${uuid}@${server_ip}:${port_vlr}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${vl_sni}&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#$(node_frag "${sxname}vless-reality-${hostname}")"
+        vless_link="vless://${uuid}@${addr}:${port_vlr}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${vl_sni}&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#$(node_frag "${sxname}vless-reality-${hostname}")"
         yellow "🎯【 VLESS-Reality-Vision 】(直连协议)"
         green "$vless_link"
         append_jh "$vless_link"
@@ -4470,12 +4562,15 @@ regenerate_links_and_sub() {
         port_any=$(cat "$SINGBOX_FOLDER_PATH/port_any")
         any_sni=$(cat "$SINGBOX_FOLDER_PATH/any_sni")
 
-        anytls_link="anytls://${uuid}@${server_ip}:${port_any}?security=tls&sni=${any_sni}&fp=firefox&insecure=1&allowInsecure=1&type=tcp#$(node_frag "${sxname}anytls-${hostname}")"
+        anytls_link="anytls://${uuid}@${addr}:${port_any}?security=tls&sni=${any_sni}&fp=firefox&insecure=1&allowInsecure=1&type=tcp#$(node_frag "${sxname}anytls-${hostname}")"
         yellow "🔐【 AnyTLS 】(直连协议)"
         green "$anytls_link"
         append_jh "$anytls_link"
         echo
     fi
+
+    # 直连块（hy2/tuic/vless-reality/anytls）结束：若设置了 direct_host（对外域名），提醒 Cloudflare DNS 绑定 + 关小黄云（仅直连协议受影响，显示一次）
+    print_direct_host_dns_hint
 
     argodomain=$(cat "$SINGBOX_FOLDER_PATH/argo_domain" 2> /dev/null)
 
@@ -4584,7 +4679,7 @@ regenerate_links_and_sub() {
 
         socks5_user_enc=$(url_encode_component "$socks5_username")
         socks5_pass_enc=$(url_encode_component "$socks5_password")
-        socks5_link="socks5://${socks5_user_enc}:${socks5_pass_enc}@${server_ip}:${port_socks5}#$(node_frag "${sxname}socks5-${hostname}")"
+        socks5_link="socks5://${socks5_user_enc}:${socks5_pass_enc}@${addr}:${port_socks5}#$(node_frag "${sxname}socks5-${hostname}")"
         yellow "🧦【 Socks5 】(此协议请不要直接在客户端里直连使用)"
         green "$socks5_link"
         local _wl_flag_val=""
@@ -5457,6 +5552,48 @@ menu_collect_install() {
         green "  ↳ 使用自定义 IP (out_ip): ${_ans} (${_odq:-未知})"
     else
         green "  ↳ 使用检测到的 IP: ${_use_ip}"
+    fi
+
+    # 直连协议对外域名 (direct_host)：专门掩盖IP 用，与 out_ip 互不干扰，可留空
+    reading "  直连协议对外域名 direct_host（掩盖IP用，如 node.example.com；回车=留空）: " _ans
+    if [ -n "$_ans" ]; then
+        if is_valid_domain "$_ans"; then
+            export direct_host="$_ans"
+            local _dhq _va1 _va6 _dhq2
+            # ip-api.com 支持直接传域名：服务端解析后返回地区
+            _dhq="$(query_ip_region "$_ans" 2>/dev/null)"
+            if [ -n "$_dhq" ]; then _dhq2=" (${_dhq})"; else _dhq2=" （地区: 未知）"; fi
+            green "  ↳ 使用对外域名 (direct_host): ${_ans}${_dhq2} → 直连协议(hy2/tuic/vless/anytls/socks5)链接将用域名替换服务器 IP"
+            if [ -z "$_dhq" ]; then
+                yellow "    ⚠️ 该域名查不到地区：可能是乱写的/未注册域名，或 DNS 记录未生效，请核实后再继续（否则直连节点会连不上）"
+            fi
+            # 计算该域名应绑的 IP（真正要绑的地址）：out_ip 优先（真实出口），否则用检测到的 IP
+            # IPv4 → A 记录，IPv6 → AAAA 记录（按 IP 类型自动算）；两类都有则两条都提示；DNS 记录里不带 []
+            _va1=""; _va6=""
+            if printf '%s' "${out_ip:-}" | tr -d '[]' | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+                _va1="$(printf '%s' "$out_ip" | tr -d '[]')"
+            elif [ -n "$_ipv4" ]; then
+                _va1="$(printf '%s' "$_ipv4" | tr -d '[]')"
+            fi
+            if printf '%s' "${out_ip:-}" | tr -d '[]' | grep -q ':'; then
+                _va6="$(printf '%s' "$out_ip" | tr -d '[]')"
+            elif [ -n "$_ipv6" ]; then
+                _va6="$(printf '%s' "$_ipv6" | tr -d '[]')"
+            fi
+            echo ""
+            purple "  ⚠️ 记得去 Cloudflare DNS 给该域名添加解析记录（否则直连节点连不上）："
+            if [ -n "$_va1" ]; then green "    A 记录:     ${_ans} → ${_va1}"; fi
+            if [ -n "$_va6" ]; then green "    AAAA 记录:  ${_ans} → ${_va6}"; fi
+            if [ -z "$_va1" ] && [ -z "$_va6" ]; then
+                yellow "    （暂未检测到可绑定的出口 IP，请绑定到你当前出口 IP）"
+            fi
+            yellow "    ⛔ 小黄云(Proxy)务必关闭（灰云/DNS only）；开着则 UDP 直连(hy2/tuic)会失败"
+            echo ""
+        else
+            yellow "  ↳ 输入无效，对外域名未设置（仅接受合法域名）"
+        fi
+    else
+        yellow "  ↳ 对外域名 (direct_host): 未设置（直连链接将使用真实 IP）"
     fi
 
     reading "UUID (回车自动生成): " _ans
@@ -6693,6 +6830,165 @@ edit_socks5_whitelist_menu() {
     done
 }
 
+# 域名反查真实 IP（多系统兼容：alpine/debian/ubuntu）
+# 策略：getent 系列（glibc ahosts=双栈 / busybox hosts）+ dig + host + nslookup 叠加去重，
+#       仍无结果时用 DoH（curl+jq 必装）兜底，覆盖 AAAA-only 且本地工具解析不到的 IPv6 场景。
+# 防卡顿：整体由 resolve_domain_ips 外包 timeout；dig 限 +time=2 +tries=1，DoH 限 -m3。
+_resolve_domain_ips_impl() {
+    local d="$1" f="${TMPDIR:-/tmp}/.sb_resolve.$$"
+    [ -n "$d" ] || return 1
+    trap 'rm -f "$f"' EXIT HUP INT TERM
+    rm -f "$f" 2>/dev/null || true
+    : > "$f"
+    # 1) getent：glibc(Debian/Ubuntu) 有 ahosts/ahostsv6；busybox(Alpine) 只有 hosts
+    if command -v getent >/dev/null 2>&1; then
+        getent ahosts   "$d" 2>/dev/null | awk '{print $1}' >> "$f"
+        getent hosts    "$d" 2>/dev/null | awk '{print $1}' >> "$f"
+        getent ahostsv6 "$d" 2>/dev/null | awk '{print $1}' >> "$f"
+    fi
+    # 2) dig（bind-utils/dnsutils 若装了；显式限时，防止默认 5s 超时拖慢菜单）
+    if command -v dig >/dev/null 2>&1; then
+        { dig +short +time=2 +tries=1 "$d" A 2>/dev/null; dig +short +time=2 +tries=1 "$d" AAAA 2>/dev/null; } >> "$f"
+    fi
+    # 3) host（若装了）
+    if command -v host >/dev/null 2>&1; then
+        host "$d" 2>/dev/null | awk '/has address|has IPv6 address/{print $NF}' >> "$f"
+    fi
+    # 4) nslookup：兼容 glibc("Address:") 与 busybox("Address 1:") 两种输出；过滤本地解析器行(带 # 端口)
+    if command -v nslookup >/dev/null 2>&1; then
+        nslookup "$d" 2>/dev/null | awk '/^Address( 1)?:/{line=$0; sub(/^Address( 1)?: */, "", line); print line}' \
+            | grep -v '#' >> "$f"
+    fi
+    local out
+    out="$(grep -v '^[[:space:]]*$' "$f" | sort -u)"
+    # 5) 本地解析仍空 → DoH（cloudflare 公共 DNS，curl+jq 为脚本必装依赖；-m3 限时）
+    if [ -z "$out" ] && command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+        local q
+        for q in A AAAA; do
+            curl -s -m3 "https://cloudflare-dns.com/dns-query?name=${d}&type=${q}" \
+                -H 'accept: application/dns-json' 2>/dev/null \
+                | jq -r '(.Answer[]? | select(.type == 1 or .type == 28) | .data)' >> "$f"
+        done
+        out="$(grep -v '^[[:space:]]*$' "$f" | sort -u)"
+    fi
+    printf '%s' "$out" | tr '\n' ' '
+    return 0
+}
+
+# 对外反查入口：整体 timeout 兜底（默认 8s，可用 DIRECT_HOST_RESOLVE_TIMEOUT 覆盖），保证不卡菜单
+resolve_domain_ips() {
+    local d="$1" out=""
+    [ -n "$d" ] || return 1
+    if command -v timeout >/dev/null 2>&1; then
+        out="$(timeout "${DIRECT_HOST_RESOLVE_TIMEOUT:-8}" _resolve_domain_ips_impl "$d" 2>/dev/null)"
+    else
+        out="$(_resolve_domain_ips_impl "$d" 2>/dev/null)"
+    fi
+    printf '%s' "$out" | sed 's/ $//'
+    return 0
+}
+
+# 地区查询的菜单安全包装：整体 6s 超时，避免 ip-api 的 https→http 双查询慢时卡菜单
+safe_query_region() {
+    local v="$1"
+    [ -n "$v" ] || return 0
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 6 query_ip_region "$v" 2>/dev/null
+    else
+        query_ip_region "$v" 2>/dev/null
+    fi
+}
+
+# 反查并比对：域名当前解析到哪些 IP，是否已指向服务器真实 IP（server_ip 文件）
+print_domain_resolve_and_check() {
+    local _d="$1" _ips="" _sip="" _norm=""
+    [ -n "$_d" ] || return 0
+    _ips="$(resolve_domain_ips "$_d")"
+    if [ -n "$_ips" ]; then
+        green "  📌 该域名当前解析到: ${_ips}"
+    else
+        yellow "  📌 该域名当前反查不到 IP（DNS 未生效 / 解析超时 / 无解析工具）"
+        return 0
+    fi
+    [ -s "$SINGBOX_FOLDER_PATH/server_ip" ] || return 0
+    _sip="$(cat "$SINGBOX_FOLDER_PATH/server_ip" 2>/dev/null | tr -d '[]\r\n')"
+    [ -n "$_sip" ] || return 0
+    _norm=" $(printf '%s' "$_ips" | tr ' ' '\n' | tr -d '[]' | tr '\n' ' ') "
+    case "$_norm" in
+        *" $_sip "*) green "  ✓ 已解析到服务器 IP（${_sip}），DNS 配置正确" ;;
+        *) yellow "  ⚠️ 未解析到服务器 IP（${_sip}）！请把 DNS 的 A/AAAA 记录指向该 IP" ;;
+    esac
+}
+
+# 直连协议对外域名（掩盖IP）设置子菜单
+# 安装/覆盖安装时 direct_host 环境变量会写这个文件；这里提供可视化查看/修改/清除
+edit_mask_host_menu() {
+    local _sel _in _cur_dh _cur_rg
+    while true; do
+        clear
+        green "========= [4][6] 节点配置修改 → 直连对外域名 (掩盖IP) ========="
+        echo ""
+        yellow "  直连协议 (hy2/tuic/vless-reality/anytls/socks5) 链接默认使用真实服务器 IP。"
+        yellow "  设置对外域名后，这些链接将用域名替换 IP；Argo/回源协议有自己的 CDN 域名，不受影响。"
+        yellow "  要求：域名须能解析到本机（如 DNS A/AAAA 记录），端口沿用本地监听端口。"
+        echo ""
+        if [ -s "$SINGBOX_FOLDER_PATH/direct_host" ]; then
+            _cur_dh="$(cat "$SINGBOX_FOLDER_PATH/direct_host" 2>/dev/null | tr -d '\r\n')"
+            if [ -z "$_cur_dh" ]; then
+                # 文件存在但内容为空/纯空白 → 视为未设置，不联网、不反查
+                yellow "  📌 当前对外域名: 未设置（直连链接使用真实 IP，残留文件已忽略）"
+            else
+                _cur_rg="$(safe_query_region "$_cur_dh")"
+                if [ -n "$_cur_rg" ]; then
+                    green "  📌 当前对外域名: ${_cur_dh}（地区: ${_cur_rg}）"
+                else
+                    yellow "  📌 当前对外域名: ${_cur_dh}（⚠️ 未获取到地区：域名可能未在 DNS 生效，或本机无法访问地区服务 ip-api.com）"
+                fi
+                # 反查该域名当前真正解析到的 IP，并与服务器 IP 比对
+                print_domain_resolve_and_check "$_cur_dh"
+                print_direct_proto_affected
+            fi
+        else
+            yellow "  📌 当前对外域名: 未设置（直连链接使用真实 IP）"
+        fi
+        echo ""
+        green "  1) 设置/修改对外域名"
+        red   "  2) 清除对外域名（直连链接恢复用真实 IP）"
+        purple "  0) 返回上级菜单"
+        reading "请输入选择: " _sel
+        case "$_sel" in
+            0) return ;;
+            1)
+                reading "  请输入对外域名 (留空回车=取消): " _in
+                if [ -n "$_in" ] && is_valid_domain "$_in"; then
+                    printf '%s\n' "$_in" > "$SINGBOX_FOLDER_PATH/direct_host"
+                    local _mgrg
+                    _mgrg="$(safe_query_region "$_in")"
+                    if [ -n "$_mgrg" ]; then
+                        green "✅ 对外域名已设置: ${_in}（地区: ${_mgrg}），直连链接将用域名替换 IP"
+                    else
+                        yellow "✅ 对外域名已设置: ${_in}（⚠️ 未获取到地区，请确认已在 Cloudflare DNS 添加该域名的 A/AAAA 记录且已生效；也可能本机无法访问地区服务 ip-api.com）"
+                    fi
+                    # 反查该域名当前解析到的 IP，并与服务器 IP 比对
+                    print_domain_resolve_and_check "$_in"
+                    print_direct_proto_affected
+                    refresh_sb_and_sub
+                else
+                    yellow "❗ 输入无效或已取消（需为合法域名，如 node.example.com）"
+                fi
+                menu_pause
+                ;;
+            2)
+                rm -f "$SINGBOX_FOLDER_PATH/direct_host" 2> /dev/null || true
+                green "✅ 已清除对外域名，直连链接恢复使用真实 IP。"
+                refresh_sb_and_sub
+                menu_pause
+                ;;
+            *) yellow "无效选项"; sleep 1 ;;
+        esac
+    done
+}
+
 # 节点配置修改主菜单
 node_config_menu() {
     local _ch
@@ -6705,6 +7001,7 @@ node_config_menu() {
         green "  3) SNI / CDN 设置修改"
         green "  4) Argo 隧道修改"
         green "  5) 切换 Argo 使用协议 (Vmess-WS-TLS / Trojan-WS-TLS / Vless-WS-TLS)"
+        green "  6) 直连对外域名 (掩盖IP)"
         if grep -q "socks5-sb" "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null; then
             local _wl_status="未开启"
             local _wl_menu_flag=""
@@ -6712,7 +7009,7 @@ node_config_menu() {
             if is_true "$_wl_menu_flag"; then
                 _wl_status="已开启"
             fi
-            green "  6) Socks5 IP白名单管理 (当前：${_wl_status})"
+            green "  7) Socks5 IP白名单管理 (当前：${_wl_status})"
         fi
         purple "  0) 返回主菜单"
         reading "请输入选择: " _ch
@@ -6723,7 +7020,8 @@ node_config_menu() {
             3) edit_snis_menu ;;
             4) edit_argo_menu ;;
             5) edit_argo_protocol_menu ;;
-            6) edit_socks5_whitelist_menu ;;
+            6) edit_mask_host_menu ;;
+            7) edit_socks5_whitelist_menu ;;
             *) yellow "无效选项"; sleep 1 ;;
         esac
     done
