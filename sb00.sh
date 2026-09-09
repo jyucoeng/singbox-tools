@@ -4560,6 +4560,9 @@ regenerate_links_and_sub() {
         echo
     fi
 
+    # 直连块（hy2/tuic/vless-reality/anytls）结束：若设置了 direct_host（对外域名），提醒 Cloudflare DNS 绑定 + 关小黄云（仅直连协议受影响，显示一次）
+    print_direct_host_dns_hint
+
     argodomain=$(cat "$SINGBOX_FOLDER_PATH/argo_domain" 2> /dev/null)
 
     if need_argo && [ -z "$argodomain" ] && [ -s "$LOGS_DIR/argo.log" ]; then
@@ -4686,9 +4689,6 @@ regenerate_links_and_sub() {
         append_jh "$socks5_link"
         echo
     fi
-
-    # 直连块结束：若设置了 direct_host（对外域名），提醒 Cloudflare DNS 绑定 + 关小黄云（仅直连协议受影响，显示一次）
-    print_direct_host_dns_hint
 
     update_subscription_file
 
