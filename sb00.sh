@@ -4420,7 +4420,6 @@ print_direct_host_dns_hint() {
     # 统计本机实际安装的直连协议（按 inbound tag 判断），提醒时只列真正受影响的已装协议
     local _plist
     _plist="$(direct_installed_proto_list)"
-    echo ""
     if [ -n "$_plist" ]; then
         purple "  ⚠️ direct_host 对外域名「${_dh}」会影响本机已安装的直连协议（${_plist}）链接，请去 Cloudflare DNS 添加解析记录："
     else
@@ -4435,6 +4434,8 @@ print_direct_host_dns_hint() {
     fi
     yellow "    ⛔ 小黄云(Proxy)务必关闭（灰云/DNS only）；开着则 UDP 直连(hy2/tuic)会失败"
     yellow "    （Argo / CDN 回源(ws_cdn)协议有自己的 CDN 域名，不受 direct_host 影响）"
+    echo ""
+    echo ""
 }
 
 # show nodes
