@@ -85,6 +85,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ```
 # out_ip='特殊出口IP' \                    # 仅当出口IP与服务器IP不一致时（配合 ippz），一般不填
+# direct_host='你的对外域名' \             # 直连协议(hy2/tuic/vless/anytls/socks5)链接用域名替换服务器IP；需自行加DNS记录并关闭小黄云
 # argo_pt=8001 \                          # Argo 本地回源端口（一般不改）
 # agn='固定Argo隧道域名' \                 # 有固定 CF Tunnel 才填，不填=临时 trycloudflare
 # agk='固定Argo隧道token' \               # token 或 JSON 凭据（JSON 必须用单引号包裹）
@@ -109,6 +110,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 - `uuid`：节点 UUID，不传则自动生成
 - `ippz`：出口 IP 偏好（`4`=仅 IPv4、`6`=仅 IPv6，不传=双栈）；`out_ip` 仅当出口 IP 与服务器 IP 不一致时才需要填（配合 `ippz`）
+- `direct_host`：直连协议对外域名（掩盖IP，可选）；填了就把 hy2/tuic/vless-reality/anytls/socks5 链接里的 host 用该域名替换服务器 IP（需自行在 Cloudflare DNS 加 A/AAAA 记录并关闭「小黄云」；端口仍为各协议本地监听端口）
 - `hy_sni` / `vl_sni` / `tu_sni` / `any_sni`：各协议伪装 SNI（`vl_sni_pt=443` 为 VLESS 的 SNI 端口；`any_sni` 为 AnyTLS 的 SNI）
 - `vlrt`+`vl_sni` = VLESS-Reality；`hypt`+`hy_sni` = Hysteria2；`tupt`+`tu_sni` = TUIC；`anypt` = AnyTLS；`socks5pt` = Socks5 → 端口行删除即不装对应协议
 - `socks5_username` / `socks5_password`：Socks5 认证账号密码（密码含特殊字符时必须用单引号包裹）
@@ -228,6 +230,17 @@ trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
 
   
  ## 👆 👆 👆
+
+ ## 4-1、 direct_host（直连协议对外域名，掩盖IP，可选）
+
+👉 `direct_host='你的对外域名'`：把直连协议（hy2/tuic/vless-reality/anytls/socks5）链接里的 host 从「服务器 IP」替换成该域名。
+
+**前提（脚本不处理 DNS，需自行完成）：**
+1. 到 [Cloudflare 控制台](https://dash.cloudflare.com/) 的 DNS 给该域名添加解析记录，指向服务器**真正绑定的对外 IP**：IPv4 用 A 记录、IPv6 用 AAAA 记录（脚本安装时的 `direct_host` 提示会根据 out_ip / 检测到的 IP 自动算出该绑的地址）；
+2. **务必关闭「小黄云」(Proxy / 橙色云)，保持灰云 (DNS only)**；否则 UDP 直连(hy2/tuic)无法穿透，节点不通；
+3. 端口不变 = 直连协议各自的本地监听端口（`hypt`/`vlrt`/`tupt`/`anypt`/`socks5pt`）。
+
+👉 不传则直连链接继续显示真实服务器 IP，不影响服务运行。该变量**只影响直连协议链接输出**，Argo / CDN 回源链路各有自己的 CDN 域名，不受影响；安装后可用菜单 `node → 直连对外域名 (掩盖IP)` 查看/修改/清除。
 
  ## 5、 各种端口
 
