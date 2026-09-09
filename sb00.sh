@@ -3804,12 +3804,17 @@ ins() {
     [ -n "$_exit_ip" ] && _exit_region="$(geo_get_ip "$_exit_ip")"
     [ -n "$_exit_region" ] && _exit_region=" ($_exit_region)"
     # 直连对外域名预告（direct_host：优先环境变量，否则已落盘文件；用 ip-api.com 查地区，支持域名）
-    local _dh="" _dhr=""
+    local _dh="" _dhr="" _dh_unknown=""
     _dh="${direct_host:-}"
     [ -z "$_dh" ] && [ -s "$SINGBOX_FOLDER_PATH/direct_host" ] && _dh="$(cat "$SINGBOX_FOLDER_PATH/direct_host" 2>/dev/null | tr -d '\r\n')"
     if [ -n "$_dh" ] && is_valid_domain "$_dh"; then
         _dhr="$(query_ip_region "$_dh" 2>/dev/null)"
-        [ -n "$_dhr" ] && _dhr=" ($_dhr)"
+        if [ -n "$_dhr" ]; then
+            _dhr=" ($_dhr)"
+        else
+            _dhr=" （地区: 未知）"
+            _dh_unknown=1
+        fi
     fi
     # 无交互安装才打印「安装参数」日志（交互式已通过菜单逐项展示值，这里只展示接收到的环境变量，不影响流程）
     if [ "${_INTERACTIVE_MODE:-0}" != "1" ]; then
@@ -5551,10 +5556,11 @@ menu_collect_install() {
     if [ -n "$_ans" ]; then
         if is_valid_domain "$_ans"; then
             export direct_host="$_ans"
-            local _dhq _va1 _va6
+            local _dhq _va1 _va6 _dhq2
             # ip-api.com 支持直接传域名：服务端解析后返回地区
             _dhq="$(query_ip_region "$_ans" 2>/dev/null)"
-            green "  ↳ 使用对外域名 (direct_host): ${_ans}${_dhq:+ (${_dhq})} → 直连协议(hy2/tuic/vless/anytls/socks5)链接将用域名替换服务器 IP"
+            if [ -n "$_dhq" ]; then _dhq2=" (${_dhq})"; else _dhq2=" （地区: 未知）"; fi
+            green "  ↳ 使用对外域名 (direct_host): ${_ans}${_dhq2} → 直连协议(hy2/tuic/vless/anytls/socks5)链接将用域名替换服务器 IP"
             # 计算该域名应绑的 IP（真正要绑的地址）：out_ip 优先（真实出口），否则用检测到的 IP
             # IPv4 → A 记录，IPv6 → AAAA 记录（按 IP 类型自动算）；两类都有则两条都提示；DNS 记录里不带 []
             _va1=""; _va6=""
