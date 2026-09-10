@@ -1,4 +1,32 @@
-#!/usr/bin/env bash
+#!/bin/sh
+# ============================================================
+# 引导：确保在 bash 下运行。
+# Alpine 默认可能没有安装 bash，这里用 POSIX sh 完成自动
+# 检测/安装，然后重新交给 bash 执行。
+# ============================================================
+if [ -z "${BASH_VERSION:-}" ]; then
+  if command -v bash >/dev/null 2>&1; then
+    exec bash "$0" "$@"
+  fi
+  echo "本脚本需要 bash。" >&2
+  if [ "$(id -u)" = "0" ]; then
+    if command -v apk >/dev/null 2>&1; then
+      apk add --no-cache bash >/dev/null 2>&1 || true
+    elif command -v apt-get >/dev/null 2>&1; then
+      apt-get update -qy >/dev/null 2>&1 || true
+      apt-get install -y bash >/dev/null 2>&1 || true
+    elif command -v dnf >/dev/null 2>&1; then
+      dnf install -y bash >/dev/null 2>&1 || true
+    elif command -v yum >/dev/null 2>&1; then
+      yum install -y bash >/dev/null 2>&1 || true
+    fi
+    if command -v bash >/dev/null 2>&1; then
+      exec bash "$0" "$@"
+    fi
+  fi
+  echo "错误：无法自动安装 bash。请先手动安装（如: apk add bash / apt install bash）后重试。" >&2
+  exit 1
+fi
 set -Eeuo pipefail
 
 MTU="${MTU:-1500}"
@@ -12,7 +40,7 @@ SERVICE_FILE="${SERVICE_FILE:-}"
 SERVICE_NAME="singleflow-fq-quantum"
 NETPLAN_FILE="${NETPLAN_FILE:-}"
 
-VERSION="1.1.0(2026-07-31)"
+VERSION="1.4.1(2026-09-10)"
 AUTHOR="jyucoeng"
 INTERFACES_FILE="${INTERFACES_FILE:-}"
 IFACE="${IFACE:-}"
@@ -20,7 +48,9 @@ IFACE="${IFACE:-}"
 APT_UPDATED=false
 
 detect_init() {
-  if command -v systemctl >/dev/null 2>&1; then
+  # /run/systemd/system 存在说明 systemd 正在作为 init 运行；
+  # 否则即使装了 systemctl（例如 Docker 容器）也按非 systemd 处理
+  if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
     echo "systemd"
   elif command -v rc-service >/dev/null 2>&1; then
     echo "openrc"
@@ -50,7 +80,7 @@ get_service_file() {
   fi
 }
 
-green() { echo -e "\e[1;32m$1\033[0m"; }
+green() { echo -e "\033[1;32m$1\033[0m"; }
 
 need_root() {
   if [[ "${EUID}" -ne 0 ]]; then
@@ -103,7 +133,7 @@ resolve_and_install() {
       if [[ "$pm" == "apt" ]]; then
         pkg="procps"
       elif [[ "$pm" == "apk" ]]; then
-        pkg="busybox-suid"
+        pkg="busybox"
       else
         pkg="procps-ng"
       fi
@@ -180,9 +210,9 @@ need_cmd() {
 service_enable() {
   local name="$1"
   if [[ "$(detect_init)" == "openrc" ]]; then
-    rc-update add "${name}" default
+    rc-update add "${name}" default 2>/dev/null || true
   else
-    systemctl enable --now "${name}" >/dev/null
+    systemctl enable --now "${name}" >/dev/null 2>&1 || true
   fi
 }
 
@@ -198,9 +228,9 @@ service_disable() {
 service_restart() {
   local name="$1"
   if [[ "$(detect_init)" == "openrc" ]]; then
-    rc-service "${name}" restart 2>/dev/null || rc-service "${name}" start
+    rc-service "${name}" restart 2>/dev/null || rc-service "${name}" start 2>/dev/null || true
   else
-    systemctl restart "${name}"
+    systemctl restart "${name}" >/dev/null 2>&1 || true
   fi
 }
 
@@ -215,7 +245,7 @@ service_stop() {
 
 daemon_reload() {
   if [[ "$(detect_init)" != "openrc" ]]; then
-    systemctl daemon-reload
+    systemctl daemon-reload >/dev/null 2>&1 || true
   fi
 }
 
@@ -228,20 +258,26 @@ ensure_bbr_module() {
     fi
   fi
   if [[ ! -f /etc/modules-load.d/tcp_bbr.conf ]]; then
-    echo "tcp_bbr" > /etc/modules-load.d/tcp_bbr.conf 2>/dev/null || true
-    echo "已配置 tcp_bbr 模块开机自动加载。"
+    if mkdir -p /etc/modules-load.d 2>/dev/null; then
+      echo "tcp_bbr" > /etc/modules-load.d/tcp_bbr.conf 2>/dev/null || true
+      echo "已配置 tcp_bbr 模块开机自动加载。"
+    fi
   fi
 }
 
 detect_iface() {
-  if [[ -n "${IFACE}" ]]; then
+  if [[ -n "${IFACE:-}" ]]; then
     echo "${IFACE}"
     return
   fi
   local detected
+  # 先查 IPv4 默认路由；IPv6-only 环境回退查询 IPv6 默认路由
   detected="$(ip route show default 2>/dev/null | awk 'NR==1 {for (i=1; i<=NF; i++) if ($i=="dev") {print $(i+1); exit}}')"
   if [[ -z "${detected}" ]]; then
-    echo "错误：无法检测默认网络接口。请设置 IFACE=enp0s6 后重试。" >&2
+    detected="$(ip -6 route show default 2>/dev/null | awk 'NR==1 {for (i=1; i<=NF; i++) if ($i=="dev") {print $(i+1); exit}}')"
+  fi
+  if [[ -z "${detected}" ]]; then
+    echo "错误：无法检测默认网络接口（IPv4/IPv6）。请设置 IFACE=<接口名> 后重试。" >&2
     exit 1
   fi
   echo "${detected}"
@@ -279,25 +315,39 @@ detect_interfaces_file() {
 
 backup_file() {
   local file="$1"
-  if [[ -f "${file}" ]]; then
-    cp -a "${file}" "${file}.bak.singleflow.$(date +%Y%m%d%H%M%S)"
+  local backup="${file}.bak.singleflow"
+  # 只在首次创建备份，保留配置文件被优化前的原始内容；
+  # 重复执行 ins 不会覆盖原始备份，保证 del 能完整还原。
+  if [[ -f "${file}" && ! -f "${backup}" ]]; then
+    cp -a "${file}" "${backup}"
+    echo "已备份原始配置: ${backup}"
   fi
+}
+
+get_current_mtu() {
+  local iface="$1"
+  ip link show dev "${iface}" 2>/dev/null | grep -o 'mtu [0-9]*' | head -n 1 | awk '{print $2}'
 }
 
 set_netplan_mtu() {
   local iface="$1"
   local file="$2"
   local mac=""
+  local cur
+  cur="$(get_current_mtu "${iface}")"
   if [[ -z "${file}" || ! -f "${file}" ]]; then
     echo "未找到 netplan 文件。仅应用运行时 MTU。" >&2
-    ip link set dev "${iface}" mtu "${MTU}"
-    return
+    if [[ "${cur}" != "${MTU}" ]]; then
+      ip link set dev "${iface}" mtu "${MTU}"
+      return 0
+    fi
+    return 1
   fi
   backup_file "${file}"
   if [[ -r "/sys/class/net/${iface}/address" ]]; then
     mac="$(tr '[:upper:]' '[:lower:]' < "/sys/class/net/${iface}/address")"
   fi
-  python3 - "$file" "$iface" "$MTU" "$mac" <<'PY'
+  python3 - "$file" "$iface" "$MTU" "$mac" <<'PY' || true
 import pathlib
 import re
 import sys
@@ -413,20 +463,31 @@ else:
 path.write_text("\n".join(lines) + "\n")
 PY
   chmod 600 "${file}" || true
-  netplan generate
-  netplan apply
+  # 运行时 MTU 与目标不一致时才应用 netplan，避免重复触发网络重配置
+  if [[ "${cur}" != "${MTU}" ]]; then
+    netplan generate 2>/dev/null || true
+    netplan apply 2>/dev/null || true
+    ip link set dev "${iface}" mtu "${MTU}" 2>/dev/null || true
+    return 0
+  fi
+  return 1
 }
 
 set_interfaces_mtu() {
   local iface="$1"
   local file="$2"
+  local cur
+  cur="$(get_current_mtu "${iface}")"
   if [[ -z "${file}" || ! -f "${file}" ]]; then
     echo "未找到 interfaces 文件。仅应用运行时 MTU。" >&2
-    ip link set dev "${iface}" mtu "${MTU}"
-    return
+    if [[ "${cur}" != "${MTU}" ]]; then
+      ip link set dev "${iface}" mtu "${MTU}"
+      return 0
+    fi
+    return 1
   fi
   backup_file "${file}"
-  python3 - "$file" "$iface" "$MTU" <<'PY'
+  python3 - "$file" "$iface" "$MTU" <<'PY' || true
 import sys
 import re
 import pathlib
@@ -441,10 +502,11 @@ for i, line in enumerate(lines):
         target_idx = i
         break
 if target_idx == -1:
-    lines.append("")
-    lines.append(f"auto {iface}")
-    lines.append(f"iface {iface} inet dhcp")
-    lines.append(f"    mtu {mtu}")
+    sys.stderr.write(
+        f"警告：未在 {path} 中找到接口 {iface} 的配置，"
+        f"跳过配置文件修改（避免错误的 IPv4 配置影响 IPv6 环境），仅应用运行时 MTU。\n"
+    )
+    sys.exit(0)
 else:
     mtu_idx = -1
     insert_idx = target_idx + 1
@@ -471,10 +533,18 @@ else:
         lines.insert(insert_idx, " " * indent + f"mtu {mtu}")
 path.write_text("\n".join(lines) + "\n")
 PY
-  ip link set dev "${iface}" mtu "${MTU}"
+  if [[ "${cur}" != "${MTU}" ]]; then
+    ip link set dev "${iface}" mtu "${MTU}"
+    return 0
+  fi
+  return 1
 }
 
 write_sysctl() {
+  mkdir -p "$(dirname "${SYSCTL_FILE}")"
+  # 内容一致则跳过，避免重复写文件/重复触发 sysctl -p（幂等）
+  local tmp
+  tmp="$(mktemp)"
   {
     echo "net.ipv4.tcp_congestion_control = bbr"
     if [[ -f /proc/sys/net/core/default_qdisc ]]; then
@@ -483,22 +553,39 @@ write_sysctl() {
     echo "net.ipv4.tcp_wmem = 4096 16384 ${TCP_WMEM_MAX}"
     echo "net.ipv4.tcp_rmem = 4096 131072 ${TCP_RMEM_MAX}"
     echo "net.ipv4.tcp_limit_output_bytes = ${TCP_LIMIT_OUTPUT_BYTES}"
-  } > "${SYSCTL_FILE}"
+  } > "${tmp}"
+  if [[ -f "${SYSCTL_FILE}" ]] && cmp -s "${SYSCTL_FILE}" "${tmp}"; then
+    rm -f "${tmp}"
+    return 1
+  fi
+  mv -f "${tmp}" "${SYSCTL_FILE}"
   sysctl -p "${SYSCTL_FILE}" 2>/dev/null || true
+  return 0
 }
 
 write_qdisc_service() {
   local iface="$1"
+  local changed="${2:-false}"
   local init
   init="$(detect_init)"
   local svc_file
   svc_file="$(get_service_file "$init")"
+  local svc_name
+  svc_name="$(basename "${svc_file}")"
   local tc_path
   tc_path="$(command -v tc)"
+  mkdir -p "$(dirname "${svc_file}")"
+
+  # 判断服务文件是否已由本脚本写入（幂等判断依据）
+  local svc_matches=false
+  if [[ -f "${svc_file}" ]] && grep -q "Generated by singleflow-bbr" "${svc_file}" 2>/dev/null; then
+    svc_matches=true
+  fi
 
   if [[ "$init" == "openrc" ]]; then
     cat > "${svc_file}" <<EOF
 #!/sbin/openrc-run
+# Generated by singleflow-bbr (bbr.sh)，请勿手动编辑
 description="Set fq qdisc quantum for single-flow throughput"
 
 depend() {
@@ -507,19 +594,21 @@ depend() {
 
 start() {
   ebegin "Setting fq qdisc on ${iface}"
+  ${tc_path} qdisc del dev ${iface} root 2>/dev/null
   ${tc_path} qdisc add dev ${iface} root fq quantum ${FQ_QUANTUM} initial_quantum ${FQ_INITIAL_QUANTUM}
   eend \$?
 }
 
 stop() {
   ebegin "Removing fq qdisc from ${iface}"
-  ${tc_path} qdisc del dev ${iface} root
+  ${tc_path} qdisc del dev ${iface} root 2>/dev/null
   eend \$?
 }
 EOF
     chmod +x "${svc_file}"
   else
     cat > "${svc_file}" <<EOF
+# Generated by singleflow-bbr (bbr.sh)，请勿手动编辑
 [Unit]
 Description=Set fq qdisc quantum for single-flow throughput
 After=network-online.target
@@ -537,19 +626,37 @@ EOF
   fi
 
   daemon_reload
-  service_enable "$(basename "${svc_file}")"
-  service_restart "$(basename "${svc_file}")" || true
+  service_enable "${svc_name}"
+
+  local qdisc_fq=false
+  if tc qdisc show dev "${iface}" 2>/dev/null | grep -q ' qdisc fq '; then
+    qdisc_fq=true
+  fi
+
+  # 仅在「有变更 / 服务是新建 / qdisc 尚未应用」时才重启服务，
+  # 保证重复执行 ins 不产生额外扰动（幂等）。
+  if [[ "${changed}" == "true" || "${svc_matches}" != "true" || "${qdisc_fq}" != "true" ]]; then
+    service_restart "${svc_name}" || true
+  fi
+
+  # 无 systemd/openrc 的环境（如容器）：直接应用运行时队列规则
+  if [[ "$init" == "unknown" ]]; then
+    if [[ "${changed}" == "true" || "${qdisc_fq}" != "true" ]]; then
+      ${tc_path} qdisc del dev "${iface}" root 2>/dev/null || true
+      ${tc_path} qdisc add dev "${iface}" root fq quantum "${FQ_QUANTUM}" initial_quantum "${FQ_INITIAL_QUANTUM}" 2>/dev/null || true
+    fi
+  fi
 }
 
 restart_network() {
   echo "正在重启网络服务..."
   if [[ -d "/etc/netplan" ]]; then
-    netplan generate
-    netplan apply
+    netplan generate 2>/dev/null || true
+    netplan apply 2>/dev/null || true
   elif [[ "$(detect_init)" == "openrc" ]]; then
     rc-service networking restart 2>/dev/null || true
   else
-    systemctl restart networking
+    systemctl restart networking 2>/dev/null || true
   fi
   echo "网络服务已重启。"
 }
@@ -567,11 +674,11 @@ show_status() {
   ip link show dev "${iface}" | head -n 1
   echo
   echo "TCP 系统参数："
-  sysctl net.ipv4.tcp_congestion_control \
-         net.core.default_qdisc \
-         net.ipv4.tcp_wmem \
-         net.ipv4.tcp_rmem \
-         net.ipv4.tcp_limit_output_bytes
+  sysctl net.ipv4.tcp_congestion_control 2>/dev/null || echo "net.ipv4.tcp_congestion_control: 不可用"
+  sysctl net.core.default_qdisc 2>/dev/null || echo "net.core.default_qdisc: 不可用"
+  sysctl net.ipv4.tcp_wmem 2>/dev/null || echo "net.ipv4.tcp_wmem: 不可用"
+  sysctl net.ipv4.tcp_rmem 2>/dev/null || echo "net.ipv4.tcp_rmem: 不可用"
+  sysctl net.ipv4.tcp_limit_output_bytes 2>/dev/null || echo "net.ipv4.tcp_limit_output_bytes: 不可用"
   echo
   echo "队列调度规则："
   tc qdisc show dev "${iface}"
@@ -579,15 +686,22 @@ show_status() {
   echo "服务状态："
   if [[ "$(detect_init)" == "openrc" ]]; then
     rc-service "${svc_name}" status || true
+  elif [[ "$(detect_init)" == "systemd" ]]; then
+    systemctl is-enabled "${svc_name}" 2>/dev/null || echo "启用状态: 未知"
+    systemctl is-active "${svc_name}" 2>/dev/null || echo "运行状态: 未知"
   else
-    systemctl is-enabled "${svc_name}"
-    systemctl is-active "${svc_name}"
+    echo "服务管理: 未检测到 systemd/openrc（容器等环境）"
+    if tc qdisc show dev "${iface}" 2>/dev/null | grep -q 'fq'; then
+      echo "队列规则: 已应用"
+    else
+      echo "队列规则: 未应用"
+    fi
   fi
   echo
   if [[ "${config_type}" != "none" ]]; then
     echo "配置方式: ${config_type}"
     echo "配置文件: ${config_file}"
-    echo "备份文件: ${config_file}.bak.singleflow.*"
+    echo "备份文件: ${config_file}.bak.singleflow"
   else
     echo "配置方式: 仅运行时"
   fi
@@ -606,11 +720,11 @@ check_current_status() {
   echo
   echo "网络接口: ${iface}"
   echo "MTU 设置: $(ip link show dev "${iface}" | grep -o 'mtu [0-9]*' || echo '未设置')"
-  echo "TCP 拥塞控制: $(sysctl -n net.ipv4.tcp_congestion_control)"
-  echo "队列调度器: $(sysctl -n net.core.default_qdisc)"
-  echo "TCP 写缓冲: $(sysctl -n net.ipv4.tcp_wmem)"
-  echo "TCP 读缓冲: $(sysctl -n net.ipv4.tcp_rmem)"
-  echo "TCP 输出字节限制: $(sysctl -n net.ipv4.tcp_limit_output_bytes)"
+  echo "TCP 拥塞控制: $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo '不可用')"
+  echo "队列调度器: $(sysctl -n net.core.default_qdisc 2>/dev/null || echo '不可用')"
+  echo "TCP 写缓冲: $(sysctl -n net.ipv4.tcp_wmem 2>/dev/null || echo '不可用')"
+  echo "TCP 读缓冲: $(sysctl -n net.ipv4.tcp_rmem 2>/dev/null || echo '不可用')"
+  echo "TCP 输出字节限制: $(sysctl -n net.ipv4.tcp_limit_output_bytes 2>/dev/null || echo '不可用')"
   echo
   echo "队列规则:"
   tc qdisc show dev "${iface}"
@@ -671,40 +785,61 @@ install_optimization() {
   echo "检测到配置方式: ${config_type}"
   echo "=================================="
   echo
-  
+
+  # 幂等标志：只有发生实际变更时才触发网络重启/服务重启
+  local changed=false
+
   if [[ "${config_type}" == "netplan" ]]; then
-    set_netplan_mtu "${iface}" "${netplan_file}"
+    if set_netplan_mtu "${iface}" "${netplan_file}"; then
+      changed=true
+    fi
   elif [[ "${config_type}" == "interfaces" ]]; then
-    set_interfaces_mtu "${iface}" "${interfaces_file}"
+    if set_interfaces_mtu "${iface}" "${interfaces_file}"; then
+      changed=true
+    fi
   else
     echo "未检测到配置文件。仅应用运行时配置..."
-    ip link set dev "${iface}" mtu "${MTU}"
+    if [[ "$(get_current_mtu "${iface}")" != "${MTU}" ]]; then
+      ip link set dev "${iface}" mtu "${MTU}"
+      changed=true
+    fi
   fi
-  
+
   ensure_bbr_module
-  write_sysctl
+  if write_sysctl; then
+    changed=true
+  fi
   modprobe sch_fq 2>/dev/null || true
-  write_qdisc_service "${iface}"
-  restart_network
+
+  # 幂等：仅当确有变更时才重启网络，重复执行 ins 不会无谓地重启网络
+  if [[ "${changed}" == "true" ]]; then
+    restart_network
+  fi
+
+  write_qdisc_service "${iface}" "${changed}"
   show_status "${iface}" "${config_type}" "${config_file}"
   green "感谢使用，再见👋"
 }
 
 uninstall_optimization() {
   need_root
+  need_cmd ip
+  need_cmd tc
   local iface
   local netplan_file
   local interfaces_file
   local config_file=""
-  
+  local changed=false
+  local config_restored=false
+
   iface="$(detect_iface)"
   netplan_file="$(detect_netplan_file)"
   interfaces_file="$(detect_interfaces_file)"
-  
+
   echo
   echo "========== 开始卸载优化 =========="
   echo
-  
+
   local init
   init="$(detect_init)"
   local svc_file
@@ -715,11 +850,15 @@ uninstall_optimization() {
     service_disable "$(basename "${svc_file}")"
     rm -f "${svc_file}"
     daemon_reload
+    changed=true
   fi
-  
-  echo "移除 TC 队列规则..."
-  tc qdisc del dev "${iface}" root 2>/dev/null || true
-  
+
+  if tc qdisc show dev "${iface}" 2>/dev/null | grep -q ' qdisc fq '; then
+    echo "移除 TC 队列规则..."
+    tc qdisc del dev "${iface}" root 2>/dev/null || true
+    changed=true
+  fi
+
   if [[ -f "${SYSCTL_FILE}" ]]; then
     echo "移除 sysctl 配置文件..."
     rm -f "${SYSCTL_FILE}"
@@ -729,37 +868,59 @@ uninstall_optimization() {
     sysctl -w net.ipv4.tcp_wmem="4096 16384 4194304" || true
     sysctl -w net.ipv4.tcp_rmem="4096 87380 6291456" || true
     sysctl -w net.ipv4.tcp_limit_output_bytes=262144 || true
-    sysctl --system >/dev/null 2>&1 || true
+    if [[ "$(detect_init)" == "openrc" ]]; then
+      rc-service sysctl restart 2>/dev/null || true
+    else
+      sysctl --system >/dev/null 2>&1 || true
+    fi
+    changed=true
   fi
-  
+
   if [[ -n "${netplan_file}" ]]; then
     config_file="${netplan_file}"
   elif [[ -n "${interfaces_file}" ]]; then
     config_file="${interfaces_file}"
   fi
-  
-  if [[ -n "${config_file}" ]]; then
-    local backup
-    backup="$(find "$(dirname "${config_file}")" -maxdepth 1 -type f -name "$(basename "${config_file}").bak.singleflow.*" 2>/dev/null | sort | tail -n 1)"
-    if [[ -n "${backup}" && -f "${backup}" ]]; then
-      echo "从备份还原配置: ${backup}"
-      cp -pf "${backup}" "${config_file}"
-      if [[ "${config_file}" == *"netplan"* ]]; then
-        netplan apply
-      elif [[ "$(detect_init)" == "openrc" ]]; then
-        rc-service networking restart
+
+  if [[ -n "${config_file}" && -f "${config_file}" ]]; then
+    local backup="${config_file}.bak.singleflow"
+    if [[ -f "${backup}" ]]; then
+      if ! cmp -s "${config_file}" "${backup}"; then
+        echo "从备份还原配置: ${backup}"
+        cp -pf "${backup}" "${config_file}"
+        if [[ "${config_file}" == *"netplan"* ]]; then
+          netplan apply 2>/dev/null || true
+        elif [[ "$(detect_init)" == "openrc" ]]; then
+          rc-service networking restart 2>/dev/null || true
+        else
+          systemctl restart networking 2>/dev/null || true
+        fi
+        changed=true
       else
-        systemctl restart networking
+        echo "配置已与备份一致，无需还原。"
       fi
+      config_restored=true
+      # 还原/确认后清理备份，保持干净状态，方便下次 ins 重新备份
+      rm -f "${backup}"
     else
-      echo "警告：未找到备份文件，无法自动还原网络配置。"
+      echo "未找到备份文件 ${backup}，跳过配置还原。"
     fi
   fi
-  
-  echo "还原网络接口 MTU..."
-  ip link set dev "${iface}" mtu 1500 || true
-  restart_network
-  
+
+  # 有配置文件且已还原时以配置为准；否则（仅运行时安装）恢复默认 MTU 1500
+  if [[ "${config_restored}" != "true" ]]; then
+    if [[ "$(get_current_mtu "${iface}")" != "1500" ]]; then
+      echo "还原网络接口 MTU 为 1500..."
+      ip link set dev "${iface}" mtu 1500 || true
+      changed=true
+    fi
+  fi
+
+  # 有实际变更才重启网络；配置文件已还原应用过则无需再重启
+  if [[ "${changed}" == "true" && "${config_restored}" != "true" ]]; then
+    restart_network
+  fi
+
   echo
   echo "========== 卸载完成 =========="
   echo "网络和 TCP 设置已还原为默认值。"
@@ -777,14 +938,44 @@ show_menu() {
   echo "╚═══════════════════════════════════╝"
   echo
   echo "请选择操作:"
-  echo "  1. 安装应用优化"
-  echo "  2. 卸载并还原配置"
-  echo "  3. 查看当前BBR状态"
+  echo "  1. 安装应用优化      # ins"
+  echo "  2. 卸载并还原配置    # reset (del)"
+  echo "  3. 查看当前BBR状态   # status"
   echo "  4. 退出"
+  echo
+  echo "提示: 也可非交互执行 ./bbr.sh ins|reset|status [接口名]"
   echo
 }
 
-main() {
+show_usage() {
+  echo "用法: $0 <命令> [接口名]"
+  echo
+  echo "命令:"
+  echo "  ins          一键安装并应用 BBR + TCP 优化（非交互，可重复执行）"
+  echo "  reset        卸载并还原默认配置（非交互，可重复执行，等价 del）"
+  echo "  del          reset 的别名（等同 reset）"
+  echo "  status       查看当前 BBR / 网络 / TCP 状态"
+  echo "  menu         显示交互菜单（默认无参数时的行为）"
+  echo "  version      显示版本信息"
+  echo "  help         显示本帮助"
+  echo
+  echo "参数:"
+  echo "  [接口名]     可选，指定网卡（等价于设置 IFACE 环境变量）"
+  echo
+  echo "环境变量:"
+  echo "  IFACE MTU FQ_QUANTUM FQ_INITIAL_QUANTUM TCP_WMEM_MAX TCP_RMEM_MAX"
+  echo "  TCP_LIMIT_OUTPUT_BYTES SYSCTL_FILE SERVICE_FILE NETPLAN_FILE INTERFACES_FILE"
+  echo
+  echo "示例:"
+  echo "  $0 ins                      # 自动检测网卡并一键安装"
+  echo "  $0 ins eth0                 # 指定网卡 eth0 一键安装"
+  echo "  $0 reset eth0               # 卸载并还原默认配置（del 等同）"
+  echo "  echo '1' | $0 menu          # 等同交互菜单"
+  echo "  MTU=1420 IFACE=pppoe0 $0 ins eth0"
+  echo
+}
+
+loop_menu() {
   while true; do
     show_menu
     read -p "请输入序号 [1-4]: " choice
@@ -798,15 +989,51 @@ main() {
       3)
         check_current_status
         ;;
-       4)
-         echo "退出程序。"
-         exit 0
+      4)
+        echo "退出程序。"
+        exit 0
         ;;
       *)
         echo "错误：无效的选择，请输入 1-4 之间的数字。"
         ;;
     esac
   done
+}
+
+main() {
+  local cmd="${1:-}"
+  # 可选的第二个参数当作网卡名（等价于 IFACE=xxx）
+  if [[ -z "${IFACE:-}" && -n "${2:-}" ]]; then
+    IFACE="$2"
+  fi
+  case "${cmd}" in
+    "")
+      loop_menu
+      ;;
+    ins | install | req | -i)
+      install_optimization
+      ;;
+    del | uninstall | reset | -u | -r)
+      uninstall_optimization
+      ;;
+    status | check | -s)
+      check_current_status
+      ;;
+    menu)
+      loop_menu
+      ;;
+    version | -v)
+      echo "bbr.sh ${VERSION} (author: ${AUTHOR})"
+      ;;
+    help | -h | --help)
+      show_usage
+      ;;
+    *)
+      echo "错误：未知命令 '${cmd}'。" >&2
+      show_usage
+      exit 1
+      ;;
+  esac
 }
 
 main "$@"
