@@ -184,8 +184,9 @@ resolve_and_install() {
       pacman -Sy --noconfirm "${pkg}" || true
       ;;
     apk)
-      # Alpine glibc-compat trigger 可能报语法错误，但 python3 等包通常已装上
-      apk add --no-cache "${pkg}" 2>/dev/null || true
+      # Alpine glibc-compat trigger 可能报语法错误，但包通常已装上；
+      # apk 的输出（包括 trigger 报错）正常显示，|| true 避免 set -e 中断
+      apk add --no-cache "${pkg}" || true
       ;;
   esac
 
