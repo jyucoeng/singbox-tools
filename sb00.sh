@@ -1,4 +1,17 @@
 #!/bin/sh
+# ================== 作者和版本信息 ==================
+VERSION="3.0.7(2026-09-10)"
+AUTHOR="littleDoraemon"
+# ================== 作者和版本信息 结束 ==============
+
+# ================== 仓库信息 ==================
+# 拆分自拉地址的组成部分：改仓库/组织/脚本名时只改这里，叠加 SB_SCRIPT_URL 可完全覆盖自拉地址
+SB_SCRIPT_NAME="sb00.sh"
+
+REPO_PATH="jyucoeng/singbox-tools"
+SCRIPT_URL="${SB_SCRIPT_URL:-https://raw.githubusercontent.com/${REPO_PATH}/refs/heads/main/${SB_SCRIPT_NAME}}"
+# ================== 仓库信息 结束 ==================
+
 # 若没有 bash 则自动安装
 if [ -z "${BASH_VERSION}" ]; then
   if command -v apk >/dev/null 2>&1; then
@@ -32,8 +45,7 @@ LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志�
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
 
-VERSION="3.0.6(2026-09-09)"
-AUTHOR="littleDoraemon"
+
 
 # Environment variables for controlling CDN host and SNI values
 # CDN 共享参数：新名 argo_cf_host / argo_cf_pt 优先，兼容旧名 cdn_host / cdn_pt
@@ -145,7 +157,6 @@ v46url="https://icanhazip.com"
 # wrapper 在线自拉脚本地址（默认最新 main 分支；可用 SB_SCRIPT_URL 覆盖，如自建镜像）。
 # 不固定 commit SHA（避免每次发布都去查 SHA）；由 wrapper 内在的内容/版本校验来
 # 发现 CDN 缓存或异常内容（详见 gen_online_wrapper）。
-SCRIPT_URL="${SB_SCRIPT_URL:-https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb00.sh}"
 
 CN_BING="www.bing.com"
 
