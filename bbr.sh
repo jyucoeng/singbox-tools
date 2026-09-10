@@ -158,7 +158,8 @@ resolve_and_install() {
 
   echo "检测到缺少必需命令: ${cmd}，正在尝试通过 ${pm} 自动安装依赖包: ${pkg}..."
 
-  # 执行安装
+  # 执行安装（容忍非零——部分镜像的 trigger/postinst 可能报错但包已装上；
+  # 是否真正可用由下面的 command -v 校验决定）
   case "$pm" in
     apt)
       if [[ "$APT_UPDATED" = false ]]; then
@@ -166,31 +167,32 @@ resolve_and_install() {
         apt-get update -qy || true
         APT_UPDATED=true
       fi
-      apt-get install -y "${pkg}"
+      apt-get install -y "${pkg}" || true
       ;;
     dnf)
-      dnf install -y "${pkg}"
+      dnf install -y "${pkg}" || true
       ;;
     yum)
       if [[ "$cmd" == "tc" ]]; then
         # CentOS 8+ 使用 iproute-tc，CentOS 7 使用 iproute
-        yum install -y iproute-tc || yum install -y iproute
+        yum install -y iproute-tc 2>/dev/null || yum install -y iproute 2>/dev/null || true
       else
-        yum install -y "${pkg}"
+        yum install -y "${pkg}" || true
       fi
       ;;
     pacman)
-      pacman -Sy --noconfirm "${pkg}"
+      pacman -Sy --noconfirm "${pkg}" || true
       ;;
     apk)
-      apk add --no-cache "${pkg}"
+      # Alpine glibc-compat trigger 可能报语法错误，但 python3 等包通常已装上
+      apk add --no-cache "${pkg}" 2>/dev/null || true
       ;;
   esac
 
   if ! command -v "$cmd" >/dev/null 2>&1; then
     # 针对 RedHat 系 tc 命令的二次兼容处理
     if [[ "$cmd" == "tc" && ( "$pm" == "dnf" || "$pm" == "yum" ) ]]; then
-      "${pm}" install -y iproute
+      "${pm}" install -y iproute 2>/dev/null || true
     fi
     
     if ! command -v "$cmd" >/dev/null 2>&1; then
