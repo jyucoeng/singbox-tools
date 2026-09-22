@@ -25,6 +25,13 @@
 <a id="mod-1"></a>
 ## ① 基础命令（含订阅开关 `subscribe` / 订阅端口 `nginx_pt`；整条命令的结尾 `bash <(...) rep` 在这里，整条命令只保留这一处）
 
+> **⚠️ 刚推送的新改动，`refs/heads/main` 的 URL 有 CDN 缓存，可能取到旧版**。若需要立即拿到最新版，把命令里的 `refs/heads/main/sb.sh` 换成 **commit SHA** 形式（每提交一次就会变，去仓库看最新 commit）：
+>
+> ```bash
+> # 最新 commit 示例（以实际 commit SHA 替换；形式：/jyucoeng/singbox-tools/<commit SHA>/sb.sh）
+> bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/93d25d5afa671f1204cbaac8558146574b194f1e/sb.sh) rep
+> ```
+
 ```bash
 uuid=0631a7f3-09f8-4144-acf2-a4f5bd9ed200 \
 ippz=4 \
