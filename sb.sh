@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.0.7(2026-09-10)"
+VERSION="3.1.5(2026-09-23)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -27,8 +27,8 @@ if [ -z "${BASH_VERSION}" ]; then
 fi
 
 
-# 必须以 root 运行：本脚本会写 /root/doraemon、/etc/systemd、(openrc) init.d、/etc/iptables、
-# /etc/nginx 等系统目录，非 root 会静默半失败。到执行前尽早拦截。
+# 必须以 root 运行：本脚本会写 /root/doraemon、/etc/systemd、(openrc) init.d、/etc/iptables 等系统目录，
+# 非 root 会静默半失败。到执行前尽早拦截。
 if [ "$(id -u)" -ne 0 ]; then
     echo "❌ 本脚本需要 root 权限运行，请使用 sudo 或切到 root 用户后重试" >&2
     exit 1
@@ -44,6 +44,24 @@ OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志集中于此）
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
+
+# ================== 沙箱 Nginx 配置 ==================
+# ✅ 专用沙箱 nginx：静态二进制 + 独立 prefix，不经包管理器安装，
+#    与宝塔/系统 nginx 完全隔离（不碰 /etc/nginx、不 pkill 按名进程、不操作 nginx 服务单元）。
+NGINX_STATIC_VER="1.26.3"
+SB_NGINX_DIR="$SINGBOX_FOLDER_PATH/nginx"                       # 沙箱 prefix 根
+SB_NGINX_BIN="$SB_NGINX_DIR/sbin/nginx"                          # 静态二进制
+SB_NGINX_CONF="$SB_NGINX_DIR/conf/nginx.conf"                    # 主配置
+SB_NGINX_SUB_CONF="$SB_NGINX_DIR/conf/conf.d/singbox.conf"       # 订阅/ws server 块
+SB_NGINX_PID="$SB_NGINX_DIR/logs/nginx.pid"                      # pid 文件
+# 主下载源（jirutka/nginx-binaries 静态构建），SB_NGINX_URL 可整体覆盖
+SB_NGINX_URL_BASE="https://github.com/jirutka/nginx-binaries/raw/binaries"
+# 备用下载源（jsDelivr CDN，内容哈希与主源一致），SB_NGINX_URL_BACKUP 可整体覆盖
+SB_NGINX_URL_BACKUP="https://cdn.jsdelivr.net/gh/jirutka/nginx-binaries@binaries"
+# 内置 SHA256（供应链校验），按架构锁定；SB_NGINX_SHA256 可整体覆盖
+SB_NGINX_SHA256_X86_64="76ff943ccf066bbec7fc0aec030c0196ac798e27c6cd4e3c38a1178fdbe1e054"
+SB_NGINX_SHA256_AARCH64="7da452c385864390b09dac0fb248407dc7a7602d4ca2df970e8941574a48fd70"
+# ================== 沙箱 Nginx 配置 结束 ==============
 
 
 
@@ -1013,109 +1031,155 @@ showmode() {
     blue "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
-# 安装 Nginx 包
+# ✅ 沙箱 Nginx：下载/校验独立静态二进制（不经包管理器，不碰系统/宝塔 nginx）
+# 架构映射：脚本 cpu 为 amd64/arm64，jirutka 构建文件名为 x86_64/aarch64
+_sb_nginx_arch() {
+    case "${cpu:-}" in
+        amd64) echo "x86_64" ;;
+        arm64) echo "aarch64" ;;
+        *) echo "" ;;
+    esac
+}
+
+# 沙箱 nginx 运行状态（仅看本脚本 pid 文件，避免误报宝塔/系统 nginx）
+sb_nginx_running() {
+    local pid
+    [ -s "$SB_NGINX_PID" ] || return 1
+    pid="$(cat "$SB_NGINX_PID" 2> /dev/null | tr -d ' \r\n')"
+    [ -n "$pid" ] || return 1
+    kill -0 "$pid" 2> /dev/null
+}
+
+# 写沙箱主配置（daemon/pid/include 全在 prefix 内，不依赖 mime.types）
+write_sb_nginx_conf() {
+    mkdir -p "$SB_NGINX_DIR/sbin" "$SB_NGINX_DIR/conf/conf.d" "$SB_NGINX_DIR/logs" "$SB_NGINX_DIR/temp" 2> /dev/null
+    cat > "$SB_NGINX_CONF" << 'EOF'
+daemon on;
+pid logs/nginx.pid;
+error_log logs/error.log warn;
+events {
+    worker_connections 1024;
+}
+http {
+    default_type text/plain;
+    access_log logs/access.log;
+    sendfile on;
+    include conf.d/*.conf;
+}
+EOF
+}
+
+# 沙箱 nginx 语法检查（只测本脚本配置，不碰系统 nginx）
+sb_nginx_test() {
+    [ -x "$SB_NGINX_BIN" ] || return 1
+    [ -f "$SB_NGINX_CONF" ] || return 1
+    "$SB_NGINX_BIN" -p "$SB_NGINX_DIR/" -c conf/nginx.conf -t > /dev/null 2>&1
+}
+
+# 安装沙箱 Nginx（jirutka/nginx-binaries 静态二进制；同版本已存在则跳过下载）
 install_nginx_pkg() {
-    # 已安装就不重复装
-    if command -v nginx > /dev/null 2>&1; then
-        return 0
-    fi
-
-    yellow "👉 正在安装 Nginx..."
-
-    # 统一把详细输出写到日志，失败时 tail 出来
-    mkdir -p "$LOGS_DIR" 2> /dev/null
-    local log="$LOGS_DIR/nginx_install.log"
-    : > "$log" 2> /dev/null || true
-
-    # Debian/Ubuntu (apt-get)
-    if command -v apt-get > /dev/null 2>&1; then
-        export DEBIAN_FRONTEND=noninteractive
-
-        # 1) 等待 apt/dpkg 锁（默认最多等 20s，可用 APT_LOCK_WAIT 覆盖）
-        local max_wait="${APT_LOCK_WAIT:-20}"
-        local waited=0
-
-        while fuser /var/lib/dpkg/lock-frontend > /dev/null 2>&1 \
-            || fuser /var/lib/dpkg/lock > /dev/null 2>&1; do
-            waited=$((waited + 1))
-
-            # ✅ 写法B：每秒更新同一行（不刷屏）
-            printf "\r\033[0K\e[1;33m⏳ 等待 apt/dpkg 锁释放... (%s/%ss)\033[0m" "$waited" "$max_wait"
-
-            if [ "$waited" -ge "$max_wait" ]; then
-                echo
-                red "❌ 等待 apt/dpkg 锁超时：${max_wait}s"
-                yellow "❗ 常见原因：apt-daily / unattended-upgrades 在后台更新"
-                yellow "👉 解决：稍后重试，或临时加长：APT_LOCK_WAIT=180"
-                # 给个线索（不杀进程，只展示）
-                ps aux 2> /dev/null | grep -E 'apt|dpkg|unattended|apt-daily' | grep -v grep | head -n 10 || true
-                return 1
-            fi
-
-            sleep 1
-        done
-        echo # 结束等待后换行，避免后续输出接在同一行
-
-        # 2) 尝试修复 dpkg 中断（减少“莫名其妙失败”）
-        dpkg --configure -a >> "$log" 2>&1 || true
-        apt-get -f install -y >> "$log" 2>&1 || true
-
-        # 3) update 加重试+超时（稳定很多）
-        if ! apt-get -o Acquire::Retries=3 \
-            -o Acquire::http::Timeout=15 \
-            -o Acquire::https::Timeout=15 \
-            update >> "$log" 2>&1; then
-            red "❌ apt-get update 失败（可能是 DNS/网络/源问题），详见：$log"
-            tail -n 60 "$log" 2> /dev/null || true
-            return 1
-        fi
-
-        # 4) 安装 nginx（同样加重试+超时）
-        if ! apt-get -o Acquire::Retries=3 \
-            -o Acquire::http::Timeout=15 \
-            -o Acquire::https::Timeout=15 \
-            install -y nginx >> "$log" 2>&1; then
-            red "❌ Nginx 安装失败，详见：$log"
-            tail -n 80 "$log" 2> /dev/null || true
-            return 1
-        fi
-
-    elif command -v apt > /dev/null 2>&1; then
-        # 兜底：尽量用 apt-get，但这里保留 apt
-        export DEBIAN_FRONTEND=noninteractive
-        if ! apt update >> "$log" 2>&1 || ! apt install -y nginx >> "$log" 2>&1; then
-            red "❌ Nginx 安装失败，详见：$log"
-            tail -n 80 "$log" 2> /dev/null || true
-            return 1
-        fi
-
-    elif command -v yum > /dev/null 2>&1; then
-        yum install -y nginx >> "$log" 2>&1 || {
-            red "❌ Nginx 安装失败，详见：$log"
-            tail -n 80 "$log" 2> /dev/null || true
-            return 1
-        }
-
-    elif command -v dnf > /dev/null 2>&1; then
-        dnf install -y nginx >> "$log" 2>&1 || {
-            red "❌ Nginx 安装失败，详见：$log"
-            tail -n 80 "$log" 2> /dev/null || true
-            return 1
-        }
-
-    elif command -v apk > /dev/null 2>&1; then
-        apk add --no-cache nginx >> "$log" 2>&1 || {
-            red "❌ Nginx 安装失败，详见：$log"
-            tail -n 80 "$log" 2> /dev/null || true
-            return 1
-        }
-
-    else
-        red "❌ 无法安装 Nginx：不支持的包管理器"
+    local arch tmp out cur_ver _expect _src _urls
+    arch="$(_sb_nginx_arch)"
+    if [ -z "$arch" ]; then
+        red "❌ 暂不支持的架构（cpu=${cpu:-unknown}），无法安装沙箱 Nginx"
         return 1
     fi
 
-    green "✅ Nginx 安装完成"
+    # 同版本已安装 → 跳过下载
+    if [ -x "$SB_NGINX_BIN" ]; then
+        cur_ver="$("$SB_NGINX_BIN" -v 2>&1 | sed -n 's/.*nginx\/\([0-9][0-9.]*\).*/\1/p')"
+        if [ "$cur_ver" = "$NGINX_STATIC_VER" ]; then
+            green "✅ 沙箱 Nginx 已安装 (v${cur_ver})，跳过下载"
+            return 0
+        fi
+        yellow "沙箱 Nginx 版本不匹配 (当前: ${cur_ver:-unknown}，期望: ${NGINX_STATIC_VER})，开始下载..."
+    fi
+
+    yellow "👉 正在下载沙箱 Nginx v${NGINX_STATIC_VER} (${arch})..."
+    mkdir -p "$SB_NGINX_DIR/sbin" "$SB_NGINX_DIR/conf/conf.d" "$SB_NGINX_DIR/logs" "$SB_NGINX_DIR/temp" "$LOGS_DIR" 2> /dev/null
+    out="$SB_NGINX_BIN"
+    tmp="$out.tmp.$$"
+    # 下载源顺序：SB_NGINX_URL（整体覆盖）→ 主源 → 备用源
+    _src="nginx-${NGINX_STATIC_VER}-${arch}-linux"
+    if [ -n "${SB_NGINX_URL:-}" ]; then
+        _urls="$SB_NGINX_URL"
+    else
+        _urls="${SB_NGINX_URL_BASE}/${_src} ${SB_NGINX_URL_BACKUP}/${_src}"
+    fi
+
+    # 默认按架构取内置哈希，可 SB_NGINX_SHA256 整体覆盖
+    _expect="${SB_NGINX_SHA256:-}"
+    if [ -z "$_expect" ]; then
+        case "$arch" in
+            x86_64)  _expect="$SB_NGINX_SHA256_X86_64" ;;
+            aarch64) _expect="$SB_NGINX_SHA256_AARCH64" ;;
+        esac
+    fi
+
+    # 逐源下载 + 校验；单源失败自动重试一次（防 CDN 截断坏包），全部失败回退/报错
+    local _url _attempt _ok=false _last_err
+    for _url in $_urls; do
+        for _attempt in 1 2; do
+            rm -f "$tmp" 2> /dev/null
+            yellow "    下载源: $_url (第 ${_attempt} 次)"
+            (curl -fLo "$tmp" -# --connect-timeout 5 --max-time 120 --retry 2 --retry-delay 2 --retry-all-errors "$_url") \
+                || (wget -O "$tmp" --tries=2 --timeout=120 --dns-timeout=5 --read-timeout=60 "$_url")
+
+            if [ ! -s "$tmp" ]; then
+                _last_err="下载文件为空"
+                red "❌ 下载失败（$_url）：$_last_err"
+                continue
+            fi
+
+            # 拒绝下到 HTML 错误页
+            if head -c 15 "$tmp" 2> /dev/null | grep -qi '<'; then
+                _last_err="返回内容不是二进制"
+                red "❌ 下载失败（$_url）：$_last_err"
+                continue
+            fi
+
+            # SHA256 供应链校验
+            if [ -n "$_expect" ]; then
+                local _computed
+                _computed="$(file_sha256 "$tmp")"
+                if [ -z "$_computed" ] || [ "$_computed" != "$_expect" ]; then
+                    _last_err="SHA256 校验失败（期望 ${_expect}，实际 ${_computed:-无法计算}）"
+                    red "❌ 下载失败（$_url）：$_last_err"
+                    continue
+                fi
+                green "✅ 沙箱 Nginx SHA256 校验通过"
+            fi
+
+            _ok=true
+            break
+        done
+        [ "$_ok" = true ] && break
+    done
+
+    if [ "$_ok" != true ]; then
+        rm -f "$tmp" 2> /dev/null
+        # 补救：若磁盘上仍有旧版沙箱 nginx 可用，回退旧版继续（不中断主流程）
+        if [ -x "$SB_NGINX_BIN" ] && "$SB_NGINX_BIN" -h > /dev/null 2>&1; then
+            yellow "⚠️ 沙箱 Nginx 全部下载源失败（${_last_err:-未知原因}），已回退旧版继续使用 ($($SB_NGINX_BIN -v 2>&1 | head -n1))"
+            return 0
+        fi
+        red "❌ 沙箱 Nginx 安装失败：${_last_err:-下载/校验均未通过}，且无可用旧版回退"
+        return 1
+    fi
+
+    chmod +x "$tmp" 2> /dev/null
+    if ! "$tmp" -v > /dev/null 2>&1; then
+        # -v 非零退出属正常（nginx -v 打到 stderr 后退出 0；个别版本退出 1），再确认能执行
+        if ! "$tmp" -h > /dev/null 2>&1 && ! "$tmp" -v 2>&1 | grep -qi nginx; then
+            rm -f "$tmp" 2> /dev/null
+            red "❌ 沙箱 Nginx 二进制无法执行"
+            return 1
+        fi
+    fi
+    mv -f "$tmp" "$out"
+    write_sb_nginx_conf
+
+    green "✅ 沙箱 Nginx 安装完成 ($("$SB_NGINX_BIN" -v 2>&1 | head -n1))"
     return 0
 }
 
@@ -2875,14 +2939,19 @@ EOF
 }
 
 # ================== Nginx 订阅服务 ==================
-# Nginx 配置文件路径
+# Nginx 配置文件路径（沙箱 conf.d，绝不写 /etc/nginx）
 nginx_conf_path() {
-    # Alpine
-    if [ -d /etc/nginx/http.d ]; then
-        echo "/etc/nginx/http.d/singbox.conf"
-    else
-        echo "/etc/nginx/conf.d/singbox.conf"
-    fi
+    echo "$SB_NGINX_SUB_CONF"
+}
+
+# 清理旧版误写到系统 nginx 的遗留配置（只删本脚本的文件，不动宝塔/系统其余配置）
+cleanup_legacy_system_nginx_conf() {
+    local f
+    for f in /etc/nginx/conf.d/singbox.conf /etc/nginx/http.d/singbox.conf; do
+        if [ -f "$f" ]; then
+            rm -f "$f" 2> /dev/null && green "  ✓ 已清理旧版遗留配置：$f"
+        fi
+    done
 }
 
 setup_nginx_subscribe() {
@@ -2899,6 +2968,10 @@ setup_nginx_subscribe() {
     local webroot="/var/www/singbox"
     mkdir -p "$webroot"
     chmod 755 /var /var/www /var/www/singbox 2> /dev/null
+
+    # 沙箱目录 + 主配置 + 清理旧版系统 nginx 遗留
+    write_sb_nginx_conf
+    cleanup_legacy_system_nginx_conf
 
     local vm_port vl_port tr_port uuid
     local cdn_vm_port cdn_vl_port cdn_tr_port
@@ -2920,6 +2993,8 @@ setup_nginx_subscribe() {
     local conf
     conf="$(nginx_conf_path)"
     mkdir -p "$(dirname "$conf")" > /dev/null 2>&1
+    # 部分流程直接调 setup（如改订阅开关），兜底确保二进制存在
+    [ -x "$SB_NGINX_BIN" ] || install_nginx_pkg || return 1
 
     # ✅ IPv6 双栈监听（与 ippz 语义对齐）：
     #    ippz=4 → 强制 IPv4，不监听 [::]；
@@ -3052,45 +3127,63 @@ EOF
 }
 EOF
 
-    nginx -t > /dev/null 2>&1 || {
-        red "❌ Nginx 配置检查失败，请运行 nginx -t 查看原因"
-        nginx -t
+    if ! sb_nginx_test; then
+        red "❌ Nginx 配置检查失败，请运行以下命令查看原因："
+        yellow "  $SB_NGINX_BIN -p $SB_NGINX_DIR/ -c conf/nginx.conf -t"
+        "$SB_NGINX_BIN" -p "$SB_NGINX_DIR/" -c conf/nginx.conf -t 2>&1 | sed 's/^/  /' || true
         return 1
-    }
+    fi
 
 }
 
-# 启动 Nginx 服务
+# 启动沙箱 Nginx（按 pid 文件操作，绝不碰系统/宝塔 nginx 进程或服务单元）
 start_nginx_service() {
-    debug_log "【调试】start_nginx_service：开始启动 Nginx 服务"
-    # systemd
-    if has_systemd; then
-        debug_log "【调试】start_nginx_service：使用 systemd 管理 Nginx 服务"
+    debug_log "【调试】start_nginx_service：启动沙箱 Nginx"
+    [ -x "$SB_NGINX_BIN" ] || {
+        red "❌ 沙箱 Nginx 未安装"
+        return 1
+    }
+    [ -f "$SB_NGINX_CONF" ] || write_sb_nginx_conf
 
-        systemctl enable nginx > /dev/null 2>&1
-        systemctl restart nginx > /dev/null 2>&1 || systemctl start nginx > /dev/null 2>&1
-        echo ""
-        debug_print green "✅ Nginx 服务已启动,并开启开机自启服务（systemd）"
+    if sb_nginx_running; then
+        debug_print green "✅ 沙箱 Nginx 已在运行"
         return 0
     fi
+    rm -f "$SB_NGINX_PID" 2> /dev/null
 
-    # openrc
-    if command -v rc-service > /dev/null 2>&1; then
-        debug_log "【调试】start_nginx_service：使用 openrc 管理 Nginx 服务"
-        rc-update add nginx default > /dev/null 2>&1
-        rc-service nginx restart > /dev/null 2>&1 || rc-service nginx start > /dev/null 2>&1
+    if ! "$SB_NGINX_BIN" -p "$SB_NGINX_DIR/" -c conf/nginx.conf; then
+        red "❌ 沙箱 Nginx 启动失败（详见 $SB_NGINX_DIR/logs/error.log）"
+        # 定位 bind 失败端口：常见于外部（宝塔/系统）nginx 已占用 nginx_pt/argo_pt
+        # 本脚本绝不操作外部 nginx，只能提示用户释放端口或改用其他端口
+        {
+            local _eaddr
+            _eaddr="$(grep -oE 'bind\(\) to [^ ]+ failed \(98: Address in use\)' "$SB_NGINX_DIR/logs/error.log" 2> /dev/null | head -n1)"
+            if [ -n "$_eaddr" ]; then
+                local _eport
+                _eport="$(printf '%s' "$_eaddr" | sed -n 's/.*:\([0-9][0-9]*\) failed.*/\1/p')"
+                yellow "  👉 端口被占用：${_eaddr}"
+                yellow "     可能被您的宝塔/系统 Nginx 或其他程序占用，本脚本不会动它们。"
+                yellow "     ── 手动释放该端口（在服务器上依次执行）──"
+                if command -v ss > /dev/null 2>&1 && [ -n "$_eport" ]; then
+                    yellow "     1) 查看占用者:  ss -tlnp | grep :${_eport}   （记下其中的 pid=xxx）"
+                    yellow "     2) 确认后结束进程: kill <pid>   （若占用者是 nginx，请自查是不是您依赖的站点服务再停）"
+                else
+                    yellow "     1) 查看占用者:  lsof -i :${_eport:-端口}   （记下其中的 PID）"
+                    yellow "     2) 确认后结束进程: kill <PID>"
+                fi
+                yellow "     或改用其他端口重新安装，例如: bash <(curl -Ls 安装地址) rep 前设置 nginx_pt/argo_pt 为未占用端口"
+            fi
+        } 2> /dev/null
+        return 1
+    fi
+    sleep 1
+    if sb_nginx_running; then
         echo ""
-        debug_print green "✅ Nginx 服务已启动,并开启开机自启服务（openrc）"
+        debug_print green "✅ 沙箱 Nginx 服务已启动"
         return 0
     fi
-
-    debug_log "【调试】start_nginx_service：使用 nohup 模式运行 Nginx 服务"
-    # no init
-    pkill -15 nginx > /dev/null 2>&1
-    nohup nginx > /dev/null 2>&1 &
-    echo ""
-    debug_print green "✅ Nginx 服务已启动, 使用 nohup 模式运行"
-    return 0
+    red "❌ 沙箱 Nginx 启动后立即退出（详见 $SB_NGINX_DIR/logs/error.log）"
+    return 1
 }
 
 nginx_start() {
@@ -3098,68 +3191,59 @@ nginx_start() {
 }
 
 nginx_stop() {
-    debug_log "【调试】nginx_stop：开始停止 Nginx 服务"
-    # systemd
-    if has_systemd; then
-        debug_log "【调试】nginx_stop：使用 systemd 管理 Nginx 服务"
-        systemctl stop nginx > /dev/null 2>&1
-        return 0
+    debug_log "【调试】nginx_stop：停止沙箱 Nginx"
+    local pid
+    if [ -s "$SB_NGINX_PID" ]; then
+        pid="$(cat "$SB_NGINX_PID" 2> /dev/null | tr -d ' \r\n')"
+        if [ -n "$pid" ] && kill -0 "$pid" 2> /dev/null; then
+            if [ -x "$SB_NGINX_BIN" ] && [ -f "$SB_NGINX_CONF" ]; then
+                "$SB_NGINX_BIN" -p "$SB_NGINX_DIR/" -c conf/nginx.conf -s quit > /dev/null 2>&1 || true
+                # quit 优雅退出等待
+                local _w=0
+                while kill -0 "$pid" 2> /dev/null && [ "$_w" -lt 5 ]; do
+                    sleep 1
+                    _w=$((_w + 1))
+                done
+            fi
+            # 仍未退出则只对该 pid 发 TERM（绝不按名 pkill）
+            if kill -0 "$pid" 2> /dev/null; then
+                kill -TERM "$pid" 2> /dev/null || true
+                sleep 1
+            fi
+            # 最后兜底：仍存活才 KILL 该 pid
+            if kill -0 "$pid" 2> /dev/null; then
+                kill -KILL "$pid" 2> /dev/null || true
+            fi
+        fi
     fi
-
-    # openrc
-    if command -v rc-service > /dev/null 2>&1; then
-        debug_log "【调试】nginx_stop：使用 openrc 管理 Nginx 服务"
-        rc-service nginx stop > /dev/null 2>&1
-        return 0
-    fi
-
-    # no init：直接杀进程
-    pkill -15 -x nginx > /dev/null 2>&1
-    debug_log "【调试】nginx_stop： Nginx 服务已停止"
+    rm -f "$SB_NGINX_PID" 2> /dev/null
+    debug_log "【调试】nginx_stop：沙箱 Nginx 服务已停止"
     return 0
 }
 
-# 重启 Nginx 服务
+# 重启沙箱 Nginx（配置热 reload 优先，失败则 stop+start）
 nginx_restart() {
-    debug_log "【调试】nginx_restart：开始重启 Nginx 服务"
-    # systemd
-    if has_systemd; then
-        debug_log "【调试】nginx_restart：使用 systemd 管理 Nginx 服务"
-        systemctl restart nginx > /dev/null 2>&1 || systemctl start nginx > /dev/null 2>&1
-        echo
-        green "✅ Nginx 服务已重启"
-        return 0
+    debug_log "【调试】nginx_restart：重启沙箱 Nginx"
+    if sb_nginx_running && [ -x "$SB_NGINX_BIN" ] && [ -f "$SB_NGINX_CONF" ]; then
+        if "$SB_NGINX_BIN" -p "$SB_NGINX_DIR/" -c conf/nginx.conf -t > /dev/null 2>&1 \
+            && "$SB_NGINX_BIN" -p "$SB_NGINX_DIR/" -c conf/nginx.conf -s reload > /dev/null 2>&1; then
+            echo
+            green "✅ 沙箱 Nginx 服务已重载"
+            return 0
+        fi
     fi
-
-    # openrc
-    if command -v rc-service > /dev/null 2>&1; then
-        debug_log "【调试】nginx_restart：使用 openrc 管理 Nginx 服务"
-        rc-service nginx restart > /dev/null 2>&1 || rc-service nginx start > /dev/null 2>&1
-        echo
-        green "✅ Nginx 服务已重启"
-        return 0
-    fi
-
-    debug_log "【调试】nginx_restart：使用 nohup 模式运行 Nginx 服务"
-    # no init：优先 reload，不行就 stop+start
-    if command -v nginx > /dev/null 2>&1; then
-        debug_log "【调试】nginx_restart：使用 nohup 模式运行 Nginx 服务，尝试 reload"
-        nginx -s reload > /dev/null 2>&1 && return 0
-    fi
-
-    debug_log "【调试】nginx_restart：使用 nohup 模式运行 Nginx 服务，尝试 stop+start"
     nginx_stop
     nginx_start
 }
 
-# 检查 Nginx 状态
+# 检查沙箱 Nginx 状态
 nginx_status() {
-    if pgrep -x nginx > /dev/null 2>&1; then
-        echo "Nginx：$(green "运行中")"
-    elif rc-service nginx status > /dev/null 2>&1; then
-        echo "Nginx：$(green "运行中 (OpenRC)")"
+    if sb_nginx_running; then
+        echo "Nginx：$(green "运行中（沙箱）")"
+    elif [ -x "$SB_NGINX_BIN" ]; then
+        echo "Nginx：$(red "已停止（沙箱）")"
     else
-        echo "Nginx：$(red "未运行")"
+        echo "Nginx：$(yellow "未安装（沙箱）")"
     fi
 }
 
@@ -3514,9 +3598,9 @@ ensure_nginx_if_needed() {
         return 0
     fi
 
-    # ✅ 需要 nginx：先按需安装
+    # ✅ 需要 nginx：安装沙箱二进制（同版本已存在会跳过下载）
     install_nginx_pkg || {
-        red "❌ Nginx 安装失败"
+        red "❌ 沙箱 Nginx 安装失败"
         return 1
     }
 
@@ -4722,21 +4806,26 @@ refresh_sb_and_sub() {
     sbrestart
 }
 
+# 卸载沙箱 Nginx：mode=del 仅停进程保留二进制；mode=delall 删除整个沙箱目录。
+# 绝不 pkill 按名进程、绝不 stop/disable 系统或宝塔的 nginx 服务。
 cleanup_nginx() {
+    local mode="${1:-del}"
 
-    # 清理 nginx
-    pkill -15 nginx > /dev/null 2>&1
-    rm -f "$(nginx_conf_path)" 2> /dev/null
+    # 停沙箱进程（按 pid 文件）
+    nginx_stop
 
-    # 禁用 nginx 自启（避免卸载后 nginx 仍然起来）
-    if has_systemd; then
-        timeout 5 systemctl stop nginx > /dev/null 2>&1 || true
-        systemctl disable nginx > /dev/null 2>&1
-    elif command -v rc-service > /dev/null 2>&1; then
-        timeout 5 rc-service nginx stop > /dev/null 2>&1 || true
-        rc-update del nginx default > /dev/null 2>&1
+    # 清理沙箱配置/日志
+    rm -f "$SB_NGINX_SUB_CONF" "$SB_NGINX_PID" 2> /dev/null
+
+    # 清理旧版误写到系统 nginx 的遗留配置（只删本脚本文件）
+    cleanup_legacy_system_nginx_conf
+
+    if [ "$mode" = "delall" ]; then
+        rm -rf "$SB_NGINX_DIR" 2> /dev/null
+        green "  ✓ 沙箱 Nginx 已清理（二进制与配置均已删除）"
+    else
+        green "  ✓ 沙箱 Nginx 已停止（二进制保留在 $SB_NGINX_DIR）"
     fi
-    green "  ✓ Nginx 已清理（配置已删除，自启已禁用）"
 }
 
 # Remove singbox folder
@@ -4799,16 +4888,19 @@ cleandel() {
     elif command -v rc-service > /dev/null 2>&1; then
         white "  ▸ 停止 OpenRC 服务..."
         for svc in sing-box argo singbox agsb-singbox; do
-            timeout 5 rc-service "$svc" stop > /dev/null 2>&1 || true
-            rc-update del "$svc" default > /dev/null 2>&1
+            # 只处理真实存在的服务；stop/删开机自启都套 timeout，避免疑似卡死等待
+            if [ -x "/etc/init.d/$svc" ]; then
+                timeout 5 rc-service "$svc" stop > /dev/null 2>&1 || true
+                timeout 5 rc-update del "$svc" default > /dev/null 2>&1 || true
+            fi
         done
         rm -f /etc/init.d/{sing-box,argo,singbox,agsb-singbox}
         green "  ✓ OpenRC 服务已停止并清理"
     fi
 
-    # 清理 nginx
+    # 清理 nginx（mode 透传：del 保留沙箱二进制，delall 全删）
     white "  ▸ 清理 Nginx..."
-    cleanup_nginx
+    cleanup_nginx "$mode"
 
     # 清理本脚本添加的 iptables/ip6tables 规则
     white "  ▸ 清理防火墙规则..."
@@ -4824,11 +4916,11 @@ cleandel() {
                 debug_print yellow "正在删除（全部）：$folder"
                 rm -rf "$folder" 2> /dev/null && green "✅ 已删除：$folder" || red "❌ 删除失败：$folder"
             else
-                debug_print yellow "正在清理配置（保留 sing-box/cloudflared 二进制）：$folder"
+                debug_print yellow "正在清理配置（保留 sing-box/cloudflared/沙箱 nginx 二进制）：$folder"
                 for item in "$folder"/*; do
                     [ -e "$item" ] || continue
                     case "$(basename "$item")" in
-                        sing-box|cloudflared|logs) continue ;;
+                        sing-box|cloudflared|logs|nginx) continue ;;
                         *) rm -rf "$item" 2>/dev/null ;;
                     esac
                 done
@@ -5135,7 +5227,8 @@ check_port_conflicts_or_exit() {
                        pgrep -f "$OLD_SINGBOX_FOLDER/sing-box" 2>/dev/null
                        pgrep -f "$SINGBOX_FOLDER_PATH/cloudflared" 2>/dev/null
                        pgrep -f "$OLD_SINGBOX_FOLDER/cloudflared" 2>/dev/null
-                       pgrep -x nginx 2>/dev/null; } | sort -u )"
+                       # 只认沙箱 nginx 的 pid（不按名匹配，避免把宝塔/系统 nginx 算作本脚本栈）
+                       if [ -s "$SB_NGINX_PID" ]; then cat "$SB_NGINX_PID" 2>/dev/null; fi; } | sort -u )"
 
         # 本机是否正在运行本脚本栈（用于判断“无属主监听”是否为旧实例）
         local stack_running=false
@@ -5152,9 +5245,17 @@ check_port_conflicts_or_exit() {
         _p_listener_kind() {
             local line="$1" pid comm cmdline
             [ -z "$line" ] && { echo UNKNOWN; return; }
-            # 通道1：ss -p 已解析出的进程名
-            if printf '%s' "$line" | grep -qE 'sing-box|cloudflared|nginx'; then
+            # 通道1：ss -p 已解析出的进程名（sing-box/cloudflared 仍可按名命中）
+            if printf '%s' "$line" | grep -qE 'sing-box|cloudflared'; then
                 echo OWN; return
+            fi
+            # 沙箱 nginx：按 pid 文件归属判定（nginx 按 comm 会误命中宝塔/系统 nginx）
+            if [ -s "$SB_NGINX_PID" ]; then
+                local sbn_pid
+                sbn_pid="$(cat "$SB_NGINX_PID" 2> /dev/null | tr -d ' \r\n')"
+                if [ -n "$sbn_pid" ] && printf '%s' "$line" | grep -q "pid=$sbn_pid,"; then
+                    echo OWN; return
+                fi
             fi
             # 从 ss 行提取 pid（iproute2 格式 users:(("name",pid=N,fd=M))）
             pid="$(printf '%s' "$line" | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -n1)"
@@ -5168,11 +5269,11 @@ check_port_conflicts_or_exit() {
                 comm="$(tr -d '\000' < "/proc/$pid/comm" 2>/dev/null)"
                 cmdline="$(tr '\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null)"
                 case "$comm" in
-                    sing-box|singbox|cloudflared|nginx)
+                    sing-box|singbox|cloudflared)
                         echo OWN; return ;;
                 esac
                 case "$cmdline" in
-                    *sing-box*|*cloudflared*|*nginx*)
+                    *sing-box*|*cloudflared*)
                         echo OWN; return ;;
                 esac
             fi
@@ -5198,6 +5299,16 @@ check_port_conflicts_or_exit() {
 
             if $_foreign; then
                 yellow "⚠️ 端口 ${p_check}（${used[$p_check]}）当前已被其他进程监听，安装后可能无法绑定"
+                # 给出占用者 pid 与 kill 提示（仅提示用户自行执行，本脚本绝不代杀外部进程）
+                {
+                    local _fpid _fcomm
+                    _fpid="$(printf '%s\n' "$_all_lines" | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -n1)"
+                    _fcomm="$(printf '%s\n' "$_all_lines" | sed -n 's/users:(("\([^"]*\)".*/\1/p' | head -n1)"
+                    if [ -n "$_fpid" ]; then
+                        yellow "     占用者进程: ${_fcomm:-未知} (pid=${_fpid})"
+                        yellow "     确认非必要服务后，可手动释放端口: kill ${_fpid}"
+                    fi
+                } 2> /dev/null
             elif $_unknown; then
                 # 无属主信息（ss 无法解析进程）：
                 # 命中“旧 sb.json 端口 + 本栈在跑” → 判定为旧实例占用，rep 清理后即释放，不提示
@@ -5299,6 +5410,23 @@ menu_status_block() {
     argo_needed=false
     need_argo && argo_needed=true
 
+    # 内存辅助：VmRSS(KB) → MB；pid 不存在返回空
+    _mem_mb() {
+        local p="$1" _rss
+        [ -n "$p" ] || return 0
+        _rss="$(awk '/VmRSS/{print $2}' "/proc/$p/status" 2>/dev/null)"
+        [ -n "$_rss" ] && echo "$(( (_rss + 1023) / 1024 ))M"
+    }
+    # 内存求和：给定 pid 列表（含子进程）的 VmRSS 总和
+    _mem_sum() {
+        local _p _sum=0 _rss
+        for _p in "$@"; do
+            _rss="$(awk '/VmRSS/{print $2}' "/proc/$_p/status" 2>/dev/null)"
+            [ -n "$_rss" ] && _sum=$((_sum + _rss))
+        done
+        [ "$_sum" -gt 0 ] && echo "$(( ( _sum + 1023) / 1024 ))M"
+    }
+
     # 并发收集三个二进制版本（sing-box / cloudflared / nginx），避免串行查询拖慢菜单
     # TTY 下提示写在同一行，状态就绪后立即擦除；非 TTY（重定向/日志）保留普通换行提示
     if [ -t 1 ]; then
@@ -5306,34 +5434,80 @@ menu_status_block() {
     else
         yellow "  ↳ 获取服务状态中..."
     fi
-    local _tmpd _f _p1 _p2 _p3
+    local _tmpd _f _p1 _p2 _p3 _cfb _mpid
     _tmpd="$(mktemp -d 2>/dev/null || printf '%s' "$SINGBOX_FOLDER_PATH")"
     {
         if [ -x "$SINGBOX_FOLDER_PATH/sing-box" ]; then
-            "$SINGBOX_FOLDER_PATH/sing-box" version 2>/dev/null | head -1 | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/sbv"
+            timeout 3 "$SINGBOX_FOLDER_PATH/sing-box" version 2>/dev/null | head -1 | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/sbv"
+            pgrep -f "$SINGBOX_FOLDER_PATH/sing-box" 2>/dev/null | head -1 > "$_tmpd/sbp"
+            { awk '/VmRSS/{print $2}' "/proc/$(cat "$_tmpd/sbp" 2>/dev/null)/status" 2> /dev/null; } > "$_tmpd/sbm"
         fi
     } & _p1=$!
     {
-        if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ]; then
-            "$SINGBOX_FOLDER_PATH/cloudflared" version 2>/dev/null | sed -n 's/.*version \([0-9]\{4\}\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/cfv"
-        elif command -v cloudflared >/dev/null 2>&1; then
-            cloudflared version 2>/dev/null | sed -n 's/.*version \([0-9]\{4\}\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/cfv"
+        if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ] || command -v cloudflared >/dev/null 2>&1; then
+            _cfb="$SINGBOX_FOLDER_PATH/cloudflared"
+            [ -x "$_cfb" ] || _cfb="$(command -v cloudflared 2>/dev/null)"
+            timeout 3 "$_cfb" version 2>/dev/null | sed -n 's/.*version \([0-9]\{4\}\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/cfv" || true
+            pgrep -f "$_cfb" 2>/dev/null | head -1 > "$_tmpd/cfp"
+            { awk '/VmRSS/{print $2}' "/proc/$(cat "$_tmpd/cfp" 2>/dev/null)/status" 2> /dev/null; } > "$_tmpd/cfm"
         fi
     } & _p2=$!
     {
-        if command -v nginx >/dev/null 2>&1; then
-            nginx -v 2>&1 | sed -n 's/.*nginx\/\([0-9.]*\).*/\1/p' > "$_tmpd/ngv"
+        if [ -x "$SB_NGINX_BIN" ]; then
+            timeout 3 "$SB_NGINX_BIN" -v 2>&1 | sed -n 's/.*nginx\/\([0-9.]*\).*/\1/p' > "$_tmpd/ngv"
+            if [ -s "$SB_NGINX_PID" ]; then
+                _mpid="$(cat "$SB_NGINX_PID" 2> /dev/null | tr -d ' \r\n')"
+                # 沙箱 nginx 内存 = master + 所有 worker（只按 pid 文件归属，绝不按名匹配）
+                if [ -n "$_mpid" ]; then
+                    printf '%s\n' "$_mpid" > "$_tmpd/ngp"
+                    { awk '/VmRSS/{print $2}' "/proc/$_mpid/status" 2>/dev/null; } > "$_tmpd/ngm"
+                fi
+            fi
         fi
     } & _p3=$!
     # ⚠️ 必须只等上面三个版本查询子进程：bash 裸 wait 会等"当前 shell 所有后台子进程"，
-    # 而 ins/rep 流程里 cloudflared 隧道是同一 shell 的 nohup 后台子进程（永不退出），
-    # 裸 wait 会像本函数之前的版本一样永久卡死（症状：卡在"获取服务状态中..."）。
-    wait "$_p1" "$_p2" "$_p3" 2>/dev/null
+    # 而 ins/rep 流程里 cloudflared 隧道是同一 shell 的 nohup 后台子进程（永不退出）。
+    # 所以用"轮询 + 总超时"而非裸 wait：每个探测内部已带 timeout 3，
+    # 这里最大再等 6 秒即放行，任何探测挂死都不会卡死菜单/状态显示。
+    local _w=0
+    while [ "$_w" -lt 6 ]; do
+        if ! kill -0 "$_p1" 2>/dev/null && ! kill -0 "$_p2" 2>/dev/null && ! kill -0 "$_p3" 2>/dev/null; then
+            break
+        fi
+        sleep 1
+        _w=$((_w + 1))
+    done
+    # 兜底：仍有子进程存活则显式终止探测进程，避免后续 wait 再次阻塞（它们内部已带 timeout，这里是保险）
+    kill -0 "$_p1" 2>/dev/null && kill "$_p1" 2>/dev/null
+    kill -0 "$_p2" 2>/dev/null && kill "$_p2" 2>/dev/null
+    kill -0 "$_p3" 2>/dev/null && kill "$_p3" 2>/dev/null
+    wait "$_p1" "$_p2" "$_p3" 2>/dev/null || true
     # 状态已就绪，擦除上面的"正在检查..."提示行（仅 TTY）
     [ -t 1 ] && printf -- '\r\033[2K'
     v_sb="$(cat "$_tmpd/sbv" 2>/dev/null)"; [ -n "$v_sb" ] && v_sb="V$v_sb"
     v_cf="$(cat "$_tmpd/cfv" 2>/dev/null)"; [ -n "$v_cf" ] && v_cf="V$v_cf"
     v_nginx="$(cat "$_tmpd/ngv" 2>/dev/null)"; [ -n "$v_nginx" ] && v_nginx="V$v_nginx"
+
+    # 内存统计（KB→MB，向上取整；未运行则空）
+    local m_sb m_cf m_nginx _rss_kb
+    _rss_kb="$(cat "$_tmpd/sbm" 2>/dev/null | tr -d ' \r\n')"
+    [ -n "$_rss_kb" ] && m_sb="$(( (_rss_kb + 1023) / 1024 ))M"
+    _rss_kb="$(cat "$_tmpd/cfm" 2>/dev/null | tr -d ' \r\n')"
+    [ -n "$_rss_kb" ] && m_cf="$(( (_rss_kb + 1023) / 1024 ))M"
+    # 沙箱 nginx：master + 直接子进程（worker）VmRSS 求和
+    {
+        local _ngm
+        _ngm="$(cat "$_tmpd/ngm" 2>/dev/null | tr -d ' \r\n')"
+        if [ -n "$_ngm" ]; then
+            local _wk _sum="$(( (_ngm + 1023) / 1024 ))"
+            for _wk in $(pgrep -P "$(cat "$_tmpd/ngp" 2>/dev/null)" 2>/dev/null); do
+                _rss="$(awk '/VmRSS/{print $2}' "/proc/$_wk/status" 2>/dev/null)"
+                [ -n "$_rss" ] && _sum=$((_sum + ((_rss + 1023) / 1024)))
+            done
+            [ "$_sum" -gt 0 ] && m_nginx="${_sum}M"
+        fi
+    } 2>/dev/null
+
     rm -rf "$_tmpd" 2>/dev/null || true
 
     # sing-box 运行判定
@@ -5359,10 +5533,10 @@ menu_status_block() {
         st_cf="$(yellow "○ 未安装")"
     fi
 
-    # nginx 运行判定
-    if pgrep -x nginx > /dev/null 2>&1; then
+    # nginx 运行判定（沙箱 pid 文件，绝不按名 pgrep 以免误报宝塔/系统 nginx）
+    if sb_nginx_running; then
         st_nginx="$(green "● 运行中")"
-    elif command -v nginx > /dev/null 2>&1; then
+    elif [ -x "$SB_NGINX_BIN" ]; then
         st_nginx="$(red "■ 已停止")"
     else
         st_nginx="$(yellow "○ 未安装")"
@@ -5378,8 +5552,8 @@ menu_status_block() {
     [ -s "$SINGBOX_FOLDER_PATH/nginx_port" ] && nginx_port="$(cat "$SINGBOX_FOLDER_PATH/nginx_port" 2> /dev/null)"
     _SUPPRESS_LOG="$_old_suppress"
 
-    green "  Sing-box    : $st_sb   $v_sb"
-    green "  Cloudflared : $st_cf   $v_cf"
+    green "  Sing-box    : $st_sb   $v_sb${m_sb:+  (内存: $m_sb)}"
+    green "  Cloudflared : $st_cf   $v_cf${m_cf:+  (内存: $m_cf)}"
     # Argo 状态行（色值与 Nginx 一致：紫○未启用 / 黄○未安装 / 绿●运行中 / 红■已停止，均带端口）
     local argo_port
     argo_port="${argo_pt:-$ARGO_DEFAULT_PORT}"
@@ -5398,12 +5572,12 @@ menu_status_block() {
     fi
     if ! $argo_needed && ! is_true "$sub_flag"; then
         green "  Nginx       : $(purple "○ 未启用（订阅未开启，无需）")"
-    elif ! command -v nginx > /dev/null 2>&1; then
+    elif [ ! -x "$SB_NGINX_BIN" ]; then
         green "  Nginx       : ${st_nginx}（${sub_desc}，端口：${nginx_port}）"
-    elif ps aux | grep -v grep | grep -q nginx; then
-        green "  Nginx       : ${st_nginx}${v_nginx:+ $v_nginx}（${sub_desc}，端口：${nginx_port}）"
+    elif sb_nginx_running; then
+        green "  Nginx       : ${st_nginx}${v_nginx:+ $v_nginx}（${sub_desc}，端口：${nginx_port}）${m_nginx:+（内存: $m_nginx）}"
     else
-        green "  Nginx       : ${st_nginx}（${sub_desc}，端口：${nginx_port}）"
+        green "  Nginx       : ${st_nginx}（${sub_desc}，端口：${nginx_port}）${m_nginx:+（内存: $m_nginx）}"
     fi
 }
 
@@ -7078,8 +7252,8 @@ interactive_log_menu() {
                 _title="Argo (cloudflared) 日志"
                 _hint="暂无日志：$_log" ;;
             3)
-                _log="/var/log/nginx/error.log"
-                _title="Nginx 日志"
+                _log="$SB_NGINX_DIR/logs/error.log"
+                _title="Nginx 日志（沙箱）"
                 _hint="暂无日志：$_log" ;;
             4)
                 # 安装日志：直接显示全文，不问行数
