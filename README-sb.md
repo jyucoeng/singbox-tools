@@ -952,6 +952,30 @@ sb log_stop        查看服务停止原因日志（排查崩溃用）
 
 ## 7、 版本变更信息
 
+v3.1.5 (2026-09-23)
+ - **修复状态/菜单卡死**：`menu_status_block` 对 sing-box / cloudflared / nginx 的版本探测全部加上 `timeout 3` 超时保护，并改用「轮询 + 总超时 6s」代替裸 `wait`。实测 cloudflared 隧道运行时 `cloudflared version` 会永久挂起，旧版会导致状态面板卡在「获取服务状态中...」；现在探测超时自动跳过，状态面板最多延迟 6 秒
+ - 探测超时后显式终止残留探测进程，确保菜单/状态任何情况下都不被卡死
+
+v3.1.4 (2026-09-23)
+ - **状态面板新增内存占用显示**：Sing-box / Cloudflared / Nginx 状态行各追加「内存: xM」（取自 `/proc/<pid>/status` 的 VmRSS）
+ - Nginx 内存 = master + 全部 worker 求和，且严格按 pid 文件归属（只认本沙箱 nginx 的 pid，不按名匹配，杜绝误算系统 nginx）
+
+v3.1.3 (2026-09-23)
+ - **端口冲突提示升级**：安装/重装时若端口被外部进程（非本脚本）占用，现在会显示「占用者进程 + pid + 释放命令 `kill <pid>`」，配合 `ss -tlnp | grep :<端口>` 可一键定位释放
+
+v3.1.2 (2026-09-23)
+ - Nginx 启动失败时自动从 error.log 解析 `bind() to <ip>:<port> failed (98: Address in use)`，精确指出哪个端口被占用，并给出释放命令（`ss -tlnp | grep :<端口>` + `kill <pid>`，无 ss 时用 lsof 兜底）
+
+v3.1.1 (2026-09-23)
+ - **修复端口冲突检测误判系统 nginx 为「自有」**：按端口查占用进程时不再按 `comm=nginx`/命令行含 `nginx` 匹配（会把系统/宝塔 nginx 误认成本脚本的沙箱 nginx，导致端口冲突被跳过）；沙箱 nginx 仅通过 pid 文件归属判定
+
+v3.1.0 (2026-09-23)
+ - **沙箱 Nginx 双源下载兜底**：主源 github.com（jirutka/nginx-binaries）失败/校验不过时，自动切换备用源 cdn.jsdelivr.net（内容哈希与主源一致），每个源带重试；两个源都不行才回退旧版
+ - 新增 `SB_NGINX_URL_BACKUP` 可整体覆盖备用源
+
+v3.0.9 (2026-09-23)
+ - **沙箱 Nginx 下载 SHA256 固化**：内置 x86_64 / aarch64 两个架构的静态二进制 SHA256，下载后强制校验，防供应链投毒/下载损坏；可用 `SB_NGINX_SHA256` 整体覆盖
+
 v3.0.0 (2026-09-08)
  - **命名重构，彻底消除 `cdn_host`/`cdn_pt` 歧义**：Argo 共享改为 `argo_cf_host` / `argo_cf_pt`（专属 `argo_vmess_cf_host` 等）；CDN 回源共享改为 `ws_cdn_cf_host` / `ws_cdn_cf_pt` / `ws_cdn_sni`（专属 `ws_cdn_vmess_cf_host` / `ws_cdn_vmess_sni` 等）。**`cdn_host` / `cdn_pt` 正式退役**，仅作为旧 Argo 兼容别名，新版不再使用这两个环境变量
  - **旧用户升级零改造成本**（兼容旧版 `cdn_host` / `cdn_pt`）：

@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.1.0(2026-09-23)"
+VERSION="3.1.5(2026-09-23)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -3153,6 +3153,27 @@ start_nginx_service() {
 
     if ! "$SB_NGINX_BIN" -p "$SB_NGINX_DIR/" -c conf/nginx.conf; then
         red "❌ 沙箱 Nginx 启动失败（详见 $SB_NGINX_DIR/logs/error.log）"
+        # 定位 bind 失败端口：常见于外部（宝塔/系统）nginx 已占用 nginx_pt/argo_pt
+        # 本脚本绝不操作外部 nginx，只能提示用户释放端口或改用其他端口
+        {
+            local _eaddr
+            _eaddr="$(grep -oE 'bind\(\) to [^ ]+ failed \(98: Address in use\)' "$SB_NGINX_DIR/logs/error.log" 2> /dev/null | head -n1)"
+            if [ -n "$_eaddr" ]; then
+                local _eport
+                _eport="$(printf '%s' "$_eaddr" | sed -n 's/.*:\([0-9][0-9]*\) failed.*/\1/p')"
+                yellow "  👉 端口被占用：${_eaddr}"
+                yellow "     可能被您的宝塔/系统 Nginx 或其他程序占用，本脚本不会动它们。"
+                yellow "     ── 手动释放该端口（在服务器上依次执行）──"
+                if command -v ss > /dev/null 2>&1 && [ -n "$_eport" ]; then
+                    yellow "     1) 查看占用者:  ss -tlnp | grep :${_eport}   （记下其中的 pid=xxx）"
+                    yellow "     2) 确认后结束进程: kill <pid>   （若占用者是 nginx，请自查是不是您依赖的站点服务再停）"
+                else
+                    yellow "     1) 查看占用者:  lsof -i :${_eport:-端口}   （记下其中的 PID）"
+                    yellow "     2) 确认后结束进程: kill <PID>"
+                fi
+                yellow "     或改用其他端口重新安装，例如: bash <(curl -Ls 安装地址) rep 前设置 nginx_pt/argo_pt 为未占用端口"
+            fi
+        } 2> /dev/null
         return 1
     fi
     sleep 1
@@ -5248,11 +5269,11 @@ check_port_conflicts_or_exit() {
                 comm="$(tr -d '\000' < "/proc/$pid/comm" 2>/dev/null)"
                 cmdline="$(tr '\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null)"
                 case "$comm" in
-                    sing-box|singbox|cloudflared|nginx)
+                    sing-box|singbox|cloudflared)
                         echo OWN; return ;;
                 esac
                 case "$cmdline" in
-                    *sing-box*|*cloudflared*|*nginx*)
+                    *sing-box*|*cloudflared*)
                         echo OWN; return ;;
                 esac
             fi
@@ -5278,6 +5299,16 @@ check_port_conflicts_or_exit() {
 
             if $_foreign; then
                 yellow "⚠️ 端口 ${p_check}（${used[$p_check]}）当前已被其他进程监听，安装后可能无法绑定"
+                # 给出占用者 pid 与 kill 提示（仅提示用户自行执行，本脚本绝不代杀外部进程）
+                {
+                    local _fpid _fcomm
+                    _fpid="$(printf '%s\n' "$_all_lines" | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -n1)"
+                    _fcomm="$(printf '%s\n' "$_all_lines" | sed -n 's/users:(("\([^"]*\)".*/\1/p' | head -n1)"
+                    if [ -n "$_fpid" ]; then
+                        yellow "     占用者进程: ${_fcomm:-未知} (pid=${_fpid})"
+                        yellow "     确认非必要服务后，可手动释放端口: kill ${_fpid}"
+                    fi
+                } 2> /dev/null
             elif $_unknown; then
                 # 无属主信息（ss 无法解析进程）：
                 # 命中“旧 sb.json 端口 + 本栈在跑” → 判定为旧实例占用，rep 清理后即释放，不提示
@@ -5379,6 +5410,23 @@ menu_status_block() {
     argo_needed=false
     need_argo && argo_needed=true
 
+    # 内存辅助：VmRSS(KB) → MB；pid 不存在返回空
+    _mem_mb() {
+        local p="$1" _rss
+        [ -n "$p" ] || return 0
+        _rss="$(awk '/VmRSS/{print $2}' "/proc/$p/status" 2>/dev/null)"
+        [ -n "$_rss" ] && echo "$(( (_rss + 1023) / 1024 ))M"
+    }
+    # 内存求和：给定 pid 列表（含子进程）的 VmRSS 总和
+    _mem_sum() {
+        local _p _sum=0 _rss
+        for _p in "$@"; do
+            _rss="$(awk '/VmRSS/{print $2}' "/proc/$_p/status" 2>/dev/null)"
+            [ -n "$_rss" ] && _sum=$((_sum + _rss))
+        done
+        [ "$_sum" -gt 0 ] && echo "$(( ( _sum + 1023) / 1024 ))M"
+    }
+
     # 并发收集三个二进制版本（sing-box / cloudflared / nginx），避免串行查询拖慢菜单
     # TTY 下提示写在同一行，状态就绪后立即擦除；非 TTY（重定向/日志）保留普通换行提示
     if [ -t 1 ]; then
@@ -5386,34 +5434,80 @@ menu_status_block() {
     else
         yellow "  ↳ 获取服务状态中..."
     fi
-    local _tmpd _f _p1 _p2 _p3
+    local _tmpd _f _p1 _p2 _p3 _cfb _mpid
     _tmpd="$(mktemp -d 2>/dev/null || printf '%s' "$SINGBOX_FOLDER_PATH")"
     {
         if [ -x "$SINGBOX_FOLDER_PATH/sing-box" ]; then
-            "$SINGBOX_FOLDER_PATH/sing-box" version 2>/dev/null | head -1 | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/sbv"
+            timeout 3 "$SINGBOX_FOLDER_PATH/sing-box" version 2>/dev/null | head -1 | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/sbv"
+            pgrep -f "$SINGBOX_FOLDER_PATH/sing-box" 2>/dev/null | head -1 > "$_tmpd/sbp"
+            { awk '/VmRSS/{print $2}' "/proc/$(cat "$_tmpd/sbp" 2>/dev/null)/status" 2> /dev/null; } > "$_tmpd/sbm"
         fi
     } & _p1=$!
     {
-        if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ]; then
-            "$SINGBOX_FOLDER_PATH/cloudflared" version 2>/dev/null | sed -n 's/.*version \([0-9]\{4\}\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/cfv"
-        elif command -v cloudflared >/dev/null 2>&1; then
-            cloudflared version 2>/dev/null | sed -n 's/.*version \([0-9]\{4\}\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/cfv"
+        if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ] || command -v cloudflared >/dev/null 2>&1; then
+            _cfb="$SINGBOX_FOLDER_PATH/cloudflared"
+            [ -x "$_cfb" ] || _cfb="$(command -v cloudflared 2>/dev/null)"
+            timeout 3 "$_cfb" version 2>/dev/null | sed -n 's/.*version \([0-9]\{4\}\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/cfv" || true
+            pgrep -f "$_cfb" 2>/dev/null | head -1 > "$_tmpd/cfp"
+            { awk '/VmRSS/{print $2}' "/proc/$(cat "$_tmpd/cfp" 2>/dev/null)/status" 2> /dev/null; } > "$_tmpd/cfm"
         fi
     } & _p2=$!
     {
         if [ -x "$SB_NGINX_BIN" ]; then
-            "$SB_NGINX_BIN" -v 2>&1 | sed -n 's/.*nginx\/\([0-9.]*\).*/\1/p' > "$_tmpd/ngv"
+            timeout 3 "$SB_NGINX_BIN" -v 2>&1 | sed -n 's/.*nginx\/\([0-9.]*\).*/\1/p' > "$_tmpd/ngv"
+            if [ -s "$SB_NGINX_PID" ]; then
+                _mpid="$(cat "$SB_NGINX_PID" 2> /dev/null | tr -d ' \r\n')"
+                # 沙箱 nginx 内存 = master + 所有 worker（只按 pid 文件归属，绝不按名匹配）
+                if [ -n "$_mpid" ]; then
+                    printf '%s\n' "$_mpid" > "$_tmpd/ngp"
+                    { awk '/VmRSS/{print $2}' "/proc/$_mpid/status" 2>/dev/null; } > "$_tmpd/ngm"
+                fi
+            fi
         fi
     } & _p3=$!
     # ⚠️ 必须只等上面三个版本查询子进程：bash 裸 wait 会等"当前 shell 所有后台子进程"，
-    # 而 ins/rep 流程里 cloudflared 隧道是同一 shell 的 nohup 后台子进程（永不退出），
-    # 裸 wait 会像本函数之前的版本一样永久卡死（症状：卡在"获取服务状态中..."）。
-    wait "$_p1" "$_p2" "$_p3" 2>/dev/null
+    # 而 ins/rep 流程里 cloudflared 隧道是同一 shell 的 nohup 后台子进程（永不退出）。
+    # 所以用"轮询 + 总超时"而非裸 wait：每个探测内部已带 timeout 3，
+    # 这里最大再等 6 秒即放行，任何探测挂死都不会卡死菜单/状态显示。
+    local _w=0
+    while [ "$_w" -lt 6 ]; do
+        if ! kill -0 "$_p1" 2>/dev/null && ! kill -0 "$_p2" 2>/dev/null && ! kill -0 "$_p3" 2>/dev/null; then
+            break
+        fi
+        sleep 1
+        _w=$((_w + 1))
+    done
+    # 兜底：仍有子进程存活则显式终止探测进程，避免后续 wait 再次阻塞（它们内部已带 timeout，这里是保险）
+    kill -0 "$_p1" 2>/dev/null && kill "$_p1" 2>/dev/null
+    kill -0 "$_p2" 2>/dev/null && kill "$_p2" 2>/dev/null
+    kill -0 "$_p3" 2>/dev/null && kill "$_p3" 2>/dev/null
+    wait "$_p1" "$_p2" "$_p3" 2>/dev/null || true
     # 状态已就绪，擦除上面的"正在检查..."提示行（仅 TTY）
     [ -t 1 ] && printf -- '\r\033[2K'
     v_sb="$(cat "$_tmpd/sbv" 2>/dev/null)"; [ -n "$v_sb" ] && v_sb="V$v_sb"
     v_cf="$(cat "$_tmpd/cfv" 2>/dev/null)"; [ -n "$v_cf" ] && v_cf="V$v_cf"
     v_nginx="$(cat "$_tmpd/ngv" 2>/dev/null)"; [ -n "$v_nginx" ] && v_nginx="V$v_nginx"
+
+    # 内存统计（KB→MB，向上取整；未运行则空）
+    local m_sb m_cf m_nginx _rss_kb
+    _rss_kb="$(cat "$_tmpd/sbm" 2>/dev/null | tr -d ' \r\n')"
+    [ -n "$_rss_kb" ] && m_sb="$(( (_rss_kb + 1023) / 1024 ))M"
+    _rss_kb="$(cat "$_tmpd/cfm" 2>/dev/null | tr -d ' \r\n')"
+    [ -n "$_rss_kb" ] && m_cf="$(( (_rss_kb + 1023) / 1024 ))M"
+    # 沙箱 nginx：master + 直接子进程（worker）VmRSS 求和
+    {
+        local _ngm
+        _ngm="$(cat "$_tmpd/ngm" 2>/dev/null | tr -d ' \r\n')"
+        if [ -n "$_ngm" ]; then
+            local _wk _sum="$(( (_ngm + 1023) / 1024 ))"
+            for _wk in $(pgrep -P "$(cat "$_tmpd/ngp" 2>/dev/null)" 2>/dev/null); do
+                _rss="$(awk '/VmRSS/{print $2}' "/proc/$_wk/status" 2>/dev/null)"
+                [ -n "$_rss" ] && _sum=$((_sum + ((_rss + 1023) / 1024)))
+            done
+            [ "$_sum" -gt 0 ] && m_nginx="${_sum}M"
+        fi
+    } 2>/dev/null
+
     rm -rf "$_tmpd" 2>/dev/null || true
 
     # sing-box 运行判定
@@ -5458,8 +5552,8 @@ menu_status_block() {
     [ -s "$SINGBOX_FOLDER_PATH/nginx_port" ] && nginx_port="$(cat "$SINGBOX_FOLDER_PATH/nginx_port" 2> /dev/null)"
     _SUPPRESS_LOG="$_old_suppress"
 
-    green "  Sing-box    : $st_sb   $v_sb"
-    green "  Cloudflared : $st_cf   $v_cf"
+    green "  Sing-box    : $st_sb   $v_sb${m_sb:+  (内存: $m_sb)}"
+    green "  Cloudflared : $st_cf   $v_cf${m_cf:+  (内存: $m_cf)}"
     # Argo 状态行（色值与 Nginx 一致：紫○未启用 / 黄○未安装 / 绿●运行中 / 红■已停止，均带端口）
     local argo_port
     argo_port="${argo_pt:-$ARGO_DEFAULT_PORT}"
@@ -5481,9 +5575,9 @@ menu_status_block() {
     elif [ ! -x "$SB_NGINX_BIN" ]; then
         green "  Nginx       : ${st_nginx}（${sub_desc}，端口：${nginx_port}）"
     elif sb_nginx_running; then
-        green "  Nginx       : ${st_nginx}${v_nginx:+ $v_nginx}（${sub_desc}，端口：${nginx_port}）"
+        green "  Nginx       : ${st_nginx}${v_nginx:+ $v_nginx}（${sub_desc}，端口：${nginx_port}）${m_nginx:+（内存: $m_nginx）}"
     else
-        green "  Nginx       : ${st_nginx}（${sub_desc}，端口：${nginx_port}）"
+        green "  Nginx       : ${st_nginx}（${sub_desc}，端口：${nginx_port}）${m_nginx:+（内存: $m_nginx）}"
     fi
 }
 
