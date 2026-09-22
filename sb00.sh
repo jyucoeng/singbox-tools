@@ -4867,8 +4867,11 @@ cleandel() {
     elif command -v rc-service > /dev/null 2>&1; then
         white "  ▸ 停止 OpenRC 服务..."
         for svc in sing-box argo singbox agsb-singbox; do
-            timeout 5 rc-service "$svc" stop > /dev/null 2>&1 || true
-            rc-update del "$svc" default > /dev/null 2>&1
+            # 只处理真实存在的服务；stop/删开机自启都套 timeout，避免疑似卡死等待
+            if [ -x "/etc/init.d/$svc" ]; then
+                timeout 5 rc-service "$svc" stop > /dev/null 2>&1 || true
+                timeout 5 rc-update del "$svc" default > /dev/null 2>&1 || true
+            fi
         done
         rm -f /etc/init.d/{sing-box,argo,singbox,agsb-singbox}
         green "  ✓ OpenRC 服务已停止并清理"
