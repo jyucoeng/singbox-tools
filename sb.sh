@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.1.5(2026-09-23)"
+VERSION="3.1.8(2026-09-23)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -62,6 +62,14 @@ SB_NGINX_URL_BACKUP="https://cdn.jsdelivr.net/gh/jirutka/nginx-binaries@binaries
 SB_NGINX_SHA256_X86_64="76ff943ccf066bbec7fc0aec030c0196ac798e27c6cd4e3c38a1178fdbe1e054"
 SB_NGINX_SHA256_AARCH64="7da452c385864390b09dac0fb248407dc7a7602d4ca2df970e8941574a48fd70"
 # ================== 沙箱 Nginx 配置 结束 ==============
+
+# ================== 二进制版本缓存 ==================
+# 安装/更新成功时把版本号落盘缓存；menu_status_block 优先读缓存，避免对运行中的
+# cloudflared/sing-box 反复执行 version 探测（隧道运行时该探测会挂起/超时）。
+SB_VER_FILE="$SINGBOX_FOLDER_PATH/sb00_sb_ver"
+CF_VER_FILE="$SINGBOX_FOLDER_PATH/sb00_cf_ver"
+NG_VER_FILE="$SINGBOX_FOLDER_PATH/sb00_ng_ver"
+# ================== 二进制版本缓存 结束 ==============
 
 
 
@@ -1090,6 +1098,7 @@ install_nginx_pkg() {
         cur_ver="$("$SB_NGINX_BIN" -v 2>&1 | sed -n 's/.*nginx\/\([0-9][0-9.]*\).*/\1/p')"
         if [ "$cur_ver" = "$NGINX_STATIC_VER" ]; then
             green "✅ 沙箱 Nginx 已安装 (v${cur_ver})，跳过下载"
+            printf '%s' "$cur_ver" > "$NG_VER_FILE" 2> /dev/null || true
             return 0
         fi
         yellow "沙箱 Nginx 版本不匹配 (当前: ${cur_ver:-unknown}，期望: ${NGINX_STATIC_VER})，开始下载..."
@@ -1180,6 +1189,7 @@ install_nginx_pkg() {
     write_sb_nginx_conf
 
     green "✅ 沙箱 Nginx 安装完成 ($("$SB_NGINX_BIN" -v 2>&1 | head -n1))"
+    printf '%s' "$NGINX_STATIC_VER" > "$NG_VER_FILE" 2> /dev/null || true
     return 0
 }
 
@@ -1903,6 +1913,7 @@ update_singbox() {
         current_ver=$("$SINGBOX_FOLDER_PATH/sing-box" version 2> /dev/null | head -1 | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')
         if [ "$current_ver" = "$sb_ver" ]; then
             green "✅ Sing-box 已安装最新版 (v${sb_ver})，跳过下载"
+            printf '%s' "$current_ver" > "$SB_VER_FILE" 2> /dev/null || true
             return 0
         fi
         yellow "Sing-box 版本不匹配 (当前: ${current_ver:-unknown}，期望: ${sb_ver})，开始下载新版..."
@@ -1977,6 +1988,7 @@ update_singbox() {
     fi
     debug_log "【调试】update_singbox：Sing-box 版本为 $sbcore"
     green "✅  已安装 Sing-box 正式版内核：${sbcore}"
+    printf '%s' "$sbcore" > "$SB_VER_FILE" 2> /dev/null || true
 }
 # Generate UUID and save to file
 insuuid() {
@@ -2516,6 +2528,7 @@ installsb() {
         current_ver=$("$SINGBOX_FOLDER_PATH/sing-box" version 2> /dev/null | head -1 | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')
         if [ "$current_ver" = "$sb_ver" ]; then
             green "✅ Sing-box 已安装 (v${current_ver})，跳过下载"
+            printf '%s' "$current_ver" > "$SB_VER_FILE" 2> /dev/null || true
         else
             update_singbox
         fi
@@ -3272,6 +3285,7 @@ ensure_cloudflared() {
         latest_ver=$(curl -sI --max-time 10 "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$cpu" 2>/dev/null | grep -i 'location:' | grep -oE '[0-9]{4}\.[0-9]+\.[0-9]+')
         if [ -n "$local_ver" ] && [ -n "$latest_ver" ] && [ "$local_ver" = "$latest_ver" ]; then
             green "✅ Cloudflared 已安装最新版 (v${local_ver})，跳过下载"
+            printf '%s' "$local_ver" > "$CF_VER_FILE" 2> /dev/null || true
             return 0
         fi
         if [ -n "$latest_ver" ]; then
@@ -3335,6 +3349,9 @@ ensure_cloudflared() {
     fi
 
     debug_log "【调试】ensure_cloudflared：cloudflared 二进制文件权限设置成功"
+    # 落盘版本缓存（menu_status_block 只读此文件，不再对运行中的隧道执行 version 探测）
+    local _cfv="$( "$out" --version 2> /dev/null | grep -oE '[0-9]{4}\.[0-9]+\.[0-9]+' | head -1 )"
+    [ -n "$_cfv" ] && printf '%s' "$_cfv" > "$CF_VER_FILE" 2> /dev/null || true
     return 0
 }
 
@@ -5050,6 +5067,8 @@ echo() {
             [ -t 1 ] && _log_write "$*"
             ;;
     esac
+    return 0 # __sbEcho__: 非 TTY（后台/nohup）时上面 `[ -t 1 ] && ...` 会整体返回 1，
+    # __sbEcho__: 导致整个安装流程以退出码 1 收尾。这里强制归 0，保证退出码语义正确。
 }
 
 # 清空旧日志并写入头部
@@ -5438,7 +5457,12 @@ menu_status_block() {
     _tmpd="$(mktemp -d 2>/dev/null || printf '%s' "$SINGBOX_FOLDER_PATH")"
     {
         if [ -x "$SINGBOX_FOLDER_PATH/sing-box" ]; then
-            timeout 3 "$SINGBOX_FOLDER_PATH/sing-box" version 2>/dev/null | head -1 | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/sbv"
+            # 优先读安装时落盘的版本缓存，避免对运行中的 sing-box 反复探测
+            if [ -s "$SB_VER_FILE" ]; then
+                cat "$SB_VER_FILE" > "$_tmpd/sbv"
+            else
+                timeout 3 "$SINGBOX_FOLDER_PATH/sing-box" version 2>/dev/null | head -1 | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/sbv"
+            fi
             pgrep -f "$SINGBOX_FOLDER_PATH/sing-box" 2>/dev/null | head -1 > "$_tmpd/sbp"
             { awk '/VmRSS/{print $2}' "/proc/$(cat "$_tmpd/sbp" 2>/dev/null)/status" 2> /dev/null; } > "$_tmpd/sbm"
         fi
@@ -5447,14 +5471,22 @@ menu_status_block() {
         if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ] || command -v cloudflared >/dev/null 2>&1; then
             _cfb="$SINGBOX_FOLDER_PATH/cloudflared"
             [ -x "$_cfb" ] || _cfb="$(command -v cloudflared 2>/dev/null)"
-            timeout 3 "$_cfb" version 2>/dev/null | sed -n 's/.*version \([0-9]\{4\}\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/cfv" || true
+            if [ -s "$CF_VER_FILE" ]; then
+                cat "$CF_VER_FILE" > "$_tmpd/cfv"
+            else
+                timeout 3 "$_cfb" version 2>/dev/null | sed -n 's/.*version \([0-9]\{4\}\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/cfv" || true
+            fi
             pgrep -f "$_cfb" 2>/dev/null | head -1 > "$_tmpd/cfp"
             { awk '/VmRSS/{print $2}' "/proc/$(cat "$_tmpd/cfp" 2>/dev/null)/status" 2> /dev/null; } > "$_tmpd/cfm"
         fi
     } & _p2=$!
     {
         if [ -x "$SB_NGINX_BIN" ]; then
-            timeout 3 "$SB_NGINX_BIN" -v 2>&1 | sed -n 's/.*nginx\/\([0-9.]*\).*/\1/p' > "$_tmpd/ngv"
+            if [ -s "$NG_VER_FILE" ]; then
+                cat "$NG_VER_FILE" > "$_tmpd/ngv"
+            else
+                timeout 3 "$SB_NGINX_BIN" -v 2>&1 | sed -n 's/.*nginx\/\([0-9.]*\).*/\1/p' > "$_tmpd/ngv"
+            fi
             if [ -s "$SB_NGINX_PID" ]; then
                 _mpid="$(cat "$SB_NGINX_PID" 2> /dev/null | tr -d ' \r\n')"
                 # 沙箱 nginx 内存 = master + 所有 worker（只按 pid 文件归属，绝不按名匹配）
@@ -5484,9 +5516,9 @@ menu_status_block() {
     wait "$_p1" "$_p2" "$_p3" 2>/dev/null || true
     # 状态已就绪，擦除上面的"正在检查..."提示行（仅 TTY）
     [ -t 1 ] && printf -- '\r\033[2K'
-    v_sb="$(cat "$_tmpd/sbv" 2>/dev/null)"; [ -n "$v_sb" ] && v_sb="V$v_sb"
-    v_cf="$(cat "$_tmpd/cfv" 2>/dev/null)"; [ -n "$v_cf" ] && v_cf="V$v_cf"
-    v_nginx="$(cat "$_tmpd/ngv" 2>/dev/null)"; [ -n "$v_nginx" ] && v_nginx="V$v_nginx"
+    v_sb="$(cat "$_tmpd/sbv" 2>/dev/null | tr -d ' \r\n')"; [ -n "$v_sb" ] && v_sb="V$v_sb"
+    v_cf="$(cat "$_tmpd/cfv" 2>/dev/null | tr -d ' \r\n')"; [ -n "$v_cf" ] && v_cf="V$v_cf"
+    v_nginx="$(cat "$_tmpd/ngv" 2>/dev/null | tr -d ' \r\n')"; [ -n "$v_nginx" ] && v_nginx="V$v_nginx"
 
     # 内存统计（KB→MB，向上取整；未运行则空）
     local m_sb m_cf m_nginx _rss_kb
