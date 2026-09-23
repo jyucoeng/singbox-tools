@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.1.6(2026-09-23)"
+VERSION="3.1.7(2026-09-23)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -2528,6 +2528,7 @@ installsb() {
         current_ver=$("$SINGBOX_FOLDER_PATH/sing-box" version 2> /dev/null | head -1 | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')
         if [ "$current_ver" = "$sb_ver" ]; then
             green "✅ Sing-box 已安装 (v${current_ver})，跳过下载"
+            printf '%s' "$current_ver" > "$SB_VER_FILE" 2> /dev/null || true
         else
             update_singbox
         fi
