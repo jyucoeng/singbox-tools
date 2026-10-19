@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.6(2026-10-19)"
+VERSION="3.2.7(2026-10-19)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -7893,27 +7893,80 @@ edit_identity_menu() {
 }
 
 # ================== 服务器地址（server_ip）修改 ==================
+# 查 IP 是否属于三大 CDN（Cloudflare / Fastly / Akamai）
+# 为什么要在意：这类 IP 出现在「本机出口 IPv4」上，通常说明 v4 出口被 WARP / 云厂商
+# NAT 之类代理了，拿它当节点地址，客户端会连到 CDN 边缘节点而不是本机。
+# 命中则打印厂商名（Cloudflare/Fastly/Akamai），未命中返回 1。
+_ip_cdn_vendor() {
+    local _ip="$1" _json="" _meta="" _asn="" _v=""
+    [ -n "$_ip" ] || return 1
+    # ip-api.com 免费接口：https 偶尔不通，回退 http（与 safe_query_region 一致）
+    _json="$(curl -s -m5 "https://ip-api.com/json/${_ip}?fields=status,as,org,isp" 2> /dev/null)"
+    case "$_json" in
+        *'"status":"success"'*) ;;
+        *) _json="$(curl -s -m5 "http://ip-api.com/json/${_ip}?fields=status,as,org,isp" 2> /dev/null)" ;;
+    esac
+    case "$_json" in
+        *'"status":"success"'*) ;;
+        *) return 1 ;;
+    esac
+    _meta="$(printf '%s' "$_json" | tr '[:upper:]' '[:lower:]')"
+    # 先按 ASN 精确匹配（CDN 厂商常有多个 ASN），再按名称兜底
+    _asn="$(printf '%s' "$_json" | sed -n 's/.*"as":"AS\([0-9]*\)[^"]*".*/\1/p')"
+    case "$_asn" in
+        13335|132892|202623|203898|394536) _v="Cloudflare" ;;
+        54113) _v="Fastly" ;;
+        20940|16625|21342|18717|32787) _v="Akamai" ;;
+    esac
+    if [ -z "$_v" ]; then
+        case "$_meta" in
+            *cloudflare*) _v="Cloudflare" ;;
+            *fastly*) _v="Fastly" ;;
+            *akamai*) _v="Akamai" ;;
+        esac
+    fi
+    [ -n "$_v" ] || return 1
+    printf '%s' "$_v"
+    return 0
+}
+
 # 自动检测出口 IP
 # 参数：4 = 仅 IPv4 / 6 = 仅 IPv6 / 空 = 自动（优先 IPv4，无 v4 再退回 v6）
-# 语义与安装时的 ippz 完全一致，不按「当前 server_ip 的地址族」猜，避免把 v4 节点
-# 悄悄换成 v6 地址（客户端只配了 v4 出口时全连不上）。
+# 语义与安装时的 ippz 一致，不按「当前 server_ip 的地址族」猜。
+# 自动模式下若 v4 属于三大 CDN，说明 v4 出口被代理，改用 v6（提示打到 stderr）。
 _detect_server_ip() {
     local _pref="${1:-${ippz:-}}"
-    local _res="" _v4="" _v6=""
+    local _res="" _v4="" _v6="" _vendor=""
     _res="$(check_ip_connectivity "https://icanhazip.com" 2> /dev/null)"
     _v4="$(printf '%s' "$_res" | cut -d'|' -f1 | tr -d ' \r\n')"
     _v6="$(printf '%s' "$_res" | cut -d'|' -f2 | tr -d ' \r\n')"
     case "$_pref" in
         4)
-            is_valid_ip_simple "$_v4" && { printf '%s' "$_v4"; return 0; }
-            return 1
+            is_valid_ip_simple "$_v4" || return 1
+            _vendor="$(_ip_cdn_vendor "$_v4")" || _vendor=""
+            if [ -n "$_vendor" ]; then
+                yellow "  ⚠️ 出口 IPv4 ${_v4} 属于 ${_vendor}（CDN 厂商），用它当节点地址客户端会连到 CDN 边缘节点" >&2
+            fi
+            printf '%s' "$_v4"
+            return 0
             ;;
         6)
             is_valid_ip_simple "$_v6" && { printf '%s' "$_v6"; return 0; }
             return 1
             ;;
         *)
-            is_valid_ip_simple "$_v4" && { printf '%s' "$_v4"; return 0; }
+            if is_valid_ip_simple "$_v4"; then
+                # v4 是 CDN 的地址 → 说明 v4 出口被代理了，优先改用 v6
+                _vendor="$(_ip_cdn_vendor "$_v4")" || _vendor=""
+                if [ -n "$_vendor" ] && is_valid_ip_simple "$_v6"; then
+                    yellow "  ⚠️ 出口 IPv4 ${_v4} 属于 ${_vendor}（CDN 厂商），已改用 IPv6 ${_v6}" >&2
+                    printf '%s' "$_v6"
+                    return 0
+                fi
+                [ -n "$_vendor" ] && yellow "  ⚠️ 出口 IPv4 ${_v4} 属于 ${_vendor}（CDN 厂商），但本机没有可用 IPv6，仍沿用 IPv4" >&2
+                printf '%s' "$_v4"
+                return 0
+            fi
             is_valid_ip_simple "$_v6" && { printf '%s' "$_v6"; return 0; }
             return 1
             ;;
@@ -7921,7 +7974,7 @@ _detect_server_ip() {
 }
 
 edit_server_ip_menu() {
-    local _sel="" _in="" _cur="" _dh="" _new="" _fmt="" _pref=""
+    local _sel="" _in="" _cur="" _dh="" _new="" _fmt="" _pref="" _vendor=""
     while true; do
         clear
         green "========= [4][10] 节点配置修改 → 服务器地址 (server_ip) ========="
@@ -7987,6 +8040,11 @@ edit_server_ip_menu() {
                     yellow "与当前 server_ip 相同，无需修改"
                     menu_pause
                     continue
+                fi
+                # 手动指定也提示一下：CDN 厂商的 IP 当节点地址连的是边缘节点
+                _vendor="$(_ip_cdn_vendor "$(strip_ip_brackets_all "$_in")")" || _vendor=""
+                if [ -n "$_vendor" ]; then
+                    yellow "  ⚠️ ${_fmt} 属于 ${_vendor}（CDN 厂商）：客户端会连到 CDN 边缘节点，通常不是本机"
                 fi
                 printf '%s\n' "$_fmt" > "$SINGBOX_FOLDER_PATH/server_ip"
                 refresh_sb_and_sub
