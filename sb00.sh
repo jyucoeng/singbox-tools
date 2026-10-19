@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.1.8(2026-09-23)"
+VERSION="3.1.10(2026-10-19)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -711,8 +711,19 @@ name="singbox service"
 description="singbox service"
 command="__SB_PATH__/sing-box"
 command_args="run -c __SB_PATH__/sb.json"
-command_background="yes"
 pidfile="/run/singbox.pid"
+
+# 有 supervise-daemon 就托管：进程崩溃/被 OOM 杀掉后自动重启；
+# 老版本 openrc 没有它时退回普通的 command_background 后台启动。
+if command -v supervise-daemon > /dev/null 2>&1; then
+  supervisor="supervise-daemon"
+  respawn_delay=5
+  respawn_max=0
+  respawn_period=60
+  output_log="__SB_PATH__/logs/supervise-singbox.log"
+else
+  command_background="yes"
+fi
 
 depend() {
   need net
@@ -722,19 +733,6 @@ depend() {
 start_pre() {
   [ -x __SB_PATH__/sing-box ] || return 1
   [ -s __SB_PATH__/sb.json ] || return 1
-}
-
-start() {
-  ebegin "Starting ${name}"
-  start-stop-daemon --start --background --make-pidfile --pidfile "$pidfile" \
-    --exec "$command" -- $command_args
-  eend $?
-}
-
-stop() {
-  ebegin "Stopping ${name}"
-  start-stop-daemon --stop --pidfile "$pidfile"
-  eend $?
 }
 OPENRC_SB00
 
@@ -2851,6 +2849,58 @@ installsb() {
 #    sbbout() 里仍保留对旧 .warp_config 文件的读取逻辑，仅用于兼容历史安装，
 #    该文件现在不会再被生成，因此这段分支实际不生效。
 
+# ================== 日志轮转 ==================
+# sing-box / cloudflared 的日志都是追加写入且没有上限：info 级别下 100M 级的 LXC 小鸡
+# 一天能写 20M 左右，几百 M 的根分区跑久了会被写满，进而拖垮 nginx / cloudflared。
+# 这里生成一个独立的轮转脚本，用每小时一次的 cron 调用：
+#   - 单文件超过 LOG_ROTATE_SIZE_KB（默认 10 MB）就轮转一次，只保留 1 份历史（.1）
+#   - 用「复制 + 清空」而不是 mv：sing-box 以 O_APPEND 打开日志文件，mv 之后进程仍持有
+#     旧 inode，新日志会继续写进已改名的文件（看起来像日志丢失）；清空同一个 inode 才能
+#     让后续写入落回原文件名。
+LOG_ROTATE_SIZE_KB="${LOG_ROTATE_SIZE_KB:-10240}"
+LOG_ROTATE_SCRIPT="$SINGBOX_FOLDER_PATH/singbox-log-rotate.sh"
+LOG_ROTATE_FILES="singbox.log argo.log supervise-singbox.log supervise-argo.log"
+
+# 生成轮转脚本（幂等，每次安装覆盖）
+gen_log_rotate_script() {
+    mkdir -p "$LOGS_DIR" 2> /dev/null
+    cat > "$LOG_ROTATE_SCRIPT" << EOF
+#!/bin/sh
+# 由 sb00.sh 自动生成：日志轮转（copy-truncate，只保留 1 份历史），请勿手改
+LOG_DIR="$LOGS_DIR"
+LIMIT_KB=$LOG_ROTATE_SIZE_KB
+for f in $LOG_ROTATE_FILES; do
+    p="\$LOG_DIR/\$f"
+    [ -f "\$p" ] || continue
+    size_kb=\$(( \$(wc -c < "\$p" 2>/dev/null || echo 0) / 1024 ))
+    [ "\$size_kb" -ge "\$LIMIT_KB" ] || continue
+    cp -p "\$p" "\$p.1" 2>/dev/null || continue
+    : > "\$p" 2>/dev/null || true
+done
+EOF
+    chmod +x "$LOG_ROTATE_SCRIPT" 2> /dev/null || true
+}
+
+# 安装每小时轮转的 cron（已存在则替换，避免重复堆积）
+install_log_rotate() {
+    gen_log_rotate_script
+    if ! command -v crontab > /dev/null 2>&1; then
+        yellow "⚠ 未检测到 crontab，已生成轮转脚本 $LOG_ROTATE_SCRIPT，需自行安排定时执行"
+        return 0
+    fi
+    local ct_tmp
+    ct_tmp="$(mktemp /tmp/crontab.XXXXXX 2> /dev/null)" || ct_tmp="/tmp/crontab.tmp.$$"
+    crontab -l > "$ct_tmp" 2> /dev/null || : > "$ct_tmp"
+    sed -i '/singbox-log-rotate/d' "$ct_tmp" 2> /dev/null
+    echo "17 * * * * $LOG_ROTATE_SCRIPT >/dev/null 2>&1" >> "$ct_tmp"
+    if crontab "$ct_tmp" > /dev/null 2>&1; then
+        debug_print green "✅ 已开启日志轮转（每小时检查，单文件超过 $((LOG_ROTATE_SIZE_KB / 1024))MB 时轮转）"
+    else
+        yellow "⚠ 写入 crontab 失败，日志轮转未生效（可手动执行 $LOG_ROTATE_SCRIPT）"
+    fi
+    rm -f "$ct_tmp"
+}
+
 #  Generate Sing-box configuration file
 sbbout() {
     if [ -e "$SINGBOX_FOLDER_PATH/sb.json" ]; then
@@ -2899,7 +2949,7 @@ ExecStartPre=/bin/sh -c '[ -f /etc/iptables/rules.v6 ] && ip6tables-restore < /e
 ExecStart=$SINGBOX_FOLDER_PATH/sing-box run -c $SINGBOX_FOLDER_PATH/sb.json
 StandardOutput=append:$LOGS_DIR/singbox.log
 StandardError=append:$LOGS_DIR/singbox.log
-Restart=on-failure
+Restart=always
 RestartSec=5s
 [Install]
 WantedBy=multi-user.target
@@ -2911,13 +2961,32 @@ EOF
             debug_print green "✅ sb 服务已启动,并开启开机自启服务（systemd）"
         elif command -v rc-service > /dev/null 2>&1 && [ "$EUID" -eq 0 ]; then
             debug_log "【调试】sbbout：使用 openrc 管理/启动 sb 服务"
+            # ❗ openrc 的 command_background 只负责“后台启动”，进程崩溃/被 OOM 杀掉后不会自动拉起
+            #    （systemd 分支有 Restart=always，openrc 分支以前没有对应能力，所以一停就永久停）。
+            #    优先改用 supervise-daemon 托管：进程退出即按 respawn_* 自动重启，并把 stdout/stderr
+            #    落盘到 supervise-singbox.log，方便下次出问题时看到 Go 的 panic 栈。
+            #    老版本 openrc 没有 supervise-daemon 时回退到原来的 command_background 行为。
+            local _sb_sup_conf
+            if command -v supervise-daemon > /dev/null 2>&1; then
+                _sb_sup_conf='supervisor="supervise-daemon"
+respawn_delay=5
+respawn_max=0
+respawn_period=60
+output_log="'"$LOGS_DIR"'/supervise-singbox.log"'
+            else
+                _sb_sup_conf='command_background=yes'
+            fi
             cat > /etc/init.d/sing-box << EOF
 #!/sbin/openrc-run
 description="sb service"
 command="$SINGBOX_FOLDER_PATH/sing-box"
 command_args="run -c $SINGBOX_FOLDER_PATH/sb.json"
-command_background=yes
 pidfile="/run/sing-box.pid"
+${_sb_sup_conf}
+# 小内存机器（<1G，LXC 小鸡常见）：给 Go 运行时一个软上限，
+# 避免流量高峰时堆无限增长把容器撑爆、被内核 OOM 直接杀掉
+_mem_kb=\$(awk '/^MemTotal:/{print \$2}' /proc/meminfo 2>/dev/null)
+[ -z "\$GOMEMLIMIT" ] && [ -n "\$_mem_kb" ] && [ "\$_mem_kb" -lt 1048576 ] && export GOMEMLIMIT=\$(( _mem_kb * 50 / 100 ))KiB
 depend() { need net; }
 start_pre() {
     [ -f /etc/iptables/rules.v4 ] && iptables-restore < /etc/iptables/rules.v4 2>/dev/null || true
@@ -3384,7 +3453,7 @@ After=network.target
 Type=simple
 NoNewPrivileges=yes
 ExecStart=$SINGBOX_FOLDER_PATH/cloudflared tunnel --edge-ip-version auto --config $SINGBOX_FOLDER_PATH/tunnel.yml run
-Restart=on-failure
+Restart=always
 RestartSec=5s
 
 [Install]
@@ -3402,7 +3471,7 @@ After=network.target
 Type=simple
 NoNewPrivileges=yes
 ExecStart=$SINGBOX_FOLDER_PATH/cloudflared tunnel --no-autoupdate --edge-ip-version auto run --token ${token}
-Restart=on-failure
+Restart=always
 RestartSec=5s
 
 [Install]
@@ -3448,13 +3517,24 @@ install_argo_service_openrc() {
         args="tunnel --no-autoupdate --edge-ip-version auto run --token ${token}"
     fi
 
+    # 与 sb 服务同理：用 supervise-daemon 托管，cloudflared 掉线/被杀后自动重启
+    local _argo_sup_conf
+    if command -v supervise-daemon > /dev/null 2>&1; then
+        _argo_sup_conf='supervisor="supervise-daemon"
+respawn_delay=5
+respawn_max=0
+respawn_period=60
+output_log="'"$LOGS_DIR"'/supervise-argo.log"'
+    else
+        _argo_sup_conf='command_background=yes'
+    fi
     cat > /etc/init.d/argo << EOF
 #!/sbin/openrc-run
 description="argo service"
 command="${command_path}"
 command_args="${args}"
-command_background=yes
 pidfile="/run/argo.pid"
+${_argo_sup_conf}
 depend() { need net; }
 EOF
 
@@ -4026,6 +4106,9 @@ ins() {
     set_sbyx
     sbbout
     refresh_firewall_rules
+
+    # 日志轮转：sing-box / cloudflared 日志无上限，小硬盘机器跑久了会被写满
+    install_log_rotate
 
     # 把ip写入server_ip
     write_server_ip
