@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.7(2026-10-19)"
+VERSION="3.2.8(2026-10-19)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -3863,6 +3863,36 @@ EOF
         debug_log "【调试】pick_server_ip_for_install：最终抓取的公网IP,server_ip=$server_ip"
     fi
 
+    # 7-1) 出口 IPv4 若是三大 CDN（Cloudflare / Fastly / Akamai）的地址，说明 v4 出口被
+    #      WARP / 云厂商 NAT 之类代理了：拿它当节点地址，客户端连到的是 CDN 边缘节点而不是
+    #      本机，节点必然不通。此时若有可用 v6 就改用 v6。
+    #      - 显式 ippz=4：尊重用户选择，保留 v4，只告警
+    #      - 自动：v4 命中 CDN 且有 v6 → 改用 v6；无 v6 → 保留 v4 并告警
+    #      - 查询失败（ip-api 不可达）不影响装机，按原逻辑继续
+    local _cdn_vendor=""
+    if [ -n "$server_ip" ] && is_valid_ip_simple "$server_ip" && ! printf '%s' "$server_ip" | grep -q ':'; then
+        _cdn_vendor="$(_ip_cdn_vendor "$server_ip")" || _cdn_vendor=""
+        if [ -n "$_cdn_vendor" ]; then
+            debug_log "【调试】pick_server_ip_for_install：出口 IPv4 ${server_ip} 属于 ${_cdn_vendor}（CDN 厂商）"
+            if [ "$ipzz_local" = "4" ]; then
+                yellow "⚠️ 出口 IPv4 ${server_ip} 属于 ${_cdn_vendor}（CDN 厂商），但已指定 ippz=4，仍按 IPv4 写入"
+                debug_log "【调试】pick_server_ip_for_install：ippz=4 显式指定，保留 IPv4 ${server_ip}"
+            elif [ -n "$v6_local" ] && is_valid_ip_simple "$v6_local"; then
+                yellow "⚠️ 出口 IPv4 ${server_ip} 属于 ${_cdn_vendor}（CDN 厂商），已改用 IPv6 ${v6_local}"
+                debug_log "【调试】pick_server_ip_for_install：v4 属于 CDN，改用 v6=${v6_local}"
+                server_ip="$(strip_ip_brackets_all "$v6_local")"
+            else
+                yellow "⚠️ 出口 IPv4 ${server_ip} 属于 ${_cdn_vendor}（CDN 厂商），但本机没有可用 IPv6，仍沿用 IPv4"
+                debug_log "【调试】pick_server_ip_for_install：v4 属于 CDN 且无可用 v6，保留 IPv4 ${server_ip}"
+            fi
+        else
+            white "  ▸ 出口 IPv4 ${server_ip} 未命中三大 CDN（Cloudflare/Fastly/Akamai），按原逻辑使用"
+            debug_log "【调试】pick_server_ip_for_install：出口 IPv4 ${server_ip} 不属于三大 CDN，按原逻辑使用"
+        fi
+    else
+        debug_log "【调试】pick_server_ip_for_install：server_ip='${server_ip}' 非 IPv4，跳过 CDN 归属判断"
+    fi
+
     debug_log "【调试】pick_server_ip_for_install：开始对比out_ip与server_ip，out_ip=${out_ip}，server_ip=${server_ip}"
 
     # 8) 处理 out_ip：去括号后再比较；若 out_ip 合法且与 server_ip 不同，则 out_ip 覆盖server_ip的值（原逻辑不变）
@@ -3873,6 +3903,12 @@ EOF
         if [ -z "$server_ip" ] || ! is_valid_ip_simple "$server_ip" || [ "$out_norm" != "$(strip_ip_brackets_all "$server_ip")" ]; then
             debug_log "【调试】pick_server_ip_for_install：out_ip合法且与server_ip不同，out_norm=${out_norm}，server_ip=${server_ip}"
             server_ip="$out_norm"
+            # out_ip 是用户显式指定的，直接采用；但若是 CDN 地址要提示（否则节点连的是边缘节点）
+            _cdn_vendor="$(_ip_cdn_vendor "$out_norm")" || _cdn_vendor=""
+            if [ -n "$_cdn_vendor" ]; then
+                yellow "⚠️ out_ip ${out_norm} 属于 ${_cdn_vendor}（CDN 厂商）：客户端会连到 CDN 边缘节点，请确认这是你要的地址"
+                debug_log "【调试】pick_server_ip_for_install：out_ip ${out_norm} 属于 ${_cdn_vendor}"
+            fi
         fi
     fi
 

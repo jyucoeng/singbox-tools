@@ -952,6 +952,18 @@ sb log_stop        查看服务停止原因日志（排查崩溃用）
 
 ## 7、 版本变更信息
 
+v3.2.8 (2026-10-19)
+ - **安装时选 `server_ip` 也加了 CDN 归属判断**（此前只有 `[4][10]` 有）：`pick_server_ip_for_install` 若发现出口 IPv4 属于 Cloudflare / Fastly / Akamai，说明 v4 出口被 WARP / 云厂商 NAT 之类代理了，拿它当节点地址客户端连的是 CDN 边缘节点，节点必然不通——此时自动改用 IPv6
+   - **软判断**：只有明确识别出 CDN 厂商 **且** 本机有可用 IPv6 才替换；ip-api.com 不可达时按原逻辑继续，不影响装机成功率
+   - `ippz=4` 显式指定时尊重用户选择，保留 IPv4，只告警
+   - `out_ip` 显式指定时直接采用，但若属于 CDN 会告警
+   - **日志**：判断结果写进安装日志（`yellow`/`white` 都会落盘），例如
+     `▸ 出口 IPv4 x.x.x.x 未命中三大 CDN（Cloudflare/Fastly/Akamai），按原逻辑使用`、
+     `⚠️ 出口 IPv4 x.x.x.x 属于 Cloudflare（CDN 厂商），已改用 IPv6 ...`、
+     `⚠️ 出口 IPv4 x.x.x.x 属于 Cloudflare（CDN 厂商），但本机没有可用 IPv6，仍沿用 IPv4`、
+     `⚠️ out_ip x.x.x.x 属于 Fastly（CDN 厂商）...`
+   - 另有 `debug_log` 逐分支调试信息（`DEBUG_FLAG=1` 时输出到终端）
+
 v3.2.7 (2026-10-19)
  - **`[4][10]` 自动检测增加 CDN 归属判断**：出口 IPv4 若属于 **Cloudflare / Fastly / Akamai**，说明 v4 出口被 WARP / 云厂商 NAT 之类代理了——拿它当节点地址，客户端连到的是 CDN 边缘节点而不是本机。此时自动改用 IPv6
    - 判定走 ip-api.com 的 ASN + 组织名双保险：Cloudflare（AS13335 / 132892 / 202623 / 203898 / 394536）、Fastly（AS54113）、Akamai（AS20940 / 16625 / 21342 / 18717 / 32787），ASN 没命中再按名称兜底
