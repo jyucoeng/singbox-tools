@@ -952,6 +952,13 @@ sb log_stop        查看服务停止原因日志（排查崩溃用）
 
 ## 7、 版本变更信息
 
+v3.2.1 (2026-10-19)
+ - **消除脚本名硬编码，sb00.sh 与 sb.sh 现在只差 `SB_SCRIPT_NAME` 一行**：
+   - 二进制版本缓存文件名由 `SB_SCRIPT_NAME` 推导（`${SB_SCRIPT_NAME%.sh}_sb_ver` / `_cf_ver` / `_ng_ver`），不再写死 `sb00_*`。sb00.sh 仍落在 `sb00_*_ver`（无需迁移），sb.sh 落在 `sb_*_ver`，两个脚本放同一目录也不会互相覆盖缓存
+   - openrc 单元的 heredoc 定界符 `OPENRC_SB00` → `OPENRC_UNIT`
+   - 日志轮转脚本头部注释、分流相关注释里的 `sb00` 改为 `$SB_SCRIPT_NAME` / 中性表述
+   - 审计结果：全文件除 `SB_SCRIPT_NAME="sb00.sh"` 外已无 `sb00`/`SB00` 字面量，搬到 sb.sh 时只需改这一行
+
 v3.2.0 (2026-10-19)
  - **`node` 节点配置修改菜单补齐 5 处缺口**（此前这些变量只能在安装时通过环境变量设置，装完没有入口）：
    - `[4][1] 端口修改` 新增 **Socks5 端口**（`socks5pt`）；顺带修复「改过 ws 端口后，后续改任何端口都会连带重启 nginx」的标记残留问题

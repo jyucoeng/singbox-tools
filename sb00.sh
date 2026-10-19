@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.0(2026-10-19)"
+VERSION="3.2.1(2026-10-19)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -66,9 +66,13 @@ SB_NGINX_SHA256_AARCH64="7da452c385864390b09dac0fb248407dc7a7602d4ca2df970e89415
 # ================== 二进制版本缓存 ==================
 # 安装/更新成功时把版本号落盘缓存；menu_status_block 优先读缓存，避免对运行中的
 # cloudflared/sing-box 反复执行 version 探测（隧道运行时该探测会挂起/超时）。
-SB_VER_FILE="$SINGBOX_FOLDER_PATH/sb00_sb_ver"
-CF_VER_FILE="$SINGBOX_FOLDER_PATH/sb00_cf_ver"
-NG_VER_FILE="$SINGBOX_FOLDER_PATH/sb00_ng_ver"
+# ⚠️ 文件名由 SB_SCRIPT_NAME 推导，不要写死 sb00/sb：
+#    两个脚本（sb00.sh / sb.sh）除 SB_SCRIPT_NAME 外应完全一致，写死会导致搬用时漏改，
+#    且两个脚本放在同一目录下时会互相覆盖版本缓存。
+_SB_NAME_ID="${SB_SCRIPT_NAME%.sh}"
+SB_VER_FILE="$SINGBOX_FOLDER_PATH/${_SB_NAME_ID}_sb_ver"
+CF_VER_FILE="$SINGBOX_FOLDER_PATH/${_SB_NAME_ID}_cf_ver"
+NG_VER_FILE="$SINGBOX_FOLDER_PATH/${_SB_NAME_ID}_ng_ver"
 # ================== 二进制版本缓存 结束 ==============
 
 
@@ -705,7 +709,7 @@ EOF
         # ❗ 用 quoted heredoc（<< 'EOF'）写模板，再用 sed 替换占位符 __SB_PATH__。
         # 避免 bash 在写文件时把 openrc 脚本内部的 ${name}/$command/$pidfile/$command_args/$?
         # 当成当前 shell 变量展开（旧版 bug：生成文件变成 --exec ""，start/stop 全部失效）。
-        cat > /etc/init.d/${svc} << 'OPENRC_SB00'
+        cat > /etc/init.d/${svc} << 'OPENRC_UNIT'
 #!/sbin/openrc-run
 name="singbox service"
 description="singbox service"
@@ -734,7 +738,7 @@ start_pre() {
   [ -x __SB_PATH__/sing-box ] || return 1
   [ -s __SB_PATH__/sb.json ] || return 1
 }
-OPENRC_SB00
+OPENRC_UNIT
 
         sed -i "s|__SB_PATH__|${SINGBOX_FOLDER_PATH}|g" "/etc/init.d/${svc}"
 
@@ -2872,7 +2876,7 @@ gen_log_rotate_script() {
     mkdir -p "$LOGS_DIR" 2> /dev/null
     cat > "$LOG_ROTATE_SCRIPT" << EOF
 #!/bin/sh
-# 由 sb00.sh 自动生成：日志轮转（copy-truncate，只保留 1 份历史），请勿手改
+# 由 $SB_SCRIPT_NAME 自动生成：日志轮转（copy-truncate，只保留 1 份历史），请勿手改
 LIMIT_KB=$LOG_ROTATE_SIZE_KB
 
 rotate_dir() {
@@ -7727,7 +7731,7 @@ interactive_log_menu() {
 }
 
 # ================== 分流管理 (rt) ==================
-# 参照 lwsb.sh 的 WARP 分流管理实现，适配 sb00 单文件配置 (sb.json)
+# 参照 lwsb.sh 的 WARP 分流管理实现，适配本脚本的单文件配置 (sb.json)
 # 分流规则插入在 sniff 之后、resolve 之前，保留 sing-box 默认行为
 
 # 分流服务 tag -> 远程规则集 URL
@@ -8082,7 +8086,7 @@ add_rule_menu() {
         selected_out="${out_tags[$((_out_choice-1))]}"
     fi
 
-    # 注入 rule_set 定义（sb00 默认不预置，需按需添加）
+    # 注入 rule_set 定义（本脚本默认不预置，需按需添加）
     rt_ensure_rule_set "$rule_tag"
 
     jq --arg tag "$rule_tag" --arg out "$selected_out" '
