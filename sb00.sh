@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.4(2026-10-19)"
+VERSION="3.2.5(2026-10-19)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -7624,6 +7624,7 @@ edit_mask_host_menu() {
         yellow "  直连协议 (hy2/tuic/vless-reality/anytls/socks5) 链接默认使用真实服务器 IP。"
         yellow "  设置对外域名后，这些链接将用域名替换 IP；Argo/回源协议有自己的 CDN 域名，不受影响。"
         yellow "  要求：域名须能解析到本机（如 DNS A/AAAA 记录），端口沿用本地监听端口。"
+        yellow "  想改「真实服务器 IP」本身 → 用 [4][10] 服务器地址"
         echo ""
         if [ -s "$SINGBOX_FOLDER_PATH/direct_host" ]; then
             _cur_dh="$(cat "$SINGBOX_FOLDER_PATH/direct_host" 2>/dev/null | tr -d '\r\n')"
@@ -7891,6 +7892,93 @@ edit_identity_menu() {
     done
 }
 
+# ================== 服务器地址（server_ip）修改 ==================
+# 自动检测出口 IP：与当前 server_ip 保持同一地址族（当前是 v6 就优先 v6）
+_detect_server_ip() {
+    local _res="" _v4="" _v6="" _cur=""
+    _cur="$(strip_ip_brackets_all "$(cat "$SINGBOX_FOLDER_PATH/server_ip" 2> /dev/null)")"
+    _res="$(check_ip_connectivity "https://icanhazip.com" 2> /dev/null)"
+    _v4="$(printf '%s' "$_res" | cut -d'|' -f1 | tr -d ' \r\n')"
+    _v6="$(printf '%s' "$_res" | cut -d'|' -f2 | tr -d ' \r\n')"
+    if printf '%s' "$_cur" | grep -q ':'; then
+        is_valid_ip_simple "$_v6" && { printf '%s' "$_v6"; return 0; }
+        is_valid_ip_simple "$_v4" && { printf '%s' "$_v4"; return 0; }
+    else
+        is_valid_ip_simple "$_v4" && { printf '%s' "$_v4"; return 0; }
+        is_valid_ip_simple "$_v6" && { printf '%s' "$_v6"; return 0; }
+    fi
+    return 1
+}
+
+edit_server_ip_menu() {
+    local _sel="" _in="" _cur="" _dh="" _new="" _fmt=""
+    while true; do
+        clear
+        green "========= [4][10] 节点配置修改 → 服务器地址 (server_ip) ========="
+        echo ""
+        _cur="$(cat "$SINGBOX_FOLDER_PATH/server_ip" 2> /dev/null | tr -d '\r\n')"
+        _dh="$(cat "$SINGBOX_FOLDER_PATH/direct_host" 2> /dev/null | tr -d '\r\n')"
+        green "  📌 当前 server_ip  : ${_cur:-未设置}"
+        if [ -n "$_dh" ]; then
+            green "  📌 当前 direct_host: ${_dh}（直连链接用域名，server_ip 仅作回退）"
+        else
+            yellow "  📌 当前 direct_host: 未设置（直连链接直接用 server_ip）"
+        fi
+        echo ""
+        yellow "  server_ip = 直连协议链接里显示的地址；Argo / CDN 回源协议有自己的域名，不受影响"
+        yellow "  想用域名代替 IP → 用 [4][6] 直连对外域名（掩盖 IP）"
+        echo ""
+        green "  1) 自动重新检测（按当前出口 IP）"
+        green "  2) 手动指定 IP"
+        purple "  0) 返回上级菜单"
+        reading "请输入选择: " _sel
+        case "$_sel" in
+            0) return ;;
+            1)
+                green "  ⏳ 正在检测出口 IP..."
+                _new="$(_detect_server_ip)" || _new=""
+                if [ -z "$_new" ]; then
+                    red "❌ 检测失败（网络异常，或无法访问 IP 回显服务 icanhazip.com）"
+                    menu_pause
+                    continue
+                fi
+                _fmt="$(format_ip_for_log "$_new")"
+                if [ "$_fmt" = "$_cur" ]; then
+                    yellow "检测结果与当前 server_ip 相同（${_fmt}），无需修改"
+                    menu_pause
+                    continue
+                fi
+                printf '%s\n' "$_fmt" > "$SINGBOX_FOLDER_PATH/server_ip"
+                refresh_sb_and_sub
+                green "✅ server_ip 已更新: ${_cur:-未设置} → ${_fmt}"
+                green "   节点链接与订阅已按新地址重新生成"
+                menu_pause
+                ;;
+            2)
+                reading "  请输入新的服务器 IP（IPv4 / IPv6，回车=取消）: " _in
+                [ -z "$_in" ] && { yellow "已取消"; menu_pause; continue; }
+                if ! is_valid_ip_simple "$_in"; then
+                    red "❌ IP 格式非法（只接受 IPv4 / IPv6；想用域名请走 [4][6]）"
+                    menu_pause
+                    continue
+                fi
+                _fmt="$(format_ip_for_log "$_in")"
+                if [ "$_fmt" = "$_cur" ]; then
+                    yellow "与当前 server_ip 相同，无需修改"
+                    menu_pause
+                    continue
+                fi
+                printf '%s\n' "$_fmt" > "$SINGBOX_FOLDER_PATH/server_ip"
+                refresh_sb_and_sub
+                green "✅ server_ip 已更新: ${_cur:-未设置} → ${_fmt}"
+                green "   节点链接与订阅已按新地址重新生成"
+                menu_pause
+                ;;
+            *) yellow "无效选项"; sleep 1 ;;
+        esac
+    done
+}
+
 # 节点配置修改主菜单
 node_config_menu() {
     local _ch
@@ -7915,6 +8003,7 @@ node_config_menu() {
         fi
         green "  8) 身份信息 (UUID / 名称前缀 / Socks5 账号 / Reality 密钥)"
         green "  9) WS-CDN 回源协议 (Vmess / Vless / Trojan 开关)"
+        green "  10) 服务器地址 (server_ip)"
         purple "  0) 返回主菜单"
         reading "请输入选择: " _ch
         case "$_ch" in
@@ -7928,6 +8017,7 @@ node_config_menu() {
             7) edit_socks5_whitelist_menu ;;
             8) edit_identity_menu ;;
             9) edit_ws_cdn_proto_menu ;;
+            10) edit_server_ip_menu ;;
             *) yellow "无效选项"; sleep 1 ;;
         esac
     done
