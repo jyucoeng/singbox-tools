@@ -952,6 +952,16 @@ sb log_stop        查看服务停止原因日志（排查崩溃用）
 
 ## 7、 版本变更信息
 
+v3.2.9 (2026-10-19)
+ > 全脚本体检的第一批（P0：会导致服务起不来 / 配置写坏 / 删数据）。每条都在代码里核实过。
+
+ - **修复可能删除整个安装目录的隐患**：状态采集里 `_tmpd="$(mktemp -d 2>/dev/null || printf '%s' "$SINGBOX_FOLDER_PATH")"`，`mktemp` 失败时回退成安装目录，而函数末尾会 `rm -rf "$_tmpd"` → 整个 `doraemon/` 被删光。现在 `mktemp` 失败直接跳过状态采集，并在 `rm -rf` 前加白名单校验（绝不碰安装目录）
+ - **修复「取值函数把提示打到 stdout」污染返回值**（`get_short_id` / `normalize_cdn_pt` / `show_sub_url`）：这些函数被 `$(...)` 调用，里面的 `yellow`/`green` 提示会一起被捕获。`get_short_id` 触发时（升级后 sid 与私钥推导值不一致，很常见）返回「ANSI + 中文 + 换行 + sid」，被 `jq --arg` 写进 `short_id`，sing-box 校验 hex 失败直接起不来；`normalize_cdn_pt` 同理会写坏 `cdn_pt`。现在三处提示全部改走 `>&2`
+ - **修复 `timeout` 包 shell 函数导致功能永久失效**：`timeout 8 _resolve_domain_ips_impl ...`、`timeout 6 query_ip_region ...` —— `timeout` 是外部命令，无法执行 shell 函数（execvp 找不到，127 退出且 stderr 被丢弃），所以**域名反查与地区查询在所有目标机上永远返回空**，合法域名一直被误报「未在 DNS 生效」。改为自研的「后台执行 + 看门狗 kill」限时器 `_sb_run_with_timeout`
+   - 顺带修好 DNS 反查结果里混入本地解析器地址的问题（busybox nslookup 会把 `10.10.0.1:53` 当结果打出来），现在只保留真正的 IPv4/IPv6
+ - **修复覆盖安装后新配置不生效**：`sbbout` 用 `systemctl start sb` / `rc-service sing-box start`，服务已在运行时 `start` 是空操作 → 旧进程继续占旧端口，而 nginx/订阅已按新端口生成，全节点 502。改为 `restart`；nohup 分支先 `pkill` 再拉起
+ - **修复 nginx 配置改了不生效**：`ensure_nginx_if_needed` 调 `start_nginx_service`，后者在「已在运行」时直接 `return 0`。改为「已在运行则 `nginx_restart` 重载，否则启动」，并**把失败码透传**给 `ins` 的 `|| exit 1`（此前无条件 `return 0`，nginx 起不来也照样打印「安装完成」）
+
 v3.2.8 (2026-10-19)
  - **安装时选 `server_ip` 也加了 CDN 归属判断**（此前只有 `[4][10]` 有）：`pick_server_ip_for_install` 若发现出口 IPv4 属于 Cloudflare / Fastly / Akamai，说明 v4 出口被 WARP / 云厂商 NAT 之类代理了，拿它当节点地址客户端连的是 CDN 边缘节点，节点必然不通——此时自动改用 IPv6
    - **软判断**：只有明确识别出 CDN 厂商 **且** 本机有可用 IPv6 才替换；ip-api.com 不可达时按原逻辑继续，不影响装机成功率

@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.8(2026-10-19)"
+VERSION="3.2.9(2026-10-19)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -1218,7 +1218,7 @@ normalize_cdn_pt() {
 
     # 非法端口回退
     if ! is_https_cdn_port "$p"; then
-        yellow "❗ cdn_pt=$p 非法，仅支持 ${HTTPS_CDN_PORTS_TEXT}，已回退为 ${fallback}"
+        yellow "❗ cdn_pt=$p 非法，仅支持 ${HTTPS_CDN_PORTS_TEXT}，已回退为 ${fallback}" >&2
         echo "$fallback"
         return 0
     fi
@@ -2056,7 +2056,7 @@ get_short_id() {
                 local old_sid
                 old_sid="$(cat "$sid_file" 2> /dev/null | tr -d ' \r\n')"
                 if [ -n "$old_sid" ] && [ "${old_sid,,}" != "$sid" ]; then
-                    yellow "❗ 检测到 short_id 文件与 reality_private 推导值不同，已按 reality_private 覆盖以保证稳定"
+                    yellow "❗ 检测到 short_id 文件与 reality_private 推导值不同，已按 reality_private 覆盖以保证稳定" >&2
                 fi
             fi
             echo "$sid" > "$sid_file"
@@ -2077,7 +2077,7 @@ get_short_id() {
             echo "$sid"
             return 0
         else
-            yellow "❗ short_id 文件内容无效（必须是8位hex），将重新生成"
+            yellow "❗ short_id 文件内容无效（必须是8位hex），将重新生成" >&2
             rm -f "$sid_file" 2> /dev/null
         fi
     fi
@@ -2094,7 +2094,7 @@ get_short_id() {
 
     sid="${sid,,}"
     echo "$sid" > "$sid_file"
-    green "随机生成 short_id, 值: $sid"
+    green "随机生成 short_id, 值: $sid" >&2
     echo "$sid"
     return 0
 }
@@ -2974,7 +2974,10 @@ WantedBy=multi-user.target
 EOF
             systemctl daemon-reload
             systemctl enable sb
-            systemctl start sb
+            # ⚠️ 必须用 restart 而不是 start：覆盖安装时 sb 服务已在运行，
+            #    `systemctl start` 对处于 active 的单元是空操作，新写入的 sb.json 不会生效，
+            #    旧进程会继续占着旧端口，而 nginx/订阅已按新端口生成 → 节点全 502
+            systemctl restart sb
             echo ""
             debug_print green "✅ sb 服务已启动,并开启开机自启服务（systemd）"
         elif command -v rc-service > /dev/null 2>&1 && [ "$EUID" -eq 0 ]; then
@@ -3012,17 +3015,22 @@ start_pre() {
 }
 EOF
             chmod +x /etc/init.d/sing-box
+            # 同上：openrc 对已启动的服务执行 start 也是空操作，覆盖安装必须 restart
             if [ "${DEBUG_FLAG:-0}" = "1" ]; then
                 rc-update add sing-box default
-                rc-service sing-box start
+                rc-service sing-box restart
             else
                 rc-update add sing-box default > /dev/null 2>&1
-                rc-service sing-box start > /dev/null 2>&1
+                rc-service sing-box restart > /dev/null 2>&1
             fi
             echo ""
             debug_print green "✅ sb 服务已启动,并开启开机自启服务（openrc）"
         else
             debug_log "【调试】sbbout：使用 nohup 模式运行 sb 服务"
+            # 无 init 系统时没有 restart 语义：先停旧进程再拉起，否则新配置同样不生效，
+            # 且旧进程会占着端口让新进程起不来
+            pkill -15 -f "$SINGBOX_FOLDER_PATH/sing-box" 2> /dev/null
+            sleep 1
             nohup "$SINGBOX_FOLDER_PATH/sing-box" run -c "$SINGBOX_FOLDER_PATH/sb.json" > /dev/null 2>&1 &
             echo ""
             debug_print green "✅  sb 服务已启动, 使用 nohup 模式运行"
@@ -3758,8 +3766,16 @@ ensure_nginx_if_needed() {
         : > /var/www/singbox/sub.txt
     fi
 
-    # ✅ 启动 nginx
-    start_nginx_service
+    # ✅ 启动 / 重载 nginx
+    #    setup_nginx_subscribe 刚整份重写了 conf.d；若 nginx 已在运行，只调 start_nginx_service
+    #    会因「已在运行」直接 return 0（配置不生效）→ 必须走 restart 重载。
+    #    同时把失败码透传给调用方（ins 里是 `ensure_nginx_if_needed || exit 1`），
+    #    否则启动失败被吞掉，最后仍然打印「安装完成」，用户拿到 404 的订阅地址。
+    if sb_nginx_running; then
+        nginx_restart || return 1
+    else
+        start_nginx_service || return 1
+    fi
     return 0
 }
 
@@ -4519,7 +4535,7 @@ show_sub_url() {
 
     # ❗ 安全提示：无 Argo/CDN 时订阅只能走明文 HTTP，会暴露订阅 URL（内含所有节点口令）
     #    只应在可信网络使用；如需公网安全订阅请启用固定/临时 Argo 或配置共享 ws_cdn_cf_host
-    yellow "⚠️ 订阅走明文 HTTP，且订阅 URL 内含全部节点口令，请勿在不可信网络分享/抓包"
+    yellow "⚠️ 订阅走明文 HTTP，且订阅 URL 内含全部节点口令，请勿在不可信网络分享/抓包" >&2
     echo "http://${server_ip}:${port}/sub/${sub_uuid}"
 }
 
@@ -5623,7 +5639,13 @@ menu_status_block() {
         yellow "  ↳ 获取服务状态中..."
     fi
     local _tmpd _f _p1 _p2 _p3 _cfb _mpid
-    _tmpd="$(mktemp -d 2>/dev/null || printf '%s' "$SINGBOX_FOLDER_PATH")"
+    # ⚠️ mktemp 失败时绝不能回退到安装目录：函数末尾会 rm -rf "$_tmpd"，
+    #    一旦回退就等于把整个 sing-box 安装目录删掉（sb.json / 密钥 / 二进制全没了）
+    _tmpd="$(mktemp -d 2> /dev/null)" || _tmpd=""
+    if [ -z "$_tmpd" ] || [ ! -d "$_tmpd" ]; then
+        yellow "  ↳ 无法创建临时目录（/tmp 不可写？），已跳过状态采集"
+        return 0
+    fi
     {
         if [ -x "$SINGBOX_FOLDER_PATH/sing-box" ]; then
             # 优先读安装时落盘的版本缓存，避免对运行中的 sing-box 反复探测
@@ -5709,7 +5731,11 @@ menu_status_block() {
         fi
     } 2>/dev/null
 
-    rm -rf "$_tmpd" 2>/dev/null || true
+    # 只删自己建的临时目录；任何情况下都不碰安装目录（防 mktemp 异常导致误删）
+    case "$_tmpd" in
+        "" | "$SINGBOX_FOLDER_PATH" | "$SINGBOX_FOLDER_PATH"/*) : ;;
+        *) rm -rf "$_tmpd" 2> /dev/null || true ;;
+    esac
 
     # sing-box 运行判定
     if pgrep -f "$SINGBOX_FOLDER_PATH/sing-box" > /dev/null 2>&1; then
@@ -7589,7 +7615,16 @@ _resolve_domain_ips_impl() {
             | grep -v '#' >> "$f"
     fi
     local out
-    out="$(grep -v '^[[:space:]]*$' "$f" | sort -u)"
+    # 过滤空行，并丢掉「本地解析器地址」（busybox nslookup 会把 `10.10.0.1:53` 这类
+    # DNS 服务器地址一起打出来，看起来像解析结果）：IPv4:port / [IPv6]:port 一律丢弃
+    _uniq_resolved_ips() {
+        grep -v '^[[:space:]]*$' "$1" \
+            | sed 's/^[[:space:]]*//' \
+            | grep -vE '^[0-9]{1,3}(\.[0-9]{1,3}){3}:[0-9]+$' \
+            | grep -vE '^\[[0-9a-fA-F:]+\]:[0-9]+$' \
+            | sort -u
+    }
+    out="$(_uniq_resolved_ips "$f")"
     # 5) 本地解析仍空 → DoH（cloudflare 公共 DNS，curl+jq 为脚本必装依赖；-m3 限时）
     if [ -z "$out" ] && command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
         local q
@@ -7598,21 +7633,43 @@ _resolve_domain_ips_impl() {
                 -H 'accept: application/dns-json' 2>/dev/null \
                 | jq -r '(.Answer[]? | select(.type == 1 or .type == 28) | .data)' >> "$f"
         done
-        out="$(grep -v '^[[:space:]]*$' "$f" | sort -u)"
+        out="$(_uniq_resolved_ips "$f")"
     fi
     printf '%s' "$out" | tr '\n' ' '
     return 0
 }
 
-# 对外反查入口：整体 timeout 兜底（默认 8s，可用 DIRECT_HOST_RESOLVE_TIMEOUT 覆盖），保证不卡菜单
+# 限时执行 shell 函数（timeout 是外部命令，无法执行 shell 函数：execvp 找不到同名程序，
+# 必然以 127 失败且 stderr 被丢弃，导致功能静默失效）。这里用「后台执行 + 看门狗 kill」实现，
+# stdout 原样返回，超时则返回子进程被杀的状态码。
+_sb_run_with_timeout() {
+    local _secs="${1:-8}"; shift
+    local _out _pid _wd _rc=0
+    _out="$(mktemp 2> /dev/null)" || _out=""
+    if [ -z "$_out" ]; then
+        "$@" 2> /dev/null
+        return $?
+    fi
+    "$@" > "$_out" 2> /dev/null &
+    _pid=$!
+    (
+        sleep "$_secs"
+        kill -9 "$_pid" 2> /dev/null
+    ) > /dev/null 2>&1 &
+    _wd=$!
+    wait "$_pid" 2> /dev/null
+    _rc=$?
+    kill -9 "$_wd" 2> /dev/null
+    cat "$_out" 2> /dev/null
+    rm -f "$_out" 2> /dev/null
+    return "$_rc"
+}
+
+# 对外反查入口：整体限时兜底（默认 8s，可用 DIRECT_HOST_RESOLVE_TIMEOUT 覆盖），保证不卡菜单
 resolve_domain_ips() {
     local d="$1" out=""
     [ -n "$d" ] || return 1
-    if command -v timeout >/dev/null 2>&1; then
-        out="$(timeout "${DIRECT_HOST_RESOLVE_TIMEOUT:-8}" _resolve_domain_ips_impl "$d" 2>/dev/null)"
-    else
-        out="$(_resolve_domain_ips_impl "$d" 2>/dev/null)"
-    fi
+    out="$(_sb_run_with_timeout "${DIRECT_HOST_RESOLVE_TIMEOUT:-8}" _resolve_domain_ips_impl "$d" 2> /dev/null)"
     printf '%s' "$out" | sed 's/ $//'
     return 0
 }
@@ -7621,11 +7678,7 @@ resolve_domain_ips() {
 safe_query_region() {
     local v="$1"
     [ -n "$v" ] || return 0
-    if command -v timeout >/dev/null 2>&1; then
-        timeout 6 query_ip_region "$v" 2>/dev/null
-    else
-        query_ip_region "$v" 2>/dev/null
-    fi
+    _sb_run_with_timeout 6 query_ip_region "$v" 2> /dev/null
 }
 
 # 反查并比对：域名当前解析到哪些 IP，是否已指向服务器真实 IP（server_ip 文件）
