@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.1(2026-10-19)"
+VERSION="3.2.2(2026-10-19)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -3733,7 +3733,8 @@ ensure_nginx_if_needed() {
         need_nginx=true
     fi
 
-    if [ -n "$ws_cdn" ]; then
+    # 注意：ws_cdn 可能只落盘在文件里（菜单改完、环境变量没传），这里要用 ws_cdn_val 兜底读文件
+    if [ -n "$(ws_cdn_val ws_cdn)" ]; then
         need_nginx=true
     fi
 
@@ -6104,6 +6105,22 @@ menu_collect_install() {
             else
                 green "  ↳ Socks5 密码: 自动生成"
             fi
+            reading "  Socks5 IP白名单? [y/N] (回车=不开启，所有IP均可访问): " _ans
+            case "$_ans" in
+                y|Y)
+                    yellow "  多个 IP 用逗号分隔，支持 CIDR，如：1.2.3.4,5.6.7.0/24"
+                    reading "  允许访问 Socks5 的 IP: " _ans
+                    _ans="$(printf '%s' "$_ans" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+                    if [ -n "$_ans" ]; then
+                        export socks5_wl_flag=true
+                        export socks5_ips="$_ans"
+                        green "  ↳ Socks5 白名单: 开启 (${socks5_ips})"
+                    else
+                        yellow "  ↳ 未填写 IP，白名单不开启（所有IP均可访问）"
+                    fi
+                    ;;
+                *) green "  ↳ Socks5 白名单: 不开启（所有IP均可访问）" ;;
+            esac
             ;;
         *) : ; green "  ↳ Socks5: 不安装 (默认)" ;;
     esac
@@ -6403,6 +6420,16 @@ menu_collect_install() {
 
     else
         green "  ↳ 订阅: 不开启 (默认)"
+    fi
+
+    # 订阅没开、但启用了 Argo / WS-CDN 回源时，回源同样要经过 nginx：
+    # 不能再静默用 8080（否则装完发现 nginx 监听在 8080，还得去开一次订阅才能改）
+    if [ "${subscribe:-}" != "true" ] && { [ -n "$ws_cdn" ] || need_argo; }; then
+        echo ""
+        purple "===== 回源 Nginx 端口 ====="
+        yellow "  未开启订阅，但 Argo / WS-CDN 回源仍需 nginx 反代"
+        export nginx_pt="$(menu_ask_port "回源 Nginx" "$NGINX_DEFAULT_PORT")"
+        green "  ↳ Nginx 回源端口: ${nginx_pt}"
     fi
 
     # VLESS 才询问 reality_private
@@ -7246,6 +7273,156 @@ _set_argo_proto() {
     unset _sp _pp
 }
 
+# ================== WS-CDN 回源协议开关 ==================
+# 该协议是否已启用 CDN 回源（以 sb.json 里的独立 inbound 为准，避免文件与配置不一致）
+_ws_cdn_proto_enabled() {
+    local t=""
+    case "$1" in
+        vmess)  t="vmess-ws-cdn-sb" ;;
+        vless)  t="vless-ws-cdn-sb" ;;
+        trojan) t="trojan-ws-cdn-sb" ;;
+        *) return 1 ;;
+    esac
+    [ -s "$SINGBOX_FOLDER_PATH/sb.json" ] || return 1
+    jq -e --arg t "$t" 'any(.inbounds[]?; .tag==$t)' "$SINGBOX_FOLDER_PATH/sb.json" > /dev/null 2>&1
+}
+
+# 修改 WS-CDN 回源协议启用状态（_set_ws_cdn_proto <vmess|vless|trojan> <on|off>）
+# 与 Argo 不同：CDN 回源是独立 inbound（*-ws-cdn-sb）+ 独立端口文件 + 独立 nginx location，
+# 所以开启要补 inbound/端口文件，关闭要删掉它们，再按端口文件重生成 nginx 配置。
+_set_ws_cdn_proto() {
+    local p="$1" act="$2" new="" tag="" portf="" _uuid="" _port="" tmpj="" kept="" _sp="" _on=0
+    case "$p" in
+        vmess)  tag="vmess-ws-cdn-sb";  portf="port_vmess_ws_cdn" ;;
+        vless)  tag="vless-ws-cdn-sb";  portf="port_vless_ws_cdn" ;;
+        trojan) tag="trojan-ws-cdn-sb"; portf="port_trojan_ws_cdn" ;;
+        *) red "❌ 未知协议: ${p}"; return 1 ;;
+    esac
+    _uuid="$(cat "$SINGBOX_FOLDER_PATH/uuid" 2> /dev/null | tr -d '\r\n')"
+    [ -n "$_uuid" ] || { red "❌ 读取 uuid 失败"; return 1; }
+
+    # 1) 更新 ws_cdn 列表文件（逗号分隔、去重、去空项）
+    [ -s "$SINGBOX_FOLDER_PATH/ws_cdn" ] && new="$(cat "$SINGBOX_FOLDER_PATH/ws_cdn" 2> /dev/null | tr -d '\r\n')"
+    if [ "$act" = "on" ]; then
+        case ",$new," in *",$p,"*) : ;; *) new="$new,$p" ;; esac
+    else
+        for _sp in vmess vless trojan; do
+            [ "$_sp" = "$p" ] && continue
+            case ",$new," in *",$_sp,"*) kept="$kept,$_sp" ;; esac
+        done
+        new="${kept#,}"
+    fi
+    new="$(printf '%s' "$new" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed '/^$/d' | sort -u | paste -sd, -)"
+    new="${new#,}"
+    if [ -n "$new" ]; then
+        printf '%s' "$new" > "$SINGBOX_FOLDER_PATH/ws_cdn"
+    else
+        rm -f "$SINGBOX_FOLDER_PATH/ws_cdn"
+    fi
+    export ws_cdn="$new"
+
+    # 2) 增删 CDN inbound（幂等：已存在就不再追加，避免 sing-box 因重复 tag 起不来）
+    tmpj="$SINGBOX_FOLDER_PATH/.sb.tmp"
+    if [ "$act" = "on" ]; then
+        if _ws_cdn_proto_enabled "$p"; then
+            _on=1
+        fi
+        if [ "$_on" -eq 0 ]; then
+            _port="$(cat "$SINGBOX_FOLDER_PATH/$portf" 2> /dev/null | tr -d '\r\n')"
+            [ -n "$_port" ] || _port="$(rand_port)"
+            printf '%s\n' "$_port" > "$SINGBOX_FOLDER_PATH/$portf"
+            case "$p" in
+                vmess)
+                    jq --arg port "$_port" --arg uuid "$_uuid" '
+                        .inbounds += [{type:"vmess", tag:"vmess-ws-cdn-sb", listen:"::",
+                          listen_port:($port|tonumber), users:[{uuid:$uuid, alterId:0}],
+                          transport:{type:"ws", path:"/\($uuid)-vm-cdn"}}]' "$SINGBOX_FOLDER_PATH/sb.json" > "$tmpj" ;;
+                vless)
+                    jq --arg port "$_port" --arg uuid "$_uuid" '
+                        .inbounds += [{type:"vless", tag:"vless-ws-cdn-sb", listen:"::",
+                          listen_port:($port|tonumber), users:[{uuid:$uuid}],
+                          transport:{type:"ws", path:"/\($uuid)-vl-cdn"}}]' "$SINGBOX_FOLDER_PATH/sb.json" > "$tmpj" ;;
+                trojan)
+                    jq --arg port "$_port" --arg uuid "$_uuid" '
+                        .inbounds += [{type:"trojan", tag:"trojan-ws-cdn-sb", listen:"::",
+                          listen_port:($port|tonumber), users:[{password:$uuid}],
+                          transport:{type:"ws", path:"/\($uuid)-tr-cdn"}}]' "$SINGBOX_FOLDER_PATH/sb.json" > "$tmpj" ;;
+            esac
+            sbj_save "$tmpj" || { rm -f "$tmpj"; red "❌ 写入 sb.json 失败"; return 1; }
+            yellow "  ↳ ${p}-WS-CDN 回源端口(本地, 随机)：${_port}"
+        fi
+    else
+        if _ws_cdn_proto_enabled "$p"; then
+            jq --arg t "$tag" 'del(.inbounds[] | select(.tag==$t))' "$SINGBOX_FOLDER_PATH/sb.json" > "$tmpj" || { rm -f "$tmpj"; red "❌ 写入 sb.json 失败"; return 1; }
+            sbj_save "$tmpj" || { rm -f "$tmpj"; red "❌ 写入 sb.json 失败"; return 1; }
+        fi
+        rm -f "$SINGBOX_FOLDER_PATH/$portf"
+    fi
+
+    # 3) 回源必须经 nginx：开启时确保已安装，再按最新端口文件重生成配置
+    if [ "$act" = "on" ]; then
+        ensure_nginx_if_needed > /dev/null 2>&1 || { red "❌ Nginx 准备失败，CDN 回源不可用"; return 1; }
+    fi
+    if [ -x "$SB_NGINX_BIN" ]; then
+        setup_nginx_subscribe > /dev/null 2>&1 && nginx_restart
+    fi
+    return 0
+}
+
+edit_ws_cdn_proto_menu() {
+    local _tmp="" _ws_show="" _p="" _h="" _pt="" _npt="" _sni=""
+    while true; do
+        clear
+        green "========= [4][9] 节点配置修改 → WS-CDN 回源协议（可多选） ========="
+        echo ""
+        _ws_show="$(ws_cdn_val ws_cdn)"
+        green "  当前走 CDN 回源的协议: ${_ws_show:-未启用}"
+        echo ""
+        green "  1) Vmess-WS-CDN   [$(_ws_cdn_proto_enabled vmess && echo 已启用 || echo 未启用)]"
+        green "  2) Vless-WS-CDN   [$(_ws_cdn_proto_enabled vless && echo 已启用 || echo 未启用)]"
+        green "  3) Trojan-WS-CDN  [$(_ws_cdn_proto_enabled trojan && echo 已启用 || echo 未启用)]"
+        echo ""
+        yellow "  回源域名 / SNI / CDN 端口在 [4][3] SNI / CDN 设置里改"
+        purple "  0) 返回上级菜单"
+        reading "输入编号切换启用/停用（每次一个，多选可多次进入）: " _tmp
+        case "$_tmp" in
+            0) return ;;
+            1) _p=vmess ;;
+            2) _p=vless ;;
+            3) _p=trojan ;;
+            *) yellow "无效选项"; sleep 1; continue ;;
+        esac
+        _npt="$(_eff_nginx_pt)"
+        if _ws_cdn_proto_enabled "$_p"; then
+            if _set_ws_cdn_proto "$_p" off; then
+                green "✅ 已关闭 ${_p} 的 CDN 回源（对应节点已失效，订阅已重新生成）"
+                refresh_sb_and_sub
+            fi
+        else
+            if _set_ws_cdn_proto "$_p" on; then
+                green "✅ 已开启 ${_p} 的 CDN 回源"
+                _h="$(ws_cdn_val "ws_cdn_${_p}_cf_host")"
+                [ -n "$_h" ] || _h="$(ws_cdn_val ws_cdn_cf_host)"
+                [ -n "$_h" ] || _h="saas.sin.fan"
+                _pt="$(ws_cdn_val "ws_cdn_${_p}_cf_pt")"
+                [ -n "$_pt" ] || _pt="$(ws_cdn_val ws_cdn_cf_pt)"
+                [ -n "$_pt" ] || _pt="443"
+                # 没配回源 SNI 时不会生成节点链接（回源域名靠 SNI 区分），先提醒
+                _sni="$(ws_cdn_val "ws_cdn_${_p}_sni")"
+                [ -n "$_sni" ] || _sni="$(ws_cdn_val ws_cdn_sni)"
+                if [ -z "$_sni" ]; then
+                    yellow "  ⚠️ 还没配置回源域名 SNI，该协议暂时不会生成节点链接"
+                    yellow "     请先到 [4][3] SNI / CDN 设置里配置回源域名（或专属 ws_cdn_${_p}_sni）"
+                fi
+                purple "  回源地址: ${_h}:${_pt} → 本机 nginx:${_npt}"
+                yellow "  ⚠️ 记得在 Cloudflare 给 ${_h} 配置回源规则指向本机 ${_npt} 端口（或用同一 A 记录 + 回源端口）"
+                refresh_sb_and_sub
+            fi
+        fi
+        menu_pause
+    done
+}
+
 # ================== Socks5 IP白名单管理 ==================
 # 重建白名单：先清除旧的 iptables 规则，再重新插入（复用统一刷新函数）
 _rebuild_socks5_whitelist_rules() {
@@ -7645,6 +7822,7 @@ node_config_menu() {
             green "  7) Socks5 IP白名单管理 (当前：${_wl_status})"
         fi
         green "  8) 身份信息 (UUID / 节点名称前缀 / Socks5 账号密码)"
+        green "  9) WS-CDN 回源协议 (Vmess / Vless / Trojan 开关)"
         purple "  0) 返回主菜单"
         reading "请输入选择: " _ch
         case "$_ch" in
@@ -7657,6 +7835,7 @@ node_config_menu() {
             6) edit_mask_host_menu ;;
             7) edit_socks5_whitelist_menu ;;
             8) edit_identity_menu ;;
+            9) edit_ws_cdn_proto_menu ;;
             *) yellow "无效选项"; sleep 1 ;;
         esac
     done

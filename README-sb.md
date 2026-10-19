@@ -952,6 +952,13 @@ sb log_stop        查看服务停止原因日志（排查崩溃用）
 
 ## 7、 版本变更信息
 
+v3.2.2 (2026-10-19)
+ - **新增 `[4][9] WS-CDN 回源协议开关`**：装完后可直接开启/关闭 vmess / vless / trojan 的 CDN 回源（此前只能带 `ws_cdn=` 重装）。CDN 回源是独立 inbound（`*-ws-cdn-sb`）+ 独立端口文件 + 独立 nginx location，开启时自动分配回源端口、追加 inbound、重生成 nginx 配置并刷新订阅；关闭时删除 inbound / 端口文件 / location，节点随即失效
+   - 开启时会提示回源地址与本机 nginx 端口；若还没配置回源 SNI，会明确告知「暂时不会生成节点链接」，引导去 `[4][3]` 配置
+ - 安装菜单：Socks5 安装时可选 **IP 白名单**（`socks5_wl_flag` / `socks5_ips`，支持 CIDR、逗号分隔），此前只能装完进 `[4][7]` 配
+ - 安装菜单：**未开订阅但启用了 Argo / WS-CDN 回源**时，会单独询问回源 Nginx 端口（此前静默用 8080，想改只能先开一次订阅）
+ - 修复 `ensure_nginx_if_needed` 只认环境变量 `ws_cdn`、不认落盘文件的问题（菜单改完 ws_cdn 后可能不触发 nginx 准备）
+
 v3.2.1 (2026-10-19)
  - **消除脚本名硬编码，sb00.sh 与 sb.sh 现在只差 `SB_SCRIPT_NAME` 一行**：
    - 二进制版本缓存文件名由 `SB_SCRIPT_NAME` 推导（`${SB_SCRIPT_NAME%.sh}_sb_ver` / `_cf_ver` / `_ng_ver`），不再写死 `sb00_*`。sb00.sh 仍落在 `sb00_*_ver`（无需迁移），sb.sh 落在 `sb_*_ver`，两个脚本放同一目录也不会互相覆盖缓存
