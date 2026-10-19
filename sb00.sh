@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.2(2026-10-19)"
+VERSION="3.2.3(2026-10-19)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -7682,10 +7682,77 @@ edit_mask_host_menu() {
     done
 }
 
-# ================== 身份信息修改（UUID / 节点名称前缀 / Socks5 账号密码） ==================
+# ================== 身份信息修改（UUID / 节点名称前缀 / Socks5 账号密码 / Reality 密钥） ==================
 # ⚠️ 改 UUID 会让所有已下发节点立即失效：用户凭据、ws 路径、nginx 反代 location、订阅地址
-#    全部随之变化，因此必须二次确认（输入 yes 才执行）。其余三项风险低，无需确认。
+#    全部随之变化，因此必须二次确认（输入 yes 才执行）。Reality 密钥轮换同理。其余项风险低。
 _uuid_is_valid() { printf '%s' "${1:-}" | grep -qE '^[0-9a-fA-F-]{1,64}$'; }
+
+# 当前是否装了 VLESS-Reality（以 sb.json 里的 inbound 为准）
+_reality_installed() {
+    [ -s "$SINGBOX_FOLDER_PATH/sb.json" ] || return 1
+    jq -e '.inbounds[]? | select(.tag=="vless-reality-vision-sb")' "$SINGBOX_FOLDER_PATH/sb.json" > /dev/null 2>&1
+}
+
+# 轮换 Reality 密钥对
+# 三处必须同步，漏一处客户端就连不上：
+#   1) reality.key   —— 公钥（链接里的 pbk）从这里读
+#   2) short_id 文件 —— 链接里的 sid；且 short_id 是由私钥 sha256 推导的（get_short_id 规则）
+#   3) sb.json       —— tls.reality.private_key / .short_id
+_rotate_reality_keypair() {
+    local _kp="" _priv="" _pub="" _sid="" _tmpj="" _old_priv=""
+    _reality_installed || { red "❌ 当前未安装 VLESS-Reality 协议，无需轮换"; return 1; }
+    [ -x "$SINGBOX_FOLDER_PATH/sing-box" ] || { red "❌ 未找到 sing-box 二进制"; return 1; }
+
+    # 1) 生成新 keypair
+    _kp="$("$SINGBOX_FOLDER_PATH/sing-box" generate reality-keypair 2> /dev/null)"
+    _priv="$(printf '%s\n' "$_kp" | awk '/PrivateKey/{print $NF; exit}')"
+    _pub="$(printf '%s\n' "$_kp" | awk '/PublicKey/{print $NF; exit}')"
+    if [ -z "$_priv" ] || [ -z "$_pub" ]; then
+        red "❌ 生成 Reality 密钥对失败"
+        return 1
+    fi
+    _priv="$(_to_urlsafe_base64 "$_priv")"
+    _pub="$(_to_urlsafe_base64 "$_pub")"
+
+    # 2) short_id 由私钥稳定推导（与 get_short_id 同一规则：sha256 前 8 位）
+    if command -v sha256sum > /dev/null 2>&1; then
+        _sid="$(printf '%s' "$_priv" | sha256sum | awk '{print $1}' | cut -c1-8)"
+    elif command -v openssl > /dev/null 2>&1; then
+        _sid="$(printf '%s' "$_priv" | openssl dgst -sha256 2> /dev/null | awk '{print $NF}' | cut -c1-8)"
+    else
+        _sid="$(head -c 4 /dev/urandom 2> /dev/null | od -An -tx1 | tr -d ' \n' | cut -c1-8)"
+    fi
+    _sid="${_sid,,}"
+    printf '%s' "$_sid" | grep -qiE '^[0-9a-f]{8}$' || { red "❌ short_id 推导失败"; return 1; }
+
+    # 3) 先改临时文件并校验，校验不过直接放弃（不动现网配置）
+    _tmpj="$SINGBOX_FOLDER_PATH/.sb.tmp"
+    jq --arg k "$_priv" --arg s "$_sid" '
+        (.inbounds[] | select(.tag=="vless-reality-vision-sb") | .tls.reality.private_key) = $k
+      | (.inbounds[] | select(.tag=="vless-reality-vision-sb") | .tls.reality.short_id) = [$s]
+    ' "$SINGBOX_FOLDER_PATH/sb.json" > "$_tmpj" || { rm -f "$_tmpj"; red "❌ 写入临时配置失败"; return 1; }
+    if ! "$SINGBOX_FOLDER_PATH/sing-box" check -c "$_tmpj" > /dev/null 2>&1; then
+        rm -f "$_tmpj"
+        red "❌ 新配置校验未通过，已放弃本次轮换（现网配置未改动）"
+        return 1
+    fi
+
+    # 4) 备份旧密钥对（每次轮换覆盖），再落盘新密钥
+    _old_priv="$(awk '/PrivateKey/{print $NF; exit}' "$SINGBOX_FOLDER_PATH/reality.key" 2> /dev/null)"
+    if [ -n "$_old_priv" ]; then
+        cp -p "$SINGBOX_FOLDER_PATH/reality.key" "$SINGBOX_FOLDER_PATH/reality.key.bak" 2> /dev/null || true
+    fi
+    sbj_save "$_tmpj" || { rm -f "$_tmpj"; red "❌ 写入 sb.json 失败"; return 1; }
+    printf "PrivateKey: %s\nPublicKey: %s\n" "$_priv" "$_pub" > "$SINGBOX_FOLDER_PATH/reality.key"
+    chmod 600 "$SINGBOX_FOLDER_PATH/reality.key" 2> /dev/null || true
+    printf '%s\n' "$_sid" > "$SINGBOX_FOLDER_PATH/short_id"
+
+    export reality_private="$_priv"
+    export reality_public="$_pub"
+    green "  ↳ 新 public key (pbk): ${_pub}"
+    green "  ↳ 新 short_id  (sid): ${_sid}"
+    return 0
+}
 
 edit_identity_menu() {
     local _sel _val _old _ok
@@ -7702,6 +7769,10 @@ edit_identity_menu() {
             yellow "       当前: $(jq -r '.inbounds[]? | select(.tag=="socks5-sb") | .users[0].username // empty' "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null)"
             green "  4) 修改 Socks5 密码"
             yellow "       当前: $(jq -r '.inbounds[]? | select(.tag=="socks5-sb") | .users[0].password // empty' "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null)"
+        fi
+        if _reality_installed; then
+            green "  5) 重新生成 Reality 密钥对 (pbk/sid 会变)"
+            yellow "       当前 public key: $(awk '/PublicKey/{print $NF; exit}' "$SINGBOX_FOLDER_PATH/reality.key" 2>/dev/null)"
         fi
         purple "  0) 返回上级菜单"
         reading "请输入选择: " _sel
@@ -7792,6 +7863,27 @@ edit_identity_menu() {
                     && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"
                 refresh_sb_and_sub
                 green "✅ Socks5 密码已修改"
+                menu_pause
+                ;;
+            5)
+                if ! _reality_installed; then
+                    yellow "当前未安装 VLESS-Reality，无法轮换密钥"; menu_pause; continue
+                fi
+                _old="$(awk '/PublicKey/{print $NF; exit}' "$SINGBOX_FOLDER_PATH/reality.key" 2> /dev/null)"
+                echo ""
+                red    "  ⚠️ 重新生成 Reality 密钥对会让所有 Reality 节点立即失效，客户端必须重新导入！"
+                yellow "  影响：服务端 private_key、short_id（由私钥推导）、链接里的 pbk/sid 全部变化"
+                yellow "  当前 public key (pbk): ${_old:-未知}"
+                yellow "  旧密钥会备份到 reality.key.bak（每次轮换覆盖）"
+                reading "  确认重新生成请输入 yes (其它任意输入=取消): " _ok
+                if [ "$_ok" != "yes" ]; then
+                    yellow "已取消，密钥未改动"; menu_pause; continue
+                fi
+                if _rotate_reality_keypair; then
+                    refresh_sb_and_sub
+                    green "✅ Reality 密钥轮换完成，节点链接与订阅已重新生成"
+                    yellow "  请到客户端删除旧节点并重新导入订阅（旧 pbk/sid 已失效）"
+                fi
                 menu_pause
                 ;;
             *) yellow "无效选项"; menu_pause ;;

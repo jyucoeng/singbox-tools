@@ -952,6 +952,14 @@ sb log_stop        查看服务停止原因日志（排查崩溃用）
 
 ## 7、 版本变更信息
 
+v3.2.3 (2026-10-19)
+ - **`[4][8] 身份信息` 新增「重新生成 Reality 密钥对」**（`reality_private` 此前只能安装时传入，密钥泄露后无法轮换）
+   - 三处必须同步，漏一处客户端就连不上：`reality.key`（链接里的 `pbk`）、`short_id` 文件（链接里的 `sid`，由私钥 sha256 前 8 位推导）、`sb.json` 的 `tls.reality.private_key` / `short_id`
+   - 先生成新密钥对 → 写入临时配置并用 `sing-box check` 校验 → 通过才落盘；校验失败不动现网配置
+   - 旧密钥自动备份到 `reality.key.bak`（每次轮换覆盖）
+   - 与改 UUID 一样需要输入 `yes` 二次确认，并提示「所有 Reality 节点立即失效、客户端需重新导入」
+   - 菜单里直接显示当前 public key，方便和客户端对照
+
 v3.2.2 (2026-10-19)
  - **新增 `[4][9] WS-CDN 回源协议开关`**：装完后可直接开启/关闭 vmess / vless / trojan 的 CDN 回源（此前只能带 `ws_cdn=` 重装）。CDN 回源是独立 inbound（`*-ws-cdn-sb`）+ 独立端口文件 + 独立 nginx location，开启时自动分配回源端口、追加 inbound、重生成 nginx 配置并刷新订阅；关闭时删除 inbound / 端口文件 / location，节点随即失效
    - 开启时会提示回源地址与本机 nginx 端口；若还没配置回源 SNI，会明确告知「暂时不会生成节点链接」，引导去 `[4][3]` 配置
