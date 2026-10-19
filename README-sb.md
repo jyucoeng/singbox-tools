@@ -952,6 +952,23 @@ sb log_stop        查看服务停止原因日志（排查崩溃用）
 
 ## 7、 版本变更信息
 
+v3.2.10 (2026-10-19)
+ > 体检第二批（P1：功能静默失效 / 安全隐患）。全部在 VPS 上实测过。
+
+ - **`socks5_wl_flag=1` 现在真的能开白名单**：注释写的是 `true/1=开启`，但 `is_true` 只认 `"true"`，传 `1` 时白名单完全不生效、端口对全网放行，界面还显示「已开启」。`is_true` 改为接受 `true/1/yes/on`，`init_socks5_whitelist` 落盘前统一归一化成 `true`/`false`
+ - **白名单开关终于关得掉**：`init_socks5_whitelist` 原本「文件覆盖环境变量」，已装过的机器 `sb ins socks5_wl_flag=false` 永远无效。改为环境变量优先、文件兜底
+ - **覆盖安装不再静默关订阅 / 重置端口**：`write2SingboxFolders` 无条件 `echo "${subscribe}"`、`"${nginx_pt}"`、`"${ws_cdn}"` 落盘，而这三个变量启动时就被赋了默认值 → `sb ins` 会把订阅关掉、端口改回 8080。现在只在**显式传参**时覆盖，否则保留落盘值；安装横幅也改用生效值显示（不再出现「显示不开启、实际开着」）
+ - **依赖装不上就中止**：`install_deps` 的返回码原本被丢弃，缺 jq/openssl 也照样打印「安装完成」
+ - **改 Argo 凭据会重建服务单元**：token 是写死在 unit / init.d 的 `ExecStart` 里的，原来只 `argorestart`，换 token 等于没换；token→JSON 时 unit 还指向已删除的 `tunnel.yml`。现在统一走 `rebuild_argo_service`
+ - **改 Argo 凭据失败会回滚**：原来先 `rm -f` 旧凭据再校验，校验失败就两头空（旧隧道没了、新的也没成）。现在先备份、失败自动还原
+ - **「取消 Argo」真的能取消**：原来只 `pkill`，systemd `Restart=always` / openrc `supervise-daemon` 5 秒后又拉起来；且没清 `argo`/`vlvm`，`need_argo()` 仍为真。现在先 `stop+disable` 服务、再结束进程、再清协议清单，最后重新生成订阅
+ - **切换 Argo 隧道后会重新生成节点/订阅**：原来改完域名不刷新，订阅里还是旧域名
+ - **`sbrestart` 重启前校验配置**：schema 用 `sing-box check`，**引用完整性另用 jq 补校验**（`route.final` / `rule.outbound` 指向不存在的出站时，`check` 返回 0 但运行时 FATAL `default outbound not found`，随后被 supervise 拉成崩溃循环）。校验不过就不重启，保留当前进程；`SB_SKIP_CHECK=1` 可强制
+ - **删除 socks5 代理不再把配置删坏**：删之前先看 `route.final` 是否指向它（指向则改回 `direct`），否则 final 悬空 → sing-box 起不来
+ - **改协议代理不再误伤同规则里的其它协议**：「改为直连」原本把整条 inbound 规则删掉，一条规则挂 `hy2-sb` + `vless-reality-vision-sb` 时改 hy2 会把 vless 一起变直连。现在只从 `.inbound` 数组里摘掉目标协议，数组空了才删规则（换代理同理）
+ - **沙箱 Nginx 的 pid 会校验身份**：原来只 `kill -0`，重启后 pid 被别的进程复用时，`nginx_stop` 会以 root 给无关进程发 TERM/KILL。现在校验 `/proc/<pid>/comm` 含 `nginx`
+ - **cloudflared 改为下载到临时文件 + 校验后原子替换**：原来 `curl -Lo` 直接覆盖运行中的二进制，且 curl 没有 `-f`，404 的 HTML 错误页也会被当成「下载成功」；失败分支还会删掉原本可用的文件
+
 v3.2.9 (2026-10-19)
  > 全脚本体检的第一批（P0：会导致服务起不来 / 配置写坏 / 删数据）。每条都在代码里核实过。
 

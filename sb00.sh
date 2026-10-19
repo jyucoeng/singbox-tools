@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.9(2026-10-19)"
+VERSION="3.2.10(2026-10-19)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -162,6 +162,13 @@ readonly IPTABLES_COMMENT_SINGBOX="doraemon_singbox_rule"   # 非socks5协议 + 
 readonly IPTABLES_COMMENT_SOCKS5="socks5_rule"              # 有白名单时的socks5
 
 #
+# 记录「用户是否显式传了这些参数」（必须在赋默认值之前取）：
+# write2SingboxFolders 只在显式传入时才覆盖落盘文件，否则覆盖安装会把已有订阅/端口
+# 静默重置成默认值（subscribe=false / nginx_pt=8080）
+_SB_ENV_NGINX_PT="${nginx_pt:-}"
+_SB_ENV_SUBSCRIBE="${subscribe:-}"
+_SB_ENV_WS_CDN="${ws_cdn:-}"
+
 export nginx_pt=${nginx_pt:-$NGINX_DEFAULT_PORT} # 订阅服务端口（Nginx）
 export argo_pt=${argo_pt:-$ARGO_DEFAULT_PORT}    # Argo 回源入口端口（本地）
 
@@ -222,8 +229,13 @@ gradient() {
 }
 # ================== 颜色函数 ==================
 
+# 布尔判断：true/1/yes/on 都算开启（历史上文档写过 `socks5_wl_flag: true/1=开启`，
+# 只认 "true" 会让传 1 的用户白名单静默失效 → 端口对全网放行）
 is_true() {
-    [ "$(printf '%s' "${1:-}" | tr 'A-Z' 'a-z')" = "true" ]
+    case "$(printf '%s' "${1:-}" | tr 'A-Z' 'a-z' | tr -d ' \t\r\n')" in
+        true | 1 | yes | on) return 0 ;;
+        *) return 1 ;;
+    esac
 }
 
 debug_log() {
@@ -1052,12 +1064,30 @@ _sb_nginx_arch() {
 }
 
 # 沙箱 nginx 运行状态（仅看本脚本 pid 文件，避免误报宝塔/系统 nginx）
+# 判断 pid 是否真的是沙箱 nginx 进程。
+# 只做 kill -0 是不够的：机器重启后 pid 会被别的进程复用，此时 nginx_stop 会以 root
+# 身份给一个无关进程发 TERM/KILL（可能是数据库、sshd 之类）。
+_pid_is_sb_nginx() {
+    local pid="${1:-}" _cmd=""
+    [ -n "$pid" ] || return 1
+    kill -0 "$pid" 2> /dev/null || return 1
+    if [ -r "/proc/$pid/comm" ]; then
+        _cmd="$(cat "/proc/$pid/comm" 2> /dev/null)"
+    else
+        _cmd="$(ps -p "$pid" -o comm= 2> /dev/null)"
+    fi
+    case "$_cmd" in
+        *nginx*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 sb_nginx_running() {
     local pid
     [ -s "$SB_NGINX_PID" ] || return 1
     pid="$(cat "$SB_NGINX_PID" 2> /dev/null | tr -d ' \r\n')"
     [ -n "$pid" ] || return 1
-    kill -0 "$pid" 2> /dev/null
+    _pid_is_sb_nginx "$pid"
 }
 
 # 写沙箱主配置（daemon/pid/include 全在 prefix 内，不依赖 mime.types）
@@ -1380,19 +1410,24 @@ init_socks5_credentials() {
 
 # 初始化 socks5 IP白名单配置：从环境变量或文件加载/保存
 init_socks5_whitelist() {
-    # 优先读文件（已安装场景），否则用环境变量
-    if [ -s "$SINGBOX_FOLDER_PATH/socks5_wl_flag" ]; then
+    # ⚠️ 环境变量优先（覆盖安装时显式传值必须能改掉旧配置）；
+    #    以前是「文件先覆盖变量」，导致 `socks5_wl_flag=false sb ins` 永远关不掉白名单
+    if [ -z "${socks5_wl_flag:-}" ] && [ -s "$SINGBOX_FOLDER_PATH/socks5_wl_flag" ]; then
         socks5_wl_flag=$(cat "$SINGBOX_FOLDER_PATH/socks5_wl_flag" | tr -d '\r\n')
     fi
-    if [ -s "$SINGBOX_FOLDER_PATH/socks5_ips" ]; then
+    if [ -z "${socks5_ips:-}" ] && [ -s "$SINGBOX_FOLDER_PATH/socks5_ips" ]; then
         socks5_ips=$(cat "$SINGBOX_FOLDER_PATH/socks5_ips" | tr -d '\r\n')
     fi
 
-    # 环境变量有值时写入文件（覆盖安装场景）
-    if [ -n "${socks5_wl_flag}" ]; then
-        printf '%s\n' "$socks5_wl_flag" > "$SINGBOX_FOLDER_PATH/socks5_wl_flag"
+    # 归一化成 true/false 再落盘：接受 true/1/yes/on 等写法，避免「写了 1 却不生效」
+    if is_true "${socks5_wl_flag:-}"; then
+        socks5_wl_flag=true
+    else
+        socks5_wl_flag=false
     fi
-    if [ -n "${socks5_ips}" ]; then
+    printf '%s\n' "$socks5_wl_flag" > "$SINGBOX_FOLDER_PATH/socks5_wl_flag"
+
+    if [ -n "${socks5_ips:-}" ]; then
         printf '%s\n' "$socks5_ips" > "$SINGBOX_FOLDER_PATH/socks5_ips"
     fi
 }
@@ -3333,6 +3368,11 @@ nginx_stop() {
     local pid
     if [ -s "$SB_NGINX_PID" ]; then
         pid="$(cat "$SB_NGINX_PID" 2> /dev/null | tr -d ' \r\n')"
+        # 只对「确实是 nginx」的 pid 动手；pid 被复用（重启后很常见）时直接清掉 pid 文件
+        if [ -n "$pid" ] && kill -0 "$pid" 2> /dev/null && ! _pid_is_sb_nginx "$pid"; then
+            yellow "  ↳ 沙箱 Nginx 的 pid 文件已失效（${pid} 已被其他进程占用），忽略"
+            pid=""
+        fi
         if [ -n "$pid" ] && kill -0 "$pid" 2> /dev/null; then
             if [ -x "$SB_NGINX_BIN" ] && [ -f "$SB_NGINX_CONF" ]; then
                 "$SB_NGINX_BIN" -p "$SB_NGINX_DIR/" -c conf/nginx.conf -s quit > /dev/null 2>&1 || true
@@ -3433,16 +3473,35 @@ ensure_cloudflared() {
 
     debug_log "【调试】ensure_cloudflared：下载 cloudflared 二进制文件，保存路径 $out"
 
-    (curl -Lo "$out" -# --connect-timeout 5 --max-time 120 \
+    # ⚠️ 先下到临时文件，校验通过再 mv 覆盖：
+    #    直接 -o "$out" 会就地截断正在运行的二进制（升级场景），
+    #    而且 curl 没有 -f，404/502 的 HTML 错误页也会被当成「下载成功」写进去。
+    local _cf_tmp="$out.new.$$"
+    rm -f "$_cf_tmp" 2> /dev/null
+    (curl -fLo "$_cf_tmp" -# --connect-timeout 5 --max-time 120 \
         --retry 2 --retry-delay 2 --retry-all-errors "$url") \
-        || (wget -O "$out" --tries=2 --timeout=60 --dns-timeout=5 --read-timeout=60 "$url")
+        || (wget -O "$_cf_tmp" --tries=2 --timeout=60 --dns-timeout=5 --read-timeout=60 "$url")
 
     debug_log "【调试】ensure_cloudflared：检查 cloudflared 二进制文件是否下载成功"
-    if [ ! -s "$out" ]; then
+    if [ ! -s "$_cf_tmp" ]; then
         debug_log "【调试】ensure_cloudflared：下载失败：文件为空"
-        red "❌ 下载失败：文件为空 $out"
+        rm -f "$_cf_tmp" 2> /dev/null
+        red "❌ 下载失败：文件为空（已保留原二进制）"
         return 1
     fi
+    # 简单有效性校验：错误页/空壳不会是 ELF 可执行文件
+    if command -v file > /dev/null 2>&1; then
+        case "$(file -b "$_cf_tmp" 2> /dev/null)" in
+            *ELF* | *executable* | *"Mach-O"*) : ;;
+            *)
+                rm -f "$_cf_tmp" 2> /dev/null
+                red "❌ 下载内容不是可执行文件（可能是错误页），已保留原二进制"
+                return 1
+                ;;
+        esac
+    fi
+    chmod +x "$_cf_tmp" 2> /dev/null
+    out="$_cf_tmp"
 
     # 可选校验和（供应链加固）：设置 CLOUDFLARED_SHA256=<SHA256> 时强制校验下载文件
     if [ -n "${CLOUDFLARED_SHA256:-}" ]; then
@@ -3477,6 +3536,10 @@ ensure_cloudflared() {
     # 落盘版本缓存（menu_status_block 只读此文件，不再对运行中的隧道执行 version 探测）
     local _cfv="$( "$out" --version 2> /dev/null | grep -oE '[0-9]{4}\.[0-9]+\.[0-9]+' | head -1 )"
     [ -n "$_cfv" ] && printf '%s' "$_cfv" > "$CF_VER_FILE" 2> /dev/null || true
+
+    # 全部校验通过后才原子替换正式路径（此时才动线上二进制）
+    mv -f "$out" "$SINGBOX_FOLDER_PATH/cloudflared" || { rm -f "$out" 2> /dev/null; red "❌ 安装 cloudflared 失败（无法覆盖 $SINGBOX_FOLDER_PATH/cloudflared）"; return 1; }
+    chmod +x "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null || true
     return 0
 }
 
@@ -4074,8 +4137,11 @@ ins() {
     [ -n "$anyp" ] && _dlist="$_dlist,anytls"
     _dlist="${_dlist#,}"
     [ -n "$_dlist" ] && { _d_c="${_dlist//[!,]/}"; _d_n=$((${#_d_c}+1)); if [ "$_d_n" -eq 1 ]; then _d_sfx="(单选，${_d_n}个)"; else _d_sfx="(已多选，${_d_n}个)"; fi; }
-    local _sub_txt="不开启"
-    [ "${subscribe:-false}" = "true" ] && _sub_txt="开启 (nginx_pt=${nginx_pt})"
+    # 用「生效值」而不是环境变量：覆盖安装时没传 subscribe，实际状态要读文件，
+    # 否则横幅会显示「不开启」而实际订阅是开着的
+    local _sub_txt="不开启" _sub_eff
+    _sub_eff="$(get_subscribe_flag)"
+    is_true "$_sub_eff" && _sub_txt="开启 (nginx_pt=$(_eff_nginx_pt))"
     # 出口 IP：优先 out_ip，否则现场检测 v4/v6（偏好逻辑与 write_server_ip 一致）
     local _ipres _ipv4 _ipv6 _exit_ip="" _exit_label="" _exit_region=""
     _ipres="$(check_ip_connectivity "$v46url" 2>/dev/null)"
@@ -4374,15 +4440,27 @@ write2SingboxFolders() {
     unset _ap _ak _av
 
     # ✅ 只写新变量
-    echo "${nginx_pt}" > "$SINGBOX_FOLDER_PATH/nginx_port"
+    # 订阅端口：只在显式传入时覆盖，否则保留落盘值（没有才写默认值）
+    if [ -n "${_SB_ENV_NGINX_PT:-}" ]; then
+        echo "$nginx_pt" > "$SINGBOX_FOLDER_PATH/nginx_port"
+    elif [ ! -s "$SINGBOX_FOLDER_PATH/nginx_port" ]; then
+        echo "$NGINX_DEFAULT_PORT" > "$SINGBOX_FOLDER_PATH/nginx_port"
+    fi
 
     echo "${vl_sni_pt}" > "$SINGBOX_FOLDER_PATH/vl_sni_pt"
 
-    # ✅ 订阅开关落盘（默认 false）
-    echo "${subscribe}" > "$SINGBOX_FOLDER_PATH/subscribe"
+    # ✅ 订阅开关落盘：同样只在显式传入时覆盖，避免 `sb ins` 静默把订阅关掉
+    if [ -n "${_SB_ENV_SUBSCRIBE:-}" ]; then
+        echo "$subscribe" > "$SINGBOX_FOLDER_PATH/subscribe"
+    elif [ ! -s "$SINGBOX_FOLDER_PATH/subscribe" ]; then
+        echo "false" > "$SINGBOX_FOLDER_PATH/subscribe"
+    fi
 
     # ✅ ws+ws+tls+cdn 直连参数落盘（开关 + 共享默认 + 每协议专属；env 空保留旧文件/从旧名迁移）
-    echo "${ws_cdn}" > "$SINGBOX_FOLDER_PATH/ws_cdn"
+    # ws_cdn：只在显式传入时覆盖（菜单改动走 _set_ws_cdn_proto 直接写文件）
+    if [ -n "${_SB_ENV_WS_CDN:-}" ]; then
+        echo "$ws_cdn" > "$SINGBOX_FOLDER_PATH/ws_cdn"
+    fi
     fs_write_or_keep "$SINGBOX_FOLDER_PATH/ws_cdn_cf_host" "${ws_cdn_cf_host:-}" "$SINGBOX_FOLDER_PATH/ws_cdn_host" ""
     fs_write_or_keep "$SINGBOX_FOLDER_PATH/ws_cdn_sni"     "${ws_cdn_sni:-}"     "$SINGBOX_FOLDER_PATH/ws_cdn_sni" ""
     fs_write_or_keep "$SINGBOX_FOLDER_PATH/ws_cdn_cf_pt"   "${ws_cdn_cf_pt:-}"   "$SINGBOX_FOLDER_PATH/ws_cdn_pt"   ""
@@ -5153,19 +5231,70 @@ migrate_logs_dir() {
 
 # Restart sing-box
 sbrestart() {
+    # ⚠️ 重启前先校验配置：写坏的 sb.json 会让服务起不来，而 systemd 的 Restart=always /
+    #    openrc 的 respawn_max=0 会把它拉成崩溃循环（CPU 打满、节点全断，日志刷屏）。
+    #    校验不过就不重启 —— 保留当前正在跑的进程，至少服务不中断。
+    #    确有特殊情况可用 SB_SKIP_CHECK=1 跳过。
+    local _sbj="$SINGBOX_FOLDER_PATH/sb.json" _missing=""
+    if [ "${SB_SKIP_CHECK:-0}" != "1" ] && [ -s "$_sbj" ]; then
+        # 1) schema 校验
+        if [ -x "$SINGBOX_FOLDER_PATH/sing-box" ] && ! "$SINGBOX_FOLDER_PATH/sing-box" check -c "$_sbj" > /dev/null 2>&1; then
+            red "❌ sb.json 校验未通过，已阻止重启（避免服务起不来 / 崩溃循环）"
+            red "   排查：$SINGBOX_FOLDER_PATH/sing-box check -c $_sbj"
+            red "   确认无误后可用 SB_SKIP_CHECK=1 强制重启"
+            return 1
+        fi
+        # 2) 引用完整性校验：sing-box check 只验 schema，不验引用
+        #    （route.final 指向不存在的出站时 check 返回 0，运行时才 FATAL
+        #      "default outbound not found" —— 然后被 supervise 拉成崩溃循环）
+        if command -v jq > /dev/null 2>&1; then
+            _missing="$(jq -r '
+                (.outbounds // [] | map(.tag)) as $tags
+                | [
+                    (.route.final // empty | select(. as $f | ($tags | index($f)) == null) | "route.final=" + .),
+                    ((.route.rules // [])[] | select(.outbound != null) | .outbound
+                     | select(. as $o | ($tags | index($o)) == null) | "rule.outbound=" + .)
+                  ] | unique | join(", ")
+            ' "$_sbj" 2> /dev/null)"
+            if [ -n "$_missing" ]; then
+                red "❌ sb.json 存在悬空出站引用：${_missing}"
+                red "   已阻止重启（sing-box check 发现不了这类问题，运行时会直接 FATAL）"
+                red "   确认无误后可用 SB_SKIP_CHECK=1 强制重启"
+                return 1
+            fi
+        fi
+    fi
+
     if has_systemd; then
         # systemd 管理：直接 restart，不要手动 pkill
         # 手动 pkill 会导致进程脱离 cgroup 管理，systemd stop 时找不到进程 → 状态标记 failed → start 被拒绝
-        systemctl restart sb
+        systemctl restart sb || { red "❌ sing-box 重启失败（systemd），请查看：journalctl -u sb -n 50 --no-pager"; return 1; }
     elif command -v rc-service > /dev/null 2>&1; then
-        rc-service sing-box restart
+        rc-service sing-box restart || { red "❌ sing-box 重启失败（openrc），请查看：$LOGS_DIR/singbox.log"; return 1; }
     else
         pkill -15 -f "$SINGBOX_FOLDER_PATH/sing-box" 2> /dev/null
-        nohup "$SINGBOX_FOLDER_PATH/sing-box" run -c "$SINGBOX_FOLDER_PATH/sb.json" > /dev/null 2>&1 &
+        nohup "$SINGBOX_FOLDER_PATH/sing-box" run -c "$_sbj" > /dev/null 2>&1 &
     fi
+    return 0
 }
 
 # Restart argo
+# 重建 argo 服务单元。
+# token 模式下 token 是写死在 unit / init.d 的 ExecStart 里的，改完凭据只 argorestart
+# 等于没改（重启还是拿旧 token）；token→JSON 时 unit 还指向已删除的 tunnel.yml。
+rebuild_argo_service() {
+    local _auth="${1:-${ARGO_AUTH:-}}"
+    local _mode="${ARGO_MODE:-none}"
+    [ "$_mode" = "none" ] && return 0
+    if has_systemd; then
+        install_argo_service_systemd "$_mode" "$_auth"
+    elif command -v rc-service > /dev/null 2>&1; then
+        install_argo_service_openrc "$_mode" "$_auth"
+    else
+        return 0
+    fi
+}
+
 argorestart() {
     # ===============================
     # systemd 管理：直接 restart，不要手动 pkill（同 sbrestart 原理）
@@ -5312,7 +5441,11 @@ install_step() {
     os_name=$(awk -F= '/^NAME/{print $2}' /etc/os-release)
 
     debug_log "【调试】开始安装各种乱七八糟的依赖"
-    install_deps
+    # 依赖装不上（缺 jq/openssl/iptables 等）后面全是连锁失败，必须中止而不是继续装完再报成功
+    install_deps || {
+        red "❌ 依赖安装失败，已中止安装（缺少 jq/openssl/iptables 等关键命令）"
+        return 1
+    }
 
     debug_log "【调试】安装各种乱七八糟的依赖完成"
 
@@ -7195,34 +7328,89 @@ edit_argo_menu() {
                 fi
                 reading "请输入 Argo Token 或粘贴 JSON 凭据: " _a
                 [ -z "$_a" ] && { red "❌ Token/JSON 不能为空"; menu_pause; continue; }
-                rm -f "$SINGBOX_FOLDER_PATH/tunnel.yml" "$SINGBOX_FOLDER_PATH/tunnel.json" "$SINGBOX_FOLDER_PATH/sbargotoken"
-                # 先校验（含域名/凭据格式），通过后再落盘，避免失败时留下不一致状态
-                if ! prepare_argo_credentials "$_a" "$_d" "$(cat "$SINGBOX_FOLDER_PATH/argoport" 2>/dev/null)"; then
-                    red "❌ Argo 凭据校验失败，未切换"; menu_pause; continue
+                # 先备份现有凭据：prepare 失败时能回滚，避免「旧的删了、新的没写进去」直接失联
+                _abak="$(mktemp -d 2> /dev/null)" || _abak=""
+                if [ -n "$_abak" ]; then
+                    for _f in tunnel.yml tunnel.json sbargotoken argo_domain; do
+                        [ -e "$SINGBOX_FOLDER_PATH/$_f" ] && cp -p "$SINGBOX_FOLDER_PATH/$_f" "$_abak/$_f" 2> /dev/null
+                    done
                 fi
+                rm -f "$SINGBOX_FOLDER_PATH/tunnel.yml" "$SINGBOX_FOLDER_PATH/tunnel.json" "$SINGBOX_FOLDER_PATH/sbargotoken"
+                if ! prepare_argo_credentials "$_a" "$_d" "$(_eff_argo_pt)"; then
+                    rm -f "$SINGBOX_FOLDER_PATH/tunnel.yml" "$SINGBOX_FOLDER_PATH/tunnel.json" "$SINGBOX_FOLDER_PATH/sbargotoken"
+                    if [ -n "$_abak" ]; then
+                        for _f in tunnel.yml tunnel.json sbargotoken argo_domain; do
+                            [ -e "$_abak/$_f" ] && cp -p "$_abak/$_f" "$SINGBOX_FOLDER_PATH/$_f" 2> /dev/null
+                        done
+                    fi
+                    [ -n "$_abak" ] && rm -rf "$_abak"
+                    red "❌ Argo 凭据校验失败，已回滚到原来的凭据"
+                    menu_pause; continue
+                fi
+                [ -n "$_abak" ] && rm -rf "$_abak"
                 echo "$_d" > "$SINGBOX_FOLDER_PATH/argo_domain"
-                chmod 600 "$SINGBOX_FOLDER_PATH/argo_domain" 2>/dev/null || true
-                if [ "$ARGO_MODE" = "json" ]; then
-                    echo "" > /dev/null
-                elif [ "$ARGO_MODE" = "token" ]; then
+                chmod 600 "$SINGBOX_FOLDER_PATH/argo_domain" 2> /dev/null || true
+                if [ "$ARGO_MODE" = "token" ]; then
                     echo "$_a" > "$SINGBOX_FOLDER_PATH/sbargotoken"
-                    chmod 600 "$SINGBOX_FOLDER_PATH/sbargotoken" 2>/dev/null || true
+                    chmod 600 "$SINGBOX_FOLDER_PATH/sbargotoken" 2> /dev/null || true
+                fi
+                export ARGO_AUTH="$_a" ARGO_DOMAIN="$_d"
+                # 关键：token 写在服务单元的 ExecStart 里，必须重建单元，否则重启还是用旧 token
+                if ! rebuild_argo_service "$_a"; then
+                    red "❌ Argo 服务单元重建失败：凭据已写入但服务未更新，请检查 systemd/openrc"
+                    menu_pause; continue
                 fi
                 argorestart
+                refresh_sb_and_sub
                 green "✅ 切换固定 Argo 隧道操作已完成！"
                 menu_pause
                 ;;
             2)
                 rm -f "$SINGBOX_FOLDER_PATH/tunnel.yml" "$SINGBOX_FOLDER_PATH/tunnel.json" "$SINGBOX_FOLDER_PATH/sbargotoken" "$SINGBOX_FOLDER_PATH/argo_domain"
-                argorestart
+                # 固定隧道是服务托管的：不停服务的话 Restart=always 会把旧的固定隧道拉回来
+                if [ -f /etc/systemd/system/argo.service ] && command -v systemctl > /dev/null 2>&1; then
+                    systemctl stop argo > /dev/null 2>&1
+                    systemctl disable argo > /dev/null 2>&1
+                    rm -f /etc/systemd/system/argo.service
+                    systemctl daemon-reload
+                fi
+                if [ -f /etc/init.d/argo ] && command -v rc-service > /dev/null 2>&1; then
+                    rc-service argo stop > /dev/null 2>&1
+                    rc-update del argo default > /dev/null 2>&1
+                    rm -f /etc/init.d/argo
+                fi
+                pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null
+                sleep 1
+                start_argo_no_daemon "temp" "" "$(_eff_argo_pt)"
+                wait_and_check_argo "临时"
+                refresh_sb_and_sub
                 green "✅ 切换临时 Argo 隧道操作已完成！"
                 menu_pause
                 ;;
             3)
+                # 1) 先停服务托管：否则 Restart=always / supervise-daemon 5 秒后又拉起来
+                if [ -f /etc/systemd/system/argo.service ] && command -v systemctl > /dev/null 2>&1; then
+                    systemctl stop argo > /dev/null 2>&1
+                    systemctl disable argo > /dev/null 2>&1
+                    rm -f /etc/systemd/system/argo.service
+                    systemctl daemon-reload
+                fi
+                if [ -f /etc/init.d/argo ] && command -v rc-service > /dev/null 2>&1; then
+                    rc-service argo stop > /dev/null 2>&1
+                    rc-update del argo default > /dev/null 2>&1
+                    rm -f /etc/init.d/argo
+                fi
+                # 2) 临时隧道是 nohup 起的，直接结束进程
                 pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null
-                [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ] && pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null
-                rm -f "$SINGBOX_FOLDER_PATH/tunnel.yml" "$SINGBOX_FOLDER_PATH/tunnel.json" "$SINGBOX_FOLDER_PATH/sbargotoken" "$SINGBOX_FOLDER_PATH/argo_domain" "$LOGS_DIR/argo.log"
-                green "✅ 取消使用 Argo 隧道操作已完成！"
+                # 3) 清理凭据 + 协议清单：argo/vlvm 不清掉的话 need_argo() 仍为真，
+                #    nginx 会继续按「有 argo」生成配置，节点也还会输出 argo 域名
+                rm -f "$SINGBOX_FOLDER_PATH/tunnel.yml" "$SINGBOX_FOLDER_PATH/tunnel.json" \
+                    "$SINGBOX_FOLDER_PATH/sbargotoken" "$SINGBOX_FOLDER_PATH/argo_domain" \
+                    "$SINGBOX_FOLDER_PATH/argo" "$SINGBOX_FOLDER_PATH/vlvm" "$LOGS_DIR/argo.log"
+                rm -f "$SINGBOX_FOLDER_PATH"/argo_*_cf_host "$SINGBOX_FOLDER_PATH"/argo_*_cf_pt 2> /dev/null
+                unset argo
+                refresh_sb_and_sub
+                green "✅ 取消使用 Argo 隧道操作已完成（服务已停用，协议清单已清理）！"
                 menu_pause
                 ;;
             *) yellow "无效选项"; menu_pause ;;
@@ -8499,15 +8687,20 @@ edit_protocol_proxy() {
     [ -z "$_choice" ] && { yellow "已取消，未做任何修改。"; menu_pause; return; }
 
     if [ "$_choice" = "0" ]; then
-        # 直连：从所有 inbound 规则中移除该协议
+        # 直连：只把该协议从 inbound 数组里摘掉，不能删整条规则
+        #（一条规则常挂多个协议，删整条会把同规则的其它协议一起改成直连）
         if jq --arg p "$_tag" '
             . as $doc
             | ($doc.route.rules // []) as $R
             | ($R | map(select(.action == "sniff"))) as $sniff
             | ($R | map(select(.action == "resolve"))) as $resolve
-            | ($R | map(select(.action != "sniff" and .action != "resolve" and (.inbound == null or ((.inbound | index($p)) | not))))) as $splits
+            | ($R | map(select(.action != "sniff" and .action != "resolve"))) as $splits
             | $doc
-            | .route.rules = $sniff + $splits + $resolve
+            | .route.rules = $sniff
+              + ($splits
+                 | map(if (.inbound != null) and ((.inbound | index($p)) != null) then .inbound -= [$p] else . end)
+                 | map(select((.inbound == null) or ((.inbound | length) > 0))))
+              + $resolve
         ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"; then
             sbrestart
             green "✅ $_tag 已改为直连（原IP出口）"
@@ -8522,22 +8715,27 @@ edit_protocol_proxy() {
     if [ -z "$_p" ]; then
         red "无效的代理编号！"; menu_pause; return
     fi
+    # 同理：先把该协议从所有规则里摘掉（而不是把含有它的整条规则丢掉），
+    # 再挂到目标代理上，避免同规则里的其它协议被静默改成直连
     if jq --arg p "$_p" --arg proto "$_tag" '
         . as $doc
         | ($doc.route.rules // []) as $R
         | ($R | map(select(.action == "sniff"))) as $sniff
         | ($R | map(select(.action == "resolve"))) as $resolve
-        | ($R | map(select(.action != "sniff" and .action != "resolve" and .inbound == null))) as $others
-        | ($R | map(select(.action != "sniff" and .action != "resolve" and .inbound != null and .outbound == $p))) as $target
-        | ($R | map(select(.action != "sniff" and .action != "resolve" and .inbound != null and .outbound != $p and ((.inbound | index($proto)) | not)))) as $inb_others
+        | ($R | map(select(.action != "sniff" and .action != "resolve"))) as $splits
+        | ($splits
+           | map(if (.inbound != null) and ((.inbound | index($proto)) != null) then .inbound -= [$proto] else . end)
+           | map(select((.inbound == null) or ((.inbound | length) > 0)))) as $cleaned
+        | ($cleaned | map(select(.inbound != null and .outbound == $p))) as $target
         | $doc
-        | .route.rules = $sniff + ($others + $inb_others + [
-            if ($target | length) > 0 then
-                (if ($target[0].inbound | index($proto)) then $target[0] else ($target[0] | .inbound += [$proto]) end)
-            else
-                {inbound: [$proto], outbound: $p}
-            end
-          ] | sort_by(if .rule_set != null then 0 elif .inbound != null then 1 else 2 end)) + $resolve
+        | .route.rules = $sniff
+          + (if ($target | length) > 0 then
+                ($cleaned | map(if (.inbound != null and .outbound == $p and ((.inbound | index($proto)) == null))
+                                   then .inbound += [$proto] else . end))
+             else
+                ($cleaned + [{inbound: [$proto], outbound: $p}])
+             end)
+          + $resolve
     ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"; then
         sbrestart
         green "✅ $_tag 已改用代理: $_p"
@@ -8784,7 +8982,7 @@ add_socks5_proxy() {
 
 # 删除 Socks5/HTTP 代理出站
 delete_socks5_proxy() {
-     local _out_list _del_input _tag _del_type _used_inbound _used_rule _del_confirm
+     local _out_list _del_input _tag _del_type _used_inbound _used_rule _used_final _del_confirm
      clear
      green "========= [5][5] 分流管理 → 删除 Socks5/HTTP 出站 ========="
      echo ""
@@ -8815,11 +9013,17 @@ delete_socks5_proxy() {
     _used_rule=$(jq -r --arg tag "$_tag" '
         [.route.rules[]? | select(.rule_set != null and .outbound == $tag) | .rule_set[]?] | join(", ")
     ' "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null)
-    if [ -n "$_used_inbound" ] || [ -n "$_used_rule" ]; then
+    # 全局出口（route.final）指向它时必须一并改回 direct，否则 final 悬空 → sing-box 直接拒绝启动
+    _used_final=""
+    if [ "$(jq -r '.route.final // ""' "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null)" = "$_tag" ]; then
+        _used_final="全局出口(route.final)"
+    fi
+    if [ -n "$_used_inbound" ] || [ -n "$_used_rule" ] || [ -n "$_used_final" ]; then
         echo ""
         yellow "⚠️  该代理当前正在被以下对象使用："
         [ -n "$_used_inbound" ] && yellow "    附着协议: ${_used_inbound}"
         [ -n "$_used_rule" ] && yellow "    分流规则: ${_used_rule}"
+        [ -n "$_used_final" ] && yellow "    ${_used_final}"
         echo ""
         yellow "删除后将自动解除这些关联（相关协议/服务改走服务器原IP出站）。"
         reading "确认删除该被使用中的代理？(y/n，直接回车=否): " _del_confirm
@@ -8828,6 +9032,10 @@ delete_socks5_proxy() {
         fi
     fi
 
+    # 先把 route.final 从该出站摘掉，再删出站（顺序反了会留下悬空引用）
+    if [ -n "$_used_final" ]; then
+        jq '.route.final = "direct"' "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"
+    fi
     jq --arg tag "$_tag" 'del(.outbounds[] | select(.tag == $tag))' "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"
     # 同步删除引用该出站的分流规则
     jq --arg tag "$_tag" '
