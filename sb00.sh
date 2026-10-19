@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.1.11(2026-10-19)"
+VERSION="3.2.0(2026-10-19)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -3040,6 +3040,35 @@ nginx_conf_path() {
     echo "$SB_NGINX_SUB_CONF"
 }
 
+# 生效的 Nginx 订阅端口
+# 注意：脚本启动时 nginx_pt 已被赋默认值 8080，因此不能用 ${nginx_pt:-...} 判断"用户是否指定"。
+# 规则：显式传入且不等于默认值 → 用传入值；否则沿用落盘 nginx_port；都没有才用默认值。
+# （否则任何菜单里触发的 nginx 重生成都会把订阅端口悄悄改回 8080）
+_eff_nginx_pt() {
+    local _f=""
+    _f="$(cat "$SINGBOX_FOLDER_PATH/nginx_port" 2> /dev/null | tr -d '\r\n')"
+    if [ -n "${nginx_pt:-}" ] && [ "${nginx_pt}" != "$NGINX_DEFAULT_PORT" ]; then
+        printf '%s' "$nginx_pt"
+    elif [ -n "$_f" ]; then
+        printf '%s' "$_f"
+    else
+        printf '%s' "${nginx_pt:-$NGINX_DEFAULT_PORT}"
+    fi
+}
+
+# 生效的 Argo 本地回源端口（规则同 _eff_nginx_pt，默认 8001）
+_eff_argo_pt() {
+    local _f=""
+    _f="$(cat "$SINGBOX_FOLDER_PATH/argoport" 2> /dev/null | tr -d '\r\n')"
+    if [ -n "${argo_pt:-}" ] && [ "${argo_pt}" != "$ARGO_DEFAULT_PORT" ]; then
+        printf '%s' "$argo_pt"
+    elif [ -n "$_f" ]; then
+        printf '%s' "$_f"
+    else
+        printf '%s' "${argo_pt:-$ARGO_DEFAULT_PORT}"
+    fi
+}
+
 # 清理旧版误写到系统 nginx 的遗留配置（只删本脚本的文件，不动宝塔/系统其余配置）
 cleanup_legacy_system_nginx_conf() {
     local f
@@ -3051,8 +3080,9 @@ cleanup_legacy_system_nginx_conf() {
 }
 
 setup_nginx_subscribe() {
-    local port="${nginx_pt:-$NGINX_DEFAULT_PORT}"
-    local argo_port="${argo_pt:-$ARGO_DEFAULT_PORT}"
+    local port argo_port
+    port="$(_eff_nginx_pt)"
+    argo_port="$(_eff_argo_pt)"
     echo "$port" > "$SINGBOX_FOLDER_PATH/nginx_port"
 
     # ✅端口相同会导致 nginx listen 冲突
@@ -4149,8 +4179,9 @@ ins() {
         debug_log "【调试】cloudflared 已准备就绪（已通过 ensure_cloudflared_if_needed 检查）"
 
         # 2.2 计算 Argo 本地端口
-        argoport="${argo_pt:-$ARGO_DEFAULT_PORT}"
-        debug_log "【调试】Argo 本地回源端口 argoport=${argoport}（来自 argo_pt 或默认 ARGO_DEFAULT_PORT）"
+        # 与 setup_nginx_subscribe 用同一个解析规则，避免 nginx 反代端口与 argoport 文件不一致
+        argoport="$(_eff_argo_pt)"
+        debug_log "【调试】Argo 本地回源端口 argoport=${argoport}（显式 argo_pt > 落盘 argoport > 默认 ARGO_DEFAULT_PORT）"
         echo "$argoport" > "$SINGBOX_FOLDER_PATH/argoport"
 
         # 落盘 Argo 协议列表 + 每协议独立标记（旧 vlvm 兼容：仅保留单一主协议以便旧逻辑读取）
@@ -6045,7 +6076,31 @@ menu_collect_install() {
     purple "===== Socks5 协议 (可要可不要) ====="
     reading "是否安装 Socks5? [y/N] (回车默认=不要): " _ans
     case "$_ans" in
-        y|Y) _ch="$_ch h"; green "  ↳ Socks5: 安装" ;;
+        y|Y)
+            _ch="$_ch h"; green "  ↳ Socks5: 安装"
+            reading "  Socks5 用户名 (回车=自动生成): " _ans
+            if [ -n "$_ans" ]; then
+                if printf '%s' "$_ans" | grep -qE '[[:space:]]'; then
+                    yellow "  ⚠️ 用户名不能含空格，已改为自动生成"
+                else
+                    export socks5_username="$_ans"
+                    green "  ↳ Socks5 用户名: ${_ans}"
+                fi
+            else
+                green "  ↳ Socks5 用户名: 自动生成"
+            fi
+            reading "  Socks5 密码 (回车=自动生成): " _ans
+            if [ -n "$_ans" ]; then
+                if printf '%s' "$_ans" | grep -qE '[[:space:]]'; then
+                    yellow "  ⚠️ 密码不能含空格，已改为自动生成"
+                else
+                    export socks5_password="$_ans"
+                    green "  ↳ Socks5 密码: 已设置（不回显）"
+                fi
+            else
+                green "  ↳ Socks5 密码: 自动生成"
+            fi
+            ;;
         *) : ; green "  ↳ Socks5: 不安装 (默认)" ;;
     esac
 
@@ -6074,12 +6129,13 @@ menu_collect_install() {
         green "  ↳ 端口: 逐个自定义 (默认)"
         # Argo 三协议本地回源端口不接受外部指定，一律随机；仅直连协议才询问端口
         [ -n "$vmag" ] && green "  ↳ Argo (vmess/trojan/vless) 本地回源端口：自动随机（不接受外部指定）"
-        for _sel in vlr hyp tup anyp; do
+        for _sel in vlr hyp tup anyp soc; do
             case "$_sel" in
                 vlr)  [ -n "$vlr" ]  && export vlrt="$(menu_ask_port "VLESS-Reality")" ;;
                 hyp)  [ -n "$hyp" ]  && export hypt="$(menu_ask_port "Hysteria2")" ;;
                 tup)  [ -n "$tup" ]  && export tupt="$(menu_ask_port "TUIC")" ;;
                 anyp) [ -n "$anyp" ] && export anypt="$(menu_ask_port "AnyTLS")" ;;
+                soc)  [ -n "$socksp" ] && export socks5pt="$(menu_ask_port "Socks5")" ;;
             esac
         done
         [ -n "$vmag" ] && export argo_pt="$(menu_ask_port "Argo" 8001)"
@@ -6091,6 +6147,7 @@ menu_collect_install() {
         [ -n "$hyp" ] && { hypt="$(rand_port)"; export hypt; green "  ↳ Hysteria2 端口: ${hypt} (随机)"; }
         [ -n "$tup" ] && { tupt="$(rand_port)"; export tupt; green "  ↳ TUIC 端口: ${tupt} (随机)"; }
         [ -n "$anyp" ] && { anypt="$(rand_port)"; export anypt; green "  ↳ AnyTLS 端口: ${anypt} (随机)"; }
+        [ -n "$socksp" ] && { socks5pt="$(rand_port)"; export socks5pt; green "  ↳ Socks5 端口: ${socks5pt} (随机)"; }
         [ -n "$vmag" ] && { argo_pt="${argo_pt:-8001}"; export argo_pt; green "  ↳ Argo 端口: ${argo_pt} (默认)"; }
     fi
 
@@ -6101,7 +6158,7 @@ menu_collect_install() {
     purple "===== 直连协议伪装SNI 设置 ====="
     green "  1) 全部使用默认值(偷懒就用默认)"
     green "     默认值：Hysteria2 伪装域名=www.apple.com, VLESS 伪装域名=www.apple.com,"
-    green "             VLESS 伪装端口=443, TUIC 伪装域名=www.apple.com"
+    green "             VLESS 伪装端口=443, TUIC 伪装域名=www.apple.com, AnyTLS 伪装域名=www.apple.com"
     green "  2) 逐个展开单独设置（可自定义，推荐）"
     reading "输入选择 (回车默认=1): " _ans
     if [ "$_ans" = "2" ]; then
@@ -6118,10 +6175,14 @@ menu_collect_install() {
         reading "  TUIC 伪装域名 (默认=www.apple.com): " _ans
         [ -n "$_ans" ] && export tu_sni="$_ans"
         green "  ↳ TUIC 伪装域名: ${tu_sni:-www.apple.com}"
+        reading "  AnyTLS 伪装域名 (默认=www.apple.com): " _ans
+        [ -n "$_ans" ] && export any_sni="$_ans"
+        green "  ↳ AnyTLS 伪装域名: ${any_sni:-www.apple.com}"
     else
         green "  ↳ SNI: 全部使用默认值"
         green "  ↳ Hysteria2 伪装域名=${hy_sni:-www.apple.com}, VLESS 伪装域名=${vl_sni:-www.apple.com},"
-        green "  ↳ VLESS 伪装端口=${vl_sni_pt:-443}, TUIC 伪装域名=${tu_sni:-www.apple.com}"
+        green "  ↳ VLESS 伪装端口=${vl_sni_pt:-443}, TUIC 伪装域名=${tu_sni:-www.apple.com},"
+        green "  ↳ AnyTLS 伪装域名=${any_sni:-www.apple.com}"
     fi
 
     # Argo 隧道配置（argo 已在“选择 Argo 隧道协议”处设置，这里直接使用）
@@ -6573,8 +6634,9 @@ update_inbound_port() {
 
 # 刷新 nginx 配置并重启（trojan/vmess/argo 端口变更时需要）
 regen_nginx_and_restart() {
-    export nginx_pt="${nginx_pt:-$(read_port_file nginx_port)}"
-    export argo_pt="${argo_pt:-$(read_port_file argoport)}"
+    # 端口以落盘文件为准，避免菜单操作把订阅端口/Argo 端口改回默认值
+    export nginx_pt="$(_eff_nginx_pt)"
+    export argo_pt="$(_eff_argo_pt)"
     setup_nginx_subscribe > /dev/null 2>&1 && nginx_restart
 }
 
@@ -6601,15 +6663,20 @@ edit_ports_menu() {
         yellow "       当前: $(read_port_file port_any)"
         green "  8) Argo 端口"
         yellow "       当前: $(read_port_file argoport)"
+        green "  9) Socks5 端口"
+        yellow "       当前: $(read_port_file port_socks5)"
         purple "  0) 返回上级菜单"
         echo ""
         yellow "注：仅显示已安装的协议，未安装的协议修改会被忽略。"
         reading "请输入选择: " _sel
         case "$_sel" in
             0) return ;;
-            1|2|3|4|5|6|7|8) ;;
+            1|2|3|4|5|6|7|8|9) ;;
             *) yellow "无效选项"; menu_pause; continue ;;
         esac
+        # 每轮重置标记（用空串而非 0：下面用 [ -n ] 判断，赋 0 会被当成"已设置"）
+        _need_nginx=""
+        _need_argo=""
         case "$_sel" in
             1) _desc="Trojan-WS (Argo)"; _file=port_tr; _tag=trojan-ws-sb; _need_nginx=1 ;;
             2) _desc="Vmess-WS (Argo)"; _file=port_vm_ws; _tag=vmess-sb; _need_nginx=1 ;;
@@ -6619,6 +6686,7 @@ edit_ports_menu() {
             6) _desc="TUIC"; _file=port_tu; _tag=tuic-sb ;;
             7) _desc="AnyTLS"; _file=port_any; _tag=anytls-sb ;;
             8) _desc="Argo"; _file=argoport; _tag=""; _need_argo=1 ;;
+            9) _desc="Socks5"; _file=port_socks5; _tag=socks5-sb ;;
         esac
 
         if [ ! -s "$SINGBOX_FOLDER_PATH/$_file" ]; then
@@ -6653,14 +6721,48 @@ edit_ports_menu() {
     done
 }
 
-# 订阅设置子菜单（修改订阅端口 / 取消订阅）
+# 开启节点订阅（原本只能在安装时选择，装完后没有入口）
+# 流程：询问 Nginx 端口 → 写 subscribe 落盘 → 安装/配置并启动沙箱 Nginx → 刷新防火墙 → 生成订阅文件
+_enable_subscription() {
+    local _np _ap
+    _np="$(menu_ask_port "订阅 (Nginx)" "$NGINX_DEFAULT_PORT")"
+    [ -n "$_np" ] || return 1
+    # nginx_pt 与 argo_pt 不能相同，否则监听冲突
+    _ap="$(read_port_file argoport)"
+    if [ -n "$_ap" ] && [ "$_np" = "$_ap" ]; then
+        red "❌ 订阅端口不能与 Argo 端口 (${_ap}) 相同，请重新选择"
+        return 1
+    fi
+    echo "$_np" > "$SINGBOX_FOLDER_PATH/nginx_port"
+    echo "true" > "$SINGBOX_FOLDER_PATH/subscribe"
+    export nginx_pt="$_np"
+    export subscribe="true"
+    # 需要时安装沙箱 Nginx、生成配置并启动（subscribe=true 分支会准备 sub.txt）
+    if ! ensure_nginx_if_needed; then
+        red "❌ 开启订阅失败：Nginx 安装/配置失败，已回滚为未开启"
+        echo "false" > "$SINGBOX_FOLDER_PATH/subscribe"
+        export subscribe="false"
+        return 1
+    fi
+    nginx_restart > /dev/null 2>&1 || true
+    refresh_firewall_rules
+    # regenerate_links_and_sub 末尾会调用 update_subscription_file，保证 sub.txt 与当前节点一致
+    regenerate_links_and_sub > /dev/null 2>&1
+    green "✅ 节点订阅已开启（端口 ${_np}）"
+    green "  订阅地址: $(show_sub_url)"
+    return 0
+}
+
+# 订阅设置子菜单（修改订阅端口 / 开启订阅 / 取消订阅）
 edit_subscription_menu() {
-    local _sel _np
+    local _sel _np _sub_on
     while true; do
         clear
         green "========= [4][2] 节点配置修改 → 订阅设置 ========="
         echo ""
-        if is_true "$(get_subscribe_flag)"; then
+        _sub_on=false
+        is_true "$(get_subscribe_flag)" && _sub_on=true
+        if [ "$_sub_on" = "true" ]; then
             green "  📌 订阅状态: 已开启"
             yellow "  订阅端口: $(read_port_file nginx_port)"
             green "  订阅地址: $(show_sub_url)"
@@ -6668,27 +6770,38 @@ edit_subscription_menu() {
             yellow "  📌 订阅状态: 未开启"
         fi
         echo ""
-        green "  1) 修改订阅端口 (Nginx)"
-        red   "  2) 取消节点订阅"
+        if [ "$_sub_on" = "true" ]; then
+            green "  1) 修改订阅端口 (Nginx)"
+            red   "  2) 取消节点订阅"
+        else
+            green "  1) 开启节点订阅 (选择 Nginx 端口)"
+        fi
         purple "  0) 返回上级菜单"
         reading "请输入选择: " _sel
         case "$_sel" in
             0) return ;;
             1)
-                NEW_PORT=""
-                ask_new_port "订阅 (Nginx)" || { menu_pause; continue; }
-                _np="$NEW_PORT"
-                echo "$_np" > "$SINGBOX_FOLDER_PATH/nginx_port"
-                export nginx_pt="$_np"
-                export subscribe="$(get_subscribe_flag)"
-                setup_nginx_subscribe > /dev/null 2>&1 && nginx_restart
-                refresh_firewall_rules
-                update_subscription_file
-                green "✅ 订阅端口修改操作已完成！新端口: ${_np}"
-                green "  新订阅地址: $(show_sub_url)"
+                if [ "$_sub_on" = "true" ]; then
+                    NEW_PORT=""
+                    ask_new_port "订阅 (Nginx)" || { menu_pause; continue; }
+                    _np="$NEW_PORT"
+                    echo "$_np" > "$SINGBOX_FOLDER_PATH/nginx_port"
+                    export nginx_pt="$_np"
+                    export subscribe="$(get_subscribe_flag)"
+                    setup_nginx_subscribe > /dev/null 2>&1 && nginx_restart
+                    refresh_firewall_rules
+                    update_subscription_file
+                    green "✅ 订阅端口修改操作已完成！新端口: ${_np}"
+                    green "  新订阅地址: $(show_sub_url)"
+                else
+                    _enable_subscription || { menu_pause; continue; }
+                fi
                 menu_pause
                 ;;
             2)
+                if [ "$_sub_on" != "true" ]; then
+                    yellow "无效选项"; menu_pause; continue
+                fi
                 echo "false" > "$SINGBOX_FOLDER_PATH/subscribe"
                 export subscribe="false"
                 setup_nginx_subscribe > /dev/null 2>&1 && nginx_restart
@@ -6700,6 +6813,45 @@ edit_subscription_menu() {
             *) yellow "无效选项"; menu_pause ;;
         esac
     done
+}
+
+# 修改「每协议专属」的 CDN 参数（落盘文件名 = 变量名，ws_cdn_val 会优先读环境变量再读文件）
+# 参数：$1=键名（如 ws_cdn_vmess_sni）  $2=host|sni|port  $3=中文名（用于提示）
+# 回车=取消；输入 - =删除该文件，回退到共享值
+_edit_proto_param() {
+    local _k="$1" _kind="$2" _tip="$3" _v="" _cur=""
+    _cur="$(ws_cdn_val "$_k")"
+    yellow "  当前 ${_tip}: ${_cur:-（未设置，回退共享值）}"
+    case "$_kind" in
+        port) reading "  请输入新的 ${_tip} (仅限 ${HTTPS_CDN_PORTS_TEXT}；回车=取消，- =清除): " _v ;;
+        sni)  reading "  请输入新的 ${_tip} (真实域名，不能是 IP；回车=取消，- =清除): " _v ;;
+        *)    reading "  请输入新的 ${_tip} (域名或 IP；回车=取消，- =清除): " _v ;;
+    esac
+    [ -z "$_v" ] && { yellow "已取消"; return 0; }
+    if [ "$_v" = "-" ]; then
+        rm -f "$SINGBOX_FOLDER_PATH/$_k"
+        refresh_sb_and_sub
+        green "✅ 已清除 ${_tip}，该协议回退到共享值"
+        return 0
+    fi
+    case "$_kind" in
+        port)
+            if ! is_https_cdn_port "$_v"; then
+                red "❌ CDN 端口仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS_TEXT})"; return 1
+            fi ;;
+        sni)
+            if ! is_valid_domain "$_v"; then
+                red "❌ SNI 必须是真实域名（不能是 IP 或含非法字符）"; return 1
+            fi ;;
+        *)
+            if printf '%s' "$_v" | grep -qE '[[:space:]]'; then
+                red "❌ 不能包含空格/制表符"; return 1
+            fi ;;
+    esac
+    printf '%s\n' "$_v" > "$SINGBOX_FOLDER_PATH/$_k"
+    refresh_sb_and_sub
+    green "✅ ${_tip} 已修改为: ${_v}"
+    return 0
 }
 
 # SNI / CDN 修改子菜单
@@ -6736,7 +6888,34 @@ edit_snis_menu() {
         yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/ws_cdn_vless_cf_host" 2>/dev/null)"
         green " 13)  Trojan 专属优选域名"
         yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/ws_cdn_trojan_cf_host" 2>/dev/null)"
+        green "  ── WS-CDN 每协议专属 SNI / 端口 ──"
+        green " 14)  Vmess 专属回源 SNI"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/ws_cdn_vmess_sni" 2>/dev/null)"
+        green " 15)  Vless 专属回源 SNI"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/ws_cdn_vless_sni" 2>/dev/null)"
+        green " 16)  Trojan 专属回源 SNI"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/ws_cdn_trojan_sni" 2>/dev/null)"
+        green " 17)  Vmess 专属 CDN 端口"
+        yellow "       当前: $(read_port_file ws_cdn_vmess_cf_pt)"
+        green " 18)  Vless 专属 CDN 端口"
+        yellow "       当前: $(read_port_file ws_cdn_vless_cf_pt)"
+        green " 19)  Trojan 专属 CDN 端口"
+        yellow "       当前: $(read_port_file ws_cdn_trojan_cf_pt)"
+        green "  ── Argo 每协议专属优选域名 / 端口 ──"
+        green " 20)  Vmess-Argo 专属优选域名"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/argo_vmess_cf_host" 2>/dev/null)"
+        green " 21)  Vless-Argo 专属优选域名"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/argo_vless_cf_host" 2>/dev/null)"
+        green " 22)  Trojan-Argo 专属优选域名"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/argo_trojan_cf_host" 2>/dev/null)"
+        green " 23)  Vmess-Argo 专属优选端口"
+        yellow "       当前: $(read_port_file argo_vmess_cf_pt)"
+        green " 24)  Vless-Argo 专属优选端口"
+        yellow "       当前: $(read_port_file argo_vless_cf_pt)"
+        green " 25)  Trojan-Argo 专属优选端口"
+        yellow "       当前: $(read_port_file argo_trojan_cf_pt)"
         purple "  0) 返回上级菜单"
+        yellow "  注：每协议专属值留空即回退到共享值；输入 - 可清除已设置的专属值。"
         reading "请输入选择: " _sel
         case "$_sel" in
             0) return ;;
@@ -6859,6 +7038,25 @@ edit_snis_menu() {
                 echo "$_val" > "$SINGBOX_FOLDER_PATH/ws_cdn_trojan_cf_host"
                 refresh_sb_and_sub
                 green "✅ Trojan 专属优选域名修改操作已完成！新值: ${_val}"
+                menu_pause
+                ;;
+            14|15|16|17|18|19|20|21|22|23|24|25)
+                local _vk="" _vkind="" _vtip=""
+                case "$_sel" in
+                    14) _vk="ws_cdn_vmess_sni";   _vkind=sni;  _vtip="Vmess 专属回源 SNI" ;;
+                    15) _vk="ws_cdn_vless_sni";   _vkind=sni;  _vtip="Vless 专属回源 SNI" ;;
+                    16) _vk="ws_cdn_trojan_sni";  _vkind=sni;  _vtip="Trojan 专属回源 SNI" ;;
+                    17) _vk="ws_cdn_vmess_cf_pt"; _vkind=port; _vtip="Vmess 专属 CDN 端口" ;;
+                    18) _vk="ws_cdn_vless_cf_pt"; _vkind=port; _vtip="Vless 专属 CDN 端口" ;;
+                    19) _vk="ws_cdn_trojan_cf_pt"; _vkind=port; _vtip="Trojan 专属 CDN 端口" ;;
+                    20) _vk="argo_vmess_cf_host"; _vkind=host; _vtip="Vmess-Argo 专属优选域名" ;;
+                    21) _vk="argo_vless_cf_host"; _vkind=host; _vtip="Vless-Argo 专属优选域名" ;;
+                    22) _vk="argo_trojan_cf_host"; _vkind=host; _vtip="Trojan-Argo 专属优选域名" ;;
+                    23) _vk="argo_vmess_cf_pt";   _vkind=port; _vtip="Vmess-Argo 专属优选端口" ;;
+                    24) _vk="argo_vless_cf_pt";   _vkind=port; _vtip="Vless-Argo 专属优选端口" ;;
+                    25) _vk="argo_trojan_cf_pt";  _vkind=port; _vtip="Trojan-Argo 专属优选端口" ;;
+                esac
+                _edit_proto_param "$_vk" "$_vkind" "$_vtip"
                 menu_pause
                 ;;
             *) yellow "无效选项"; menu_pause ;;
@@ -7303,6 +7501,123 @@ edit_mask_host_menu() {
     done
 }
 
+# ================== 身份信息修改（UUID / 节点名称前缀 / Socks5 账号密码） ==================
+# ⚠️ 改 UUID 会让所有已下发节点立即失效：用户凭据、ws 路径、nginx 反代 location、订阅地址
+#    全部随之变化，因此必须二次确认（输入 yes 才执行）。其余三项风险低，无需确认。
+_uuid_is_valid() { printf '%s' "${1:-}" | grep -qE '^[0-9a-fA-F-]{1,64}$'; }
+
+edit_identity_menu() {
+    local _sel _val _old _ok
+    while true; do
+        clear
+        green "========= [4][8] 节点配置修改 → 身份信息 ========="
+        echo ""
+        green "  1) 修改 UUID"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/uuid" 2>/dev/null)"
+        green "  2) 修改节点名称前缀"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/name" 2>/dev/null | tr -d '\r\n')"
+        if grep -q "socks5-sb" "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null; then
+            green "  3) 修改 Socks5 用户名"
+            yellow "       当前: $(jq -r '.inbounds[]? | select(.tag=="socks5-sb") | .users[0].username // empty' "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null)"
+            green "  4) 修改 Socks5 密码"
+            yellow "       当前: $(jq -r '.inbounds[]? | select(.tag=="socks5-sb") | .users[0].password // empty' "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null)"
+        fi
+        purple "  0) 返回上级菜单"
+        reading "请输入选择: " _sel
+        case "$_sel" in
+            0) return ;;
+            1)
+                _old="$(cat "$SINGBOX_FOLDER_PATH/uuid" 2>/dev/null)"
+                red   "  ⚠️ 修改 UUID 会让所有已下发的节点链接和订阅地址立即失效，客户端必须重新导入！"
+                reading "  请输入新的 UUID (回车=取消): " _val
+                [ -z "$_val" ] && { yellow "已取消"; menu_pause; continue; }
+                if ! _uuid_is_valid "$_val"; then
+                    red "❌ UUID 非法（只允许 0-9 / a-f / A-F / -，1~64 字符）"; menu_pause; continue
+                fi
+                if [ "$_val" = "$_old" ]; then
+                    yellow "新旧 UUID 相同，无需修改"; menu_pause; continue
+                fi
+                echo ""
+                red    "  即将把 UUID 从 ${_old:-未设置} 改为 ${_val}"
+                yellow "  影响：所有协议的用户凭据、ws 路径、nginx 反代 location、订阅地址都会变化"
+                reading "  确认修改请输入 yes (其它任意输入=取消): " _ok
+                if [ "$_ok" != "yes" ]; then
+                    yellow "已取消，UUID 未改动"; menu_pause; continue
+                fi
+                printf '%s\n' "$_val" > "$SINGBOX_FOLDER_PATH/uuid"
+                chmod 600 "$SINGBOX_FOLDER_PATH/uuid" 2> /dev/null || true
+                # sb.json 里 uuid 既在 users 凭据中，也在 ws transport path 里 → 整串替换
+                if [ -s "$SINGBOX_FOLDER_PATH/sb.json" ] && [ -n "$_old" ]; then
+                    sed "s/${_old}/${_val}/g" "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" \
+                        && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"
+                fi
+                export uuid="$_val"
+                # nginx 的 location /{uuid}-* 与订阅路径 /sub/{uuid} 都按新 uuid 重建
+                setup_nginx_subscribe > /dev/null 2>&1 && nginx_restart
+                refresh_sb_and_sub
+                green "✅ UUID 修改完成，节点链接与订阅已按新 UUID 重新生成"
+                green "  新订阅地址: $(show_sub_url)"
+                menu_pause
+                ;;
+            2)
+                _old="$(cat "$SINGBOX_FOLDER_PATH/name" 2>/dev/null | tr -d '\r\n')"
+                reading "  请输入新的节点名称前缀 (回车=清除前缀): " _val
+                if [ -z "$_val" ]; then
+                    rm -f "$SINGBOX_FOLDER_PATH/name"
+                    green "  ↳ 已清除节点名称前缀（节点名恢复为 hy2-xxx 等默认形式）"
+                else
+                    # 落盘格式为「前缀-」，与安装时 set_sbyx 保持一致
+                    _val="$(printf '%s' "$_val" | tr -d '\r\n')"
+                    printf '%s-\n' "$_val" > "$SINGBOX_FOLDER_PATH/name"
+                    green "  ↳ 节点名称前缀: ${_val}"
+                fi
+                regenerate_links_and_sub > /dev/null 2>&1
+                green "✅ 节点名称已更新，节点链接与订阅已重新生成"
+                menu_pause
+                ;;
+            3)
+                if ! grep -q "socks5-sb" "$SINGBOX_FOLDER_PATH/sb.json" 2> /dev/null; then
+                    yellow "当前未安装 Socks5，无法修改"; menu_pause; continue
+                fi
+                reading "  请输入新的 Socks5 用户名 (回车=取消): " _val
+                [ -z "$_val" ] && { yellow "已取消"; menu_pause; continue; }
+                if printf '%s' "$_val" | grep -qE '[[:space:]]'; then
+                    red "❌ 用户名不能包含空格/制表符"; menu_pause; continue
+                fi
+                printf '%s\n' "$_val" > "$SINGBOX_FOLDER_PATH/socks5_user"
+                chmod 600 "$SINGBOX_FOLDER_PATH/socks5_user" 2> /dev/null || true
+                jq --arg u "$_val" \
+                    '(.inbounds[]? | select(.tag == "socks5-sb") | .users[0].username) = $u' \
+                    "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" \
+                    && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"
+                refresh_sb_and_sub
+                green "✅ Socks5 用户名已修改为: ${_val}"
+                menu_pause
+                ;;
+            4)
+                if ! grep -q "socks5-sb" "$SINGBOX_FOLDER_PATH/sb.json" 2> /dev/null; then
+                    yellow "当前未安装 Socks5，无法修改"; menu_pause; continue
+                fi
+                reading "  请输入新的 Socks5 密码 (回车=取消): " _val
+                [ -z "$_val" ] && { yellow "已取消"; menu_pause; continue; }
+                if printf '%s' "$_val" | grep -qE '[[:space:]]'; then
+                    red "❌ 密码不能包含空格/制表符"; menu_pause; continue
+                fi
+                printf '%s\n' "$_val" > "$SINGBOX_FOLDER_PATH/socks5_pass"
+                chmod 600 "$SINGBOX_FOLDER_PATH/socks5_pass" 2> /dev/null || true
+                jq --arg p "$_val" \
+                    '(.inbounds[]? | select(.tag == "socks5-sb") | .users[0].password) = $p' \
+                    "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" \
+                    && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"
+                refresh_sb_and_sub
+                green "✅ Socks5 密码已修改"
+                menu_pause
+                ;;
+            *) yellow "无效选项"; menu_pause ;;
+        esac
+    done
+}
+
 # 节点配置修改主菜单
 node_config_menu() {
     local _ch
@@ -7325,6 +7640,7 @@ node_config_menu() {
             fi
             green "  7) Socks5 IP白名单管理 (当前：${_wl_status})"
         fi
+        green "  8) 身份信息 (UUID / 节点名称前缀 / Socks5 账号密码)"
         purple "  0) 返回主菜单"
         reading "请输入选择: " _ch
         case "$_ch" in
@@ -7336,6 +7652,7 @@ node_config_menu() {
             5) edit_argo_protocol_menu ;;
             6) edit_mask_host_menu ;;
             7) edit_socks5_whitelist_menu ;;
+            8) edit_identity_menu ;;
             *) yellow "无效选项"; sleep 1 ;;
         esac
     done

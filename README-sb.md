@@ -930,7 +930,7 @@ sb list            查看节点信息
 sb list key        查看节点 + vless Reality 私钥
 sb res             重启 sing-box 和 cloudflared
 sb rt              分流管理
-sb node            节点配置修改 (端口/订阅/SNI/Argo)
+sb node            节点配置修改 (端口/订阅/SNI/Argo/身份信息)
 sb sub             订阅管理
 sb del             卸载（保留二进制）
 sb delall          卸载全部并清理
@@ -951,6 +951,24 @@ sb log_stop        查看服务停止原因日志（排查崩溃用）
 ```
 
 ## 7、 版本变更信息
+
+v3.2.0 (2026-10-19)
+ - **`node` 节点配置修改菜单补齐 5 处缺口**（此前这些变量只能在安装时通过环境变量设置，装完没有入口）：
+   - `[4][1] 端口修改` 新增 **Socks5 端口**（`socks5pt`）；顺带修复「改过 ws 端口后，后续改任何端口都会连带重启 nginx」的标记残留问题
+   - `[4][2] 订阅设置` 新增 **开启节点订阅**（此前只能关不能开）：自动安装/配置沙箱 Nginx、放行端口、生成 `sub.txt` 并回显订阅地址
+   - 新增 **`[4][8] 身份信息`**：修改 UUID、节点名称前缀、Socks5 用户名/密码
+   - `[4][3] SNI / CDN 设置` 新增 **每协议专属参数**（14~25 项）：`ws_cdn_{vmess,vless,trojan}_sni` / `_cf_pt`、`argo_{vmess,vless,trojan}_cf_host` / `_cf_pt`；留空取消、输入 `-` 清除并回退共享值
+   - 安装菜单补齐 **AnyTLS 伪装域名 `any_sni`**、**Socks5 端口/用户名/密码**（此前 socks5 端口永远随机、账号密码只能自动生成）
+ - **改 UUID 需二次确认**：UUID 同时影响用户凭据、ws transport 路径、nginx 反代 location 与订阅地址，改动后所有已下发节点立即失效；现在会先提示影响范围，输入 `yes` 才执行
+ - **修复订阅端口被悄悄改回 8080**：`setup_nginx_subscribe` 原先用 `${nginx_pt:-8080}` 取值，而 `nginx_pt` 启动时已被赋默认值，导致任何菜单触发的 nginx 重生成都会把订阅端口写回 8080（订阅地址随即 404）。现统一用 `_eff_nginx_pt` / `_eff_argo_pt` 解析：显式传入（非默认值）> 落盘 `nginx_port` / `argoport` > 默认值
+
+v3.1.11 (2026-10-19)
+ - 日志轮转扩展到沙箱 Nginx 的 `access.log` / `error.log` 与 `logs/stop_reason.log`；轮转脚本改为 `rotate_dir()` 支持多目录（nginx 同样以 `O_APPEND` 打开日志，copy-truncate 后无需 USR1 reopen）
+
+v3.1.10 (2026-10-19)
+ - **openrc 服务改用 `supervise-daemon`**：sing-box / cloudflared 崩溃后自动拉起（此前只有 `command_background=yes`，进程死掉不会重启）；systemd 单元 `Restart=on-failure` 改为 `Restart=always`
+ - 小内存机器（MemTotal < 1G）自动导出 `GOMEMLIMIT`（物理内存 50%），降低 cgroup OOM 概率
+ - 新增日志轮转：每小时检查 `logs/` 下日志，超过 `LOG_ROTATE_SIZE_KB`（默认 10 MB）用「复制+清空」轮转，只保留 1 份历史
 
 v3.1.8 (2026-09-23)
  - **修复安装流程退出码误报**：脚本重定义的 `echo` 函数在非 TTY（后台/nohup 运行）时，末尾 `[ -t 1 ] && _log_write ...` 会整体返回 1，导致整个安装/覆盖安装流程以「退出码 1」收尾（终端 TTY 下则正常为 0）。现强制 `return 0`，后台安装的退出码恢复正确
