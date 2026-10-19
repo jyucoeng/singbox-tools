@@ -952,6 +952,9 @@ sb log_stop        查看服务停止原因日志（排查崩溃用）
 
 ## 7、 版本变更信息
 
+v3.2.4 (2026-10-19)
+ - `[4] 节点配置修改` 里 `8) 身份信息` 的标题补充「Reality 密钥」，与新加的密钥轮换入口对应（`UUID / 名称前缀 / Socks5 账号 / Reality 密钥`）
+
 v3.2.3 (2026-10-19)
  - **`[4][8] 身份信息` 新增「重新生成 Reality 密钥对」**（`reality_private` 此前只能安装时传入，密钥泄露后无法轮换）
    - 三处必须同步，漏一处客户端就连不上：`reality.key`（链接里的 `pbk`）、`short_id` 文件（链接里的 `sid`，由私钥 sha256 前 8 位推导）、`sb.json` 的 `tls.reality.private_key` / `short_id`

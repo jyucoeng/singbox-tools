@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.3(2026-10-19)"
+VERSION="3.2.4(2026-10-19)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -7913,7 +7913,7 @@ node_config_menu() {
             fi
             green "  7) Socks5 IP白名单管理 (当前：${_wl_status})"
         fi
-        green "  8) 身份信息 (UUID / 节点名称前缀 / Socks5 账号密码)"
+        green "  8) 身份信息 (UUID / 名称前缀 / Socks5 账号 / Reality 密钥)"
         green "  9) WS-CDN 回源协议 (Vmess / Vless / Trojan 开关)"
         purple "  0) 返回主菜单"
         reading "请输入选择: " _ch
