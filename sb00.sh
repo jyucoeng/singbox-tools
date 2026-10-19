@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.10(2026-10-19)"
+VERSION="3.2.11(2026-10-19)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -456,8 +456,12 @@ install_deps() {
     # ==========================================================
     install_pkgs_resilient() {
         local label="$1"
-        local -n _cmd="$2"
-        local -n _pkgs="$3"
+        # 不用 nameref（local -n）：那需要 bash 4.3+，CentOS 7 自带 4.2 会直接报错，
+        # 导致依赖安装静默失败。这里按值复制成局部数组，用法完全一致。
+        local _cmd_name="$2" _pkgs_name="$3"
+        local -a _cmd=() _pkgs=()
+        eval "_cmd=(\"\${${_cmd_name}[@]}\")"
+        eval "_pkgs=(\"\${${_pkgs_name}[@]}\")"
 
         local -a failed=()
         local p
@@ -830,10 +834,14 @@ _verify_and_run() {
     fi
     # 先落盘临时文件再用 bash 执行文件路径，避免把整份脚本塞进 argv 触发
     # "Argument list too long"（ARG_MAX 限制），同时也更可审计
-    _tmp="\$(mktemp "${SB_FOLDER}/.sb-online.XXXXXX" 2>/dev/null || mktemp)"
+    # \${SB_FOLDER} 必须转义：不转义会在生成 wrapper 时被展开成相对路径 "doraemon/…"
+    _tmp="\$(mktemp "\${SB_FOLDER}/.sb-online.XXXXXX" 2>/dev/null || mktemp)"
     printf '%s\n' "\$_body" > "\$_tmp"
     chmod +x "\$_tmp" 2>/dev/null || true
-    exec bash "\$_tmp" "\$@"
+    # 用 trap 清理临时文件：原来的 exec 会把本进程替换掉，临时文件（约 300KB）永远留在磁盘上
+    trap 'rm -f "\$_tmp"' EXIT INT TERM
+    bash "\$_tmp" "\$@"
+    exit \$?
 }
 
 if [ -s "\$SB_FOLDER/sb.sh" ]; then
@@ -1368,7 +1376,9 @@ gen_uuid() {
     [ -z "$_g" ] && _g="$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]')"
     if [ -z "$_g" ]; then
         _g="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
-        _g="${_g:0:8}-${_g:8:4}-4${_g:13:3}-${_g:17:4}-${_g:21:12}"
+        # 8-4-4-4-12，version=4 / variant=a；原来的写法漏了第 12、16 位，
+        # 末段只剩 11 个字符 → 生成 35 位的非法 UUID
+        _g="${_g:0:8}-${_g:8:4}-4${_g:13:3}-a${_g:17:3}-${_g:20:12}"
     fi
     printf '%s' "$_g"
 }
@@ -2682,6 +2692,10 @@ installsb() {
 
     # 添加vless-ws协议（Argo 本地使用）
     if [ -n "$vlp" ]; then
+        # ✅ 先回读已落盘端口（其它协议都有这一步，vless 漏了 → 每次覆盖安装都重新随机，端口一直变）
+        if [ -z "$port_vl_ws" ] && [ -s "$SINGBOX_FOLDER_PATH/port_vl_ws" ]; then
+            port_vl_ws="$(cat "$SINGBOX_FOLDER_PATH/port_vl_ws" 2> /dev/null | tr -d '\r\n')"
+        fi
         if [ -z "$port_vl_ws" ] && [ ! -e "$SINGBOX_FOLDER_PATH/port_vl_ws" ] && [ ! -e "$SINGBOX_FOLDER_PATH/port_vm_ws" ]; then
             port_vl_ws=$(rand_port)
             echo "$port_vl_ws" > "$SINGBOX_FOLDER_PATH/port_vl_ws"
@@ -3130,13 +3144,13 @@ setup_nginx_subscribe() {
     local port argo_port
     port="$(_eff_nginx_pt)"
     argo_port="$(_eff_argo_pt)"
-    echo "$port" > "$SINGBOX_FOLDER_PATH/nginx_port"
 
-    # ✅端口相同会导致 nginx listen 冲突
+    # ✅端口相同会导致 nginx listen 冲突（先校验再落盘，否则冲突时脏端口被持久化）
     if [ "$port" = "$argo_port" ]; then
         red "❌ nginx_pt($port) 和 argo_pt($argo_port) 不能相同，否则 Nginx 监听冲突"
         return 1
     fi
+    echo "$port" > "$SINGBOX_FOLDER_PATH/nginx_port"
 
     local webroot="/var/www/singbox"
     mkdir -p "$webroot"
@@ -4894,8 +4908,14 @@ regenerate_links_and_sub() {
         _hdr d "直连协议信息"
         port_hy2=$(cat "$SINGBOX_FOLDER_PATH/port_hy2")
         hy_sni=$(cat "$SINGBOX_FOLDER_PATH/hy_sni")
-        SHA256_hy2=$(openssl x509 -in "$SINGBOX_FOLDER_PATH/cert.pem" -outform DER 2>/dev/null | sha256sum | awk '{print $1}')
-        hy2_link="hysteria2://$uuid@$addr:$port_hy2/?sni=${hy_sni}&insecure=1&pinSHA256=${SHA256_hy2}&alpn=h3&obfs=none#$(node_frag "${sxname}hy2-${hostname}")"
+        SHA256_hy2=""
+        [ -s "$SINGBOX_FOLDER_PATH/cert.pem" ] && \
+            SHA256_hy2=$(openssl x509 -in "$SINGBOX_FOLDER_PATH/cert.pem" -outform DER 2>/dev/null | sha256sum | awk '{print $1}')
+        # 证书缺失时 sha256sum 会给出「空输入」的固定哈希（e3b0c442…），客户端按它校验必然连不上，
+        # 这种情况宁可不带 pinSHA256
+        _hy2_pin=""
+        [ -n "$SHA256_hy2" ] && _hy2_pin="&pinSHA256=${SHA256_hy2}"
+        hy2_link="hysteria2://$uuid@$addr:$port_hy2/?sni=${hy_sni}&insecure=1${_hy2_pin}&alpn=h3&obfs=none#$(node_frag "${sxname}hy2-${hostname}")"
         yellow "🎯【 Hysteria2 】(直连协议)"
         green "$hy2_link"
         append_jh "$hy2_link"
@@ -5135,7 +5155,9 @@ cleandel() {
     local ct_tmp
     ct_tmp="$(mktemp /tmp/crontab.XXXXXX 2> /dev/null)" || ct_tmp="/tmp/crontab.tmp.$$"
     crontab -l > "$ct_tmp" 2> /dev/null || : > "$ct_tmp"
-    sed -i '/.*singbox.*/d' "$ct_tmp"
+    # 只删本脚本自己写的任务；原来的 /.*singbox.*/d 会把用户任何含 singbox 的
+    # 无关定时任务一起删掉
+    sed -i '/singbox-log-rotate/d' "$ct_tmp"
     sed -i '/.*agsb.*/d' "$ct_tmp"
     crontab "$ct_tmp" > /dev/null 2>&1
     rm -f "$ct_tmp"
@@ -6035,6 +6057,10 @@ menu_collect_install() {
     local _ans _ch _sel _has_all _has_vmess _has_trojan
     export _INTERACTIVE_MODE=1  # 标记：走交互式菜单安装（供 ins() 区分，无交互时「安装参数」日志才打印）
 
+    # 清掉上一次运行残留的协议勾选：这些变量是 export 的，同一次会话里取消安装再进菜单时，
+    # 上一轮选的 hy2/tuic/anytls/socks5 会带着（menu_reload_proto_flags 只判断变量是否存在）
+    unset vlrt hypt tupt anypt socks5pt 2> /dev/null
+
     echo ""
     purple "===== 日志调试 ====="
     yellow "  仅用于安装时日志调试，默认关闭"
@@ -6289,7 +6315,7 @@ menu_collect_install() {
             else
                 green "  ↳ Socks5 用户名: 自动生成"
             fi
-            reading "  Socks5 密码 (回车=自动生成): " _ans
+            reading_secret "  Socks5 密码 (回车=自动生成): " _ans
             if [ -n "$_ans" ]; then
                 if printf '%s' "$_ans" | grep -qE '[[:space:]]'; then
                     yellow "  ⚠️ 密码不能含空格，已改为自动生成"
@@ -7504,6 +7530,9 @@ _set_argo_proto() {
     new="${new#,}"
     if [ -n "$new" ]; then
         printf '%s' "$new" > "$SINGBOX_FOLDER_PATH/argo"
+        # 同步到环境变量：argo_proto_list / need_argo 都是「环境变量优先」，
+        # 不同步的话本次会话里改完不生效（要重开脚本才行）
+        export argo="$new"
     else
         rm -f "$SINGBOX_FOLDER_PATH/argo"
     fi
@@ -8711,6 +8740,10 @@ edit_protocol_proxy() {
     fi
 
     # 选择某个代理：把该协议移动到目标代理的 inbound 规则
+    # ⚠️ 必须挡掉 0：jq 的 .[-1] 会取到最后一条，等于静默删错对象
+    if ! [[ "$_choice" =~ ^[0-9]+$ ]] || [ "$_choice" -lt 1 ]; then
+        red "无效的代理编号（必须 ≥ 1）！"; menu_pause; return
+    fi
     _p=$(jq -r --arg idx "$_choice" '[.outbounds[]? | select(.type == "socks" or .type == "http") | .tag] | .[($idx | tonumber) - 1] // empty' "$sbj" 2>/dev/null)
     if [ -z "$_p" ]; then
         red "无效的代理编号！"; menu_pause; return
@@ -8852,6 +8885,9 @@ delete_rule_menu() {
     fi
     jq -r '.route.rules[]? | select(.rule_set != null) | .rule_set[]?' "$SINGBOX_FOLDER_PATH/sb.json" | nl -w2 -s'. '
     reading "输入要删除的规则名称或序号: " _del_input
+    if [[ "$_del_input" =~ ^[0-9]+$ ]] && [ "$_del_input" -lt 1 ]; then
+        red "无效的序号（必须 ≥ 1）"; menu_pause; return
+    fi
     if [[ "$_del_input" =~ ^[0-9]+$ ]]; then
         _tag=$(jq -r --arg idx "$_del_input" '[.route.rules[]? | select(.rule_set != null) | .rule_set[]] | .[(($idx | tonumber) - 1)]' "$SINGBOX_FOLDER_PATH/sb.json")
     else
@@ -8926,7 +8962,19 @@ add_socks5_proxy() {
     # 兼容 URL 末尾斜杠/路径/查询：socks/http 出站只认 host:port，去掉多余部分（如 socks5://1.2.3.4:7928/ → 1.2.3.4:7928）
     _host_port="${_host_port%%/*}"
     _host_port="${_host_port%%\?*}"
-    _server="${_host_port%%:*}"; _port="${_host_port##*:}"
+    # IPv6 必须走方括号分支：直接按 ':' 切会把 [2001:db8::1]:1080 切成 "[2001"
+    case "$_host_port" in
+        \[*\]:*)
+            _server="${_host_port%]:*}"
+            _server="${_server#[}"
+            _server="${_server%]}"
+            _port="${_host_port##*]:}"
+            ;;
+        *)
+            _server="${_host_port%%:*}"
+            _port="${_host_port##*:}"
+            ;;
+    esac
     if [ -z "$_server" ] || [ -z "$_port" ] || ! [[ "$_port" =~ ^[0-9]+$ ]]; then
         red "格式错误：缺少 IP 或端口非法（${_host_port}）"; menu_pause; return
     fi
@@ -9167,32 +9215,6 @@ attach_socks5_proxy() {
 }
 
 # 选择一个 socks/http 出站，重新设置它附着的协议
-edit_socks5_proxy() {
-     local sbj="$SINGBOX_FOLDER_PATH/sb.json"
-     local _out_list _edit_input _tag _e_type
-     clear
-     green "========= [5][4] 分流管理 → 修改 Socks5/HTTP 出站关联的协议 ========="
-     echo ""
-     green "当前 socks/http 代理出站（可修改关联协议）:"
-    _out_list=$(jq -r '[.outbounds[]? | select(.type == "socks" or .type == "http")] | to_entries | .[] | "\(.key+1). \(.value.tag) [\(.value.type)]"' "$sbj" 2>/dev/null)
-    [ -z "$_out_list" ] && { yellow "没有可修改的 socks/http 代理出站。"; menu_pause; return; }
-    echo "$_out_list"
-    echo ""
-    reading "输入要修改的代理编号或标签: " _edit_input
-    if [[ "$_edit_input" =~ ^[0-9]+$ ]]; then
-        _tag=$(jq -r --arg idx "$_edit_input" '.outbounds | map(select(.type == "socks" or .type == "http")) | .[($idx | tonumber)-1].tag // empty' "$sbj")
-        [ -z "$_tag" ] && { red "编号无效！"; menu_pause; return; }
-    else
-        _tag="$_edit_input"
-        _e_type=$(jq -r --arg tag "$_tag" '.outbounds[]? | select(.tag == $tag) | .type' "$sbj" 2>/dev/null)
-        if [ -z "$_e_type" ]; then
-            red "标签 '$_tag' 不存在！"; menu_pause; return
-        elif [ "$_e_type" != "socks" ] && [ "$_e_type" != "http" ]; then
-            red "'$_tag' 不是 socks/http 代理出站，不可修改！"; menu_pause; return
-        fi
-    fi
-    attach_socks5_proxy "$_tag" 4
-}
 
 # 设置全局代理出站（所有流量走指定 socks/http 代理）
 set_global_outbound() {

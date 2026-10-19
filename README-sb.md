@@ -952,6 +952,23 @@ sb log_stop        查看服务停止原因日志（排查崩溃用）
 
 ## 7、 版本变更信息
 
+v3.2.11 (2026-10-19)
+ > 体检第三批（P2：低频 / 体验 / 隐患）。全部在 VPS 上实测过。
+
+ - **vless-ws 端口不再每次覆盖安装都变**：其它协议都会先回读 `port_vl_ws`，只有 vless 漏了这一步，导致每次 `sb ins` 都重新随机一个端口（客户端节点全废）
+ - **nginx 端口冲突时不再落脏值**：`nginx_port` 原来在「nginx_pt 与 argo_pt 相同」校验**之前**就写盘，冲突中断后脏端口被持久化
+ - **`[4][5]` 改完 Argo 协议立即生效**：`_set_argo_proto` 只写文件不 `export argo`，而 `argo_proto_list`/`need_argo` 都是环境变量优先 → 装完马上进菜单改会改不动（要重开脚本）
+ - **交互式安装不再带上上一轮的协议勾选**：`vlrt/hypt/tupt/anypt/socks5pt` 只在选中时 export、从不清理，同一次会话里取消安装再进菜单，上一轮的 Hysteria2/TUIC/AnyTLS/Socks5 会被一起装上
+ - **Socks5 密码输入不再明文回显**：提示写着「已设置（不回显）」但用的是 `reading`，改为 `reading_secret`（`read -s`）
+ - **编号输入 0 不再删错对象**：`.[(($idx|tonumber)-1)]` 遇到 `0` 会变成 `.[-1]` 取最后一条，两处（代理编号 / 规则序号）都加了「必须 ≥ 1」校验
+ - **IPv6 代理地址能正确解析**：`socks5://[2001:db8::1]:1080` 原来按 `:` 切会得到 `_server="[2001"`，现在走方括号分支
+ - **不再依赖 bash 4.3**：`install_pkgs_resilient` 用的 `local -n`（nameref）在 CentOS 7 的 bash 4.2 上直接报错，依赖安装会静默失败；改成按值复制数组
+ - **UUID 兜底不再生成 35 位**：`/proc/sys/kernel/random/uuid` 不可用时的兜底拼接漏了第 12、16 位，末段只剩 11 字符 → 非法 UUID
+ - **在线 wrapper 不再泄漏临时文件**：`mktemp "${SB_FOLDER}/..."` 在生成 wrapper 时就被展开成相对路径 `doraemon/…`（CWD 不对就落到 /tmp），且 `exec bash` 导致每次 `sb` 都留一份 ~350KB 脚本。现在正确转义为运行时展开，并用 `trap` 清理（实测跑完 0 残留）
+ - **卸载不再误删用户自己的定时任务**：原来 `sed '/.*singbox.*/d'` 会把任何含 `singbox` 的无关 cron（比如用户自己的 `/root/backup-singbox-config.sh`）一起删掉，现在只删本脚本的 `singbox-log-rotate` / `agsb` 行
+ - **证书缺失时不再生成必然连不上的 `pinSHA256`**：`openssl | sha256sum` 在 `cert.pem` 不存在时会给出空输入的固定哈希，现在没证书就不带 `pinSHA256`
+ - **删除死代码** `edit_socks5_proxy`（定义了但没有任何调用点，且与 `[5][4]` 标签重复）
+
 v3.2.10 (2026-10-19)
  > 体检第二批（P1：功能静默失效 / 安全隐患）。全部在 VPS 上实测过。
 
