@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.5(2026-10-19)"
+VERSION="3.2.6(2026-10-19)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -7893,25 +7893,35 @@ edit_identity_menu() {
 }
 
 # ================== 服务器地址（server_ip）修改 ==================
-# 自动检测出口 IP：与当前 server_ip 保持同一地址族（当前是 v6 就优先 v6）
+# 自动检测出口 IP
+# 参数：4 = 仅 IPv4 / 6 = 仅 IPv6 / 空 = 自动（优先 IPv4，无 v4 再退回 v6）
+# 语义与安装时的 ippz 完全一致，不按「当前 server_ip 的地址族」猜，避免把 v4 节点
+# 悄悄换成 v6 地址（客户端只配了 v4 出口时全连不上）。
 _detect_server_ip() {
-    local _res="" _v4="" _v6="" _cur=""
-    _cur="$(strip_ip_brackets_all "$(cat "$SINGBOX_FOLDER_PATH/server_ip" 2> /dev/null)")"
+    local _pref="${1:-${ippz:-}}"
+    local _res="" _v4="" _v6=""
     _res="$(check_ip_connectivity "https://icanhazip.com" 2> /dev/null)"
     _v4="$(printf '%s' "$_res" | cut -d'|' -f1 | tr -d ' \r\n')"
     _v6="$(printf '%s' "$_res" | cut -d'|' -f2 | tr -d ' \r\n')"
-    if printf '%s' "$_cur" | grep -q ':'; then
-        is_valid_ip_simple "$_v6" && { printf '%s' "$_v6"; return 0; }
-        is_valid_ip_simple "$_v4" && { printf '%s' "$_v4"; return 0; }
-    else
-        is_valid_ip_simple "$_v4" && { printf '%s' "$_v4"; return 0; }
-        is_valid_ip_simple "$_v6" && { printf '%s' "$_v6"; return 0; }
-    fi
-    return 1
+    case "$_pref" in
+        4)
+            is_valid_ip_simple "$_v4" && { printf '%s' "$_v4"; return 0; }
+            return 1
+            ;;
+        6)
+            is_valid_ip_simple "$_v6" && { printf '%s' "$_v6"; return 0; }
+            return 1
+            ;;
+        *)
+            is_valid_ip_simple "$_v4" && { printf '%s' "$_v4"; return 0; }
+            is_valid_ip_simple "$_v6" && { printf '%s' "$_v6"; return 0; }
+            return 1
+            ;;
+    esac
 }
 
 edit_server_ip_menu() {
-    local _sel="" _in="" _cur="" _dh="" _new="" _fmt=""
+    local _sel="" _in="" _cur="" _dh="" _new="" _fmt="" _pref=""
     while true; do
         clear
         green "========= [4][10] 节点配置修改 → 服务器地址 (server_ip) ========="
@@ -7928,17 +7938,27 @@ edit_server_ip_menu() {
         yellow "  server_ip = 直连协议链接里显示的地址；Argo / CDN 回源协议有自己的域名，不受影响"
         yellow "  想用域名代替 IP → 用 [4][6] 直连对外域名（掩盖 IP）"
         echo ""
-        green "  1) 自动重新检测（按当前出口 IP）"
+        green "  1) 自动重新检测（可选 IPv4 / IPv6 / 自动）"
         green "  2) 手动指定 IP"
         purple "  0) 返回上级菜单"
         reading "请输入选择: " _sel
         case "$_sel" in
             0) return ;;
             1)
+                # 地址族由用户当场指定（语义同安装时的 ippz），不按当前 server_ip 猜
+                reading "  IP 偏好 [4=仅IPv4 / 6=仅IPv6 / 回车=自动(优先IPv4)]: " _pref
+                case "$_pref" in
+                    ""|4|6) : ;;
+                    *) yellow "  无效偏好，按自动处理"; _pref="" ;;
+                esac
                 green "  ⏳ 正在检测出口 IP..."
-                _new="$(_detect_server_ip)" || _new=""
+                _new="$(_detect_server_ip "$_pref")" || _new=""
                 if [ -z "$_new" ]; then
-                    red "❌ 检测失败（网络异常，或无法访问 IP 回显服务 icanhazip.com）"
+                    case "$_pref" in
+                        4) red "❌ 未检测到 IPv4 出口地址（网络异常，或本机没有公网 IPv4）" ;;
+                        6) red "❌ 未检测到 IPv6 出口地址（网络异常，或本机没有公网 IPv6）" ;;
+                        *) red "❌ 检测失败（网络异常，或无法访问 IP 回显服务 icanhazip.com）" ;;
+                    esac
                     menu_pause
                     continue
                 fi
