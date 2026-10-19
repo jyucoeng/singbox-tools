@@ -958,6 +958,10 @@ v3.2.1 (2026-10-19)
    - openrc 单元的 heredoc 定界符 `OPENRC_SB00` → `OPENRC_UNIT`
    - 日志轮转脚本头部注释、分流相关注释里的 `sb00` 改为 `$SB_SCRIPT_NAME` / 中性表述
    - 审计结果：全文件除 `SB_SCRIPT_NAME="sb00.sh"` 外已无 `sb00`/`SB00` 字面量，搬到 sb.sh 时只需改这一行
+ - **升级提示（仅 sb.sh 用户）**：旧版 sb.sh 写的是 `sb00_*_ver`，升级后改读 `sb_*_ver`，首次打开状态面板版本号可能短暂为空（有 `timeout 3` 探测兜底，不影响功能），下次安装/更新会自动补齐。想立刻显示可执行：
+   ```bash
+   cd /root/doraemon && for k in sb cf ng; do [ -f sb00_${k}_ver ] && cp -p sb00_${k}_ver sb_${k}_ver; done
+   ```
 
 v3.2.0 (2026-10-19)
  - **`node` 节点配置修改菜单补齐 5 处缺口**（此前这些变量只能在安装时通过环境变量设置，装完没有入口）：
