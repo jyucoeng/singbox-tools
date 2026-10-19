@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.1.10(2026-10-19)"
+VERSION="3.1.11(2026-10-19)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -2852,14 +2852,20 @@ installsb() {
 # ================== 日志轮转 ==================
 # sing-box / cloudflared 的日志都是追加写入且没有上限：info 级别下 100M 级的 LXC 小鸡
 # 一天能写 20M 左右，几百 M 的根分区跑久了会被写满，进而拖垮 nginx / cloudflared。
+# 沙箱 nginx 的 access.log 同理：每次订阅拉取、每条 CDN 回源 ws 连接、以及公网扫描
+# 都会追加一行，长期不轮转也能堆到上百 M。
 # 这里生成一个独立的轮转脚本，用每小时一次的 cron 调用：
 #   - 单文件超过 LOG_ROTATE_SIZE_KB（默认 10 MB）就轮转一次，只保留 1 份历史（.1）
-#   - 用「复制 + 清空」而不是 mv：sing-box 以 O_APPEND 打开日志文件，mv 之后进程仍持有
-#     旧 inode，新日志会继续写进已改名的文件（看起来像日志丢失）；清空同一个 inode 才能
-#     让后续写入落回原文件名。
+#   - 用「复制 + 清空」而不是 mv：sing-box 与 nginx 都以 O_APPEND 打开日志文件，mv 之后
+#     进程仍持有旧 inode，新日志会继续写进已改名的文件（看起来像日志丢失）；清空同一个
+#     inode 才能让后续写入落回原文件名（nginx 因此也不需要额外的 USR1 reopen）。
 LOG_ROTATE_SIZE_KB="${LOG_ROTATE_SIZE_KB:-10240}"
 LOG_ROTATE_SCRIPT="$SINGBOX_FOLDER_PATH/singbox-log-rotate.sh"
-LOG_ROTATE_FILES="singbox.log argo.log supervise-singbox.log supervise-argo.log"
+# 应用 / 守护进程日志（logs/）
+LOG_ROTATE_FILES="singbox.log argo.log supervise-singbox.log supervise-argo.log stop_reason.log"
+# 沙箱 nginx 日志（nginx/logs/）
+SB_NGINX_LOGS_DIR="$SB_NGINX_DIR/logs"
+LOG_ROTATE_NGINX_FILES="access.log error.log"
 
 # 生成轮转脚本（幂等，每次安装覆盖）
 gen_log_rotate_script() {
@@ -2867,16 +2873,24 @@ gen_log_rotate_script() {
     cat > "$LOG_ROTATE_SCRIPT" << EOF
 #!/bin/sh
 # 由 sb00.sh 自动生成：日志轮转（copy-truncate，只保留 1 份历史），请勿手改
-LOG_DIR="$LOGS_DIR"
 LIMIT_KB=$LOG_ROTATE_SIZE_KB
-for f in $LOG_ROTATE_FILES; do
-    p="\$LOG_DIR/\$f"
-    [ -f "\$p" ] || continue
-    size_kb=\$(( \$(wc -c < "\$p" 2>/dev/null || echo 0) / 1024 ))
-    [ "\$size_kb" -ge "\$LIMIT_KB" ] || continue
-    cp -p "\$p" "\$p.1" 2>/dev/null || continue
-    : > "\$p" 2>/dev/null || true
-done
+
+rotate_dir() {
+    dir="\$1"; shift
+    for f in "\$@"; do
+        p="\$dir/\$f"
+        [ -f "\$p" ] || continue
+        size_kb=\$(( \$(wc -c < "\$p" 2>/dev/null || echo 0) / 1024 ))
+        [ "\$size_kb" -ge "\$LIMIT_KB" ] || continue
+        cp -p "\$p" "\$p.1" 2>/dev/null || continue
+        : > "\$p" 2>/dev/null || true
+    done
+}
+
+# sing-box / cloudflared / 守护进程日志
+rotate_dir "$LOGS_DIR" $LOG_ROTATE_FILES
+# 沙箱 nginx 日志
+rotate_dir "$SB_NGINX_LOGS_DIR" $LOG_ROTATE_NGINX_FILES
 EOF
     chmod +x "$LOG_ROTATE_SCRIPT" 2> /dev/null || true
 }
