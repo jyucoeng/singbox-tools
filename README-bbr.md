@@ -15,6 +15,7 @@
 | 队列调度 | 网卡根 qdisc 更换为 `fq`，并调大 `quantum` / `initial_quantum`，提升单流吞吐 |
 | MTU | 修改网卡 MTU（默认 1500），支持 netplan / `/etc/network/interfaces` / 仅运行时 三种方式并持久化 |
 | TCP 缓冲 | 调整 `tcp_wmem` / `tcp_rmem` / `tcp_limit_output_bytes`，写入 `/etc/sysctl.d/99-singleflow-tcp-optimization.conf` |
+| 低延迟调优 | `tcp_notsent_lowat` / `tcp_slow_start_after_idle=0` / `tcp_fastopen=3` / `tcp_tw_reuse` / `tcp_fin_timeout` / `tcp_mtu_probing` / `netdev_max_backlog` 等，可用 `LATENCY_TUNING=0` 关闭 |
 | 开机自启 | systemd 写入 `/etc/systemd/system/singleflow-fq-quantum.service`；OpenRC 写入 `/etc/init.d/singleflow-fq-quantum`；容器等无 init 环境直接运行时应用 |
 | 配置备份 | 首次安装时备份原始网络配置到 `<配置文件>.bak.singleflow`，卸载/恢复时完整还原 |
 
@@ -113,6 +114,12 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 | `SERVICE_FILE` | 自动 | 服务文件路径（OpenRC 为 `/etc/init.d/singleflow-fq-quantum`，systemd 为 `/etc/systemd/system/singleflow-fq-quantum.service`） |
 | `NETPLAN_FILE` | 自动检测 | 指定 netplan 配置文件 |
 | `INTERFACES_FILE` | 自动检测 | 指定 interfaces 配置文件 |
+| `LATENCY_TUNING` | `1` | 低延迟附加调优开关（`0` 关闭，只保留 BBR + 单流吞吐参数） |
+| `TCP_NOTSENT_LOWAT` | `131072` | 未发送数据上限，降低发送侧排队延迟 |
+| `NETDEV_MAX_BACKLOG` | `16384` | 网卡收包 backlog，CPU 繁忙时减少丢包 |
+| `SOMAXCONN` | `8192` | 全连接队列上限 |
+| `TCP_MAX_SYN_BACKLOG` | `8192` | 半连接队列上限 |
+| `STATE_FILE` | `/etc/singleflow-bbr.state` | 记录安装前的原始 MTU / sysctl 值，供卸载精确还原 |
 
 示例（多参数组合）：
 
@@ -140,9 +147,12 @@ TCP_RMEM_MAX=33554432 \
 
 ## 6、卸载与还原
 
-- **`reset`**（`del` 为别名）：完整卸载——删除开机服务、恢复 fq_codel 等默认 TCP/sysctl 参数、从备份还原网络配置、清理备份文件。
+- **`reset`**（`del` 为别名）：完整卸载——停止并删除开机服务、还原安装前的原始 sysctl 值与 MTU（来自 `STATE_FILE`）、把 qdisc 换回 `fq_codel`、移除 `/etc/modules-load.d/tcp_bbr.conf`、从备份还原网络配置、清理备份与状态文件。
 - 备份文件命名：`<配置文件>.bak.singleflow`；卸载完成后自动清理，重新 `ins` 会再次备份。
-- `ins` / `reset` 均可重复执行（幂等）。
+- `ins` / `reset` 均可重复执行（幂等）：
+  - 第二次 `ins` 不会重启服务，也不会重启网络；
+  - 只有 MTU / 网络配置真的变化时才重启网络，单纯改 sysctl 不重启网络（避免 SSH 断连）；
+  - 配置文件内容未变化时不重写（mtime 不变）。
 
 ---
 
@@ -167,7 +177,8 @@ tc qdisc show dev eth0
 - 修改 MTU / 重启网络期间 SSH 可能短暂断开，属正常现象。
 - 较老的 iproute2 内核可能不支持 `initial_quantum`，qdisc 应用失败时脚本会提示“未应用”，不影响其余优化。
 - 本脚本只做 TCP 单流优化，不修改 iptables / 防火墙 / 路由策略。
+- 若服务器 CPU 长期满载（压测进程、编译任务等），收包软中断会被饿死，表现为 RTT 周期性尖峰（常见 50~100ms）。这类延迟不是 TCP 参数能解决的，需要降低 CPU 负载或增加 vCPU；`netdev_max_backlog` 只能缓解，不能消除。
 
 ---
 
-> 版本：`1.4.1(2026-09-10)`
+> 版本：`1.5.0(2026-10-20)`
