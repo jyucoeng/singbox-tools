@@ -48,7 +48,7 @@ NETDEV_MAX_BACKLOG="${NETDEV_MAX_BACKLOG:-16384}"
 SOMAXCONN="${SOMAXCONN:-8192}"
 TCP_MAX_SYN_BACKLOG="${TCP_MAX_SYN_BACKLOG:-8192}"
 
-VERSION="1.5.0(2026-10-20)"
+VERSION="1.5.1(2026-10-20)"
 AUTHOR="jyucoeng"
 INTERFACES_FILE="${INTERFACES_FILE:-}"
 IFACE="${IFACE:-}"
@@ -89,6 +89,20 @@ get_service_file() {
 }
 
 green() { echo -e "\033[1;32m$1\033[0m"; }
+
+# 当前内核是否支持 BBR（OpenVZ/LXC 容器无法自行加载内核模块）
+bbr_available() {
+  sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qw bbr
+}
+
+# 网卡是否支持设置队列规则（OpenVZ/LXC 的 venet0、veth 常为 noqueue，无法挂 qdisc）
+iface_supports_qdisc() {
+  local iface="$1"
+  if tc qdisc show dev "${iface}" 2>/dev/null | grep -q 'noqueue'; then
+    return 1
+  fi
+  return 0
+}
 
 need_root() {
   if [[ "${EUID}" -ne 0 ]]; then
@@ -261,12 +275,13 @@ daemon_reload() {
 }
 
 ensure_bbr_module() {
-  if ! sysctl net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qi bbr; then
+  if ! bbr_available; then
     modprobe tcp_bbr 2>/dev/null || true
-    if ! sysctl net.ipv4.tcp_available_congestion_control 2>/dev/null | grep -qi bbr; then
-      echo "警告：tcp_bbr 模块不可用，当前内核可能不支持 BBR。" >&2
-      echo "请确保内核已启用 CONFIG_TCP_CONG_BBR。" >&2
-    fi
+  fi
+  if ! bbr_available; then
+    echo "警告：当前内核不支持 BBR（tcp_available_congestion_control 中没有 bbr）。" >&2
+    echo "      OpenVZ/LXC 等容器无法自行加载内核模块，需要宿主机内核启用 CONFIG_TCP_CONG_BBR。" >&2
+    return 1
   fi
   if [[ ! -f /etc/modules-load.d/tcp_bbr.conf ]]; then
     if mkdir -p /etc/modules-load.d 2>/dev/null; then
@@ -274,6 +289,7 @@ ensure_bbr_module() {
       echo "已配置 tcp_bbr 模块开机自动加载。"
     fi
   fi
+  return 0
 }
 
 detect_iface() {
@@ -586,8 +602,14 @@ write_sysctl() {
   # 内容一致则跳过，避免重复写文件/重复触发 sysctl -p（幂等）
   local tmp
   tmp="$(mktemp)"
+  local has_bbr=false
+  if bbr_available; then
+    has_bbr=true
+  fi
   {
-    echo "net.ipv4.tcp_congestion_control = bbr"
+    if [[ "${has_bbr}" == "true" ]]; then
+      echo "net.ipv4.tcp_congestion_control = bbr"
+    fi
     if [[ -f /proc/sys/net/core/default_qdisc ]]; then
       echo "net.core.default_qdisc = fq"
     fi
@@ -617,6 +639,13 @@ write_sysctl() {
 
 write_qdisc_service() {
   local iface="$1"
+
+  # OpenVZ/LXC 的 venet0 等接口是 noqueue，无法挂 qdisc，直接跳过
+  if ! iface_supports_qdisc "${iface}"; then
+    echo "接口 ${iface} 为 noqueue（OpenVZ/LXC 虚拟网卡），无法设置队列规则，跳过 fq 优化。" >&2
+    return 1
+  fi
+
   local init
   init="$(detect_init)"
   local svc_file
@@ -736,8 +765,27 @@ show_status() {
   local config_file="$3"
   local svc_name
   svc_name="$(basename "$(get_service_file)")"
+
+  local bbr_ok=false qdisc_ok=false
+  if [[ "$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)" == "bbr" ]]; then
+    bbr_ok=true
+  fi
+  if tc qdisc show dev "${iface}" 2>/dev/null | grep -qE '^qdisc fq '; then
+    qdisc_ok=true
+  fi
+
   echo
-  echo "========== BBR优化应用成功 =========="
+  if [[ "${bbr_ok}" == "true" && "${qdisc_ok}" == "true" ]]; then
+    echo "========== BBR优化应用成功 =========="
+  else
+    echo "========== 优化部分生效 =========="
+    if [[ "${bbr_ok}" != "true" ]]; then
+      echo "  ⚠️ BBR 未启用：当前内核不支持（容器需宿主机内核开启 CONFIG_TCP_CONG_BBR）"
+    fi
+    if [[ "${qdisc_ok}" != "true" ]]; then
+      echo "  ⚠️ fq 队列未应用：接口 ${iface} 不支持设置队列规则（venet0/noqueue 等虚拟网卡）"
+    fi
+  fi
   echo
   echo "接口信息："
   ip link show dev "${iface}" | head -n 1
@@ -753,7 +801,9 @@ show_status() {
   tc qdisc show dev "${iface}"
   echo
   echo "服务状态："
-  if [[ "$(detect_init)" == "openrc" ]]; then
+  if [[ ! -f "$(get_service_file)" ]]; then
+    echo "  未创建（当前接口/环境不支持队列规则）"
+  elif [[ "$(detect_init)" == "openrc" ]]; then
     rc-service "${svc_name}" status || true
   elif [[ "$(detect_init)" == "systemd" ]]; then
     systemctl is-enabled "${svc_name}" 2>/dev/null || echo "启用状态: 未知"
@@ -802,6 +852,32 @@ check_current_status() {
   echo
   echo "======================================"
   echo
+}
+
+# 逐项检查 sysctl 是否真的可用（容器里很多 net.* 键是只读或缺失的）
+report_sysctl_failures() {
+  if [[ ! -f "${SYSCTL_FILE}" ]]; then
+    return 0
+  fi
+  local line key cur failed=0
+  while IFS= read -r line; do
+    case "${line}" in
+      net.*=*) ;;
+      *) continue ;;
+    esac
+    key="${line%%[ =]*}"
+    cur="$(sysctl -n "${key}" 2>/dev/null || true)"
+    if [[ -z "${cur}" ]]; then
+      failed=$((failed + 1))
+      if [[ "${failed}" -le 3 ]]; then
+        echo "  ⚠️ ${key} 不可用（当前环境未提供或只读，已跳过）" >&2
+      fi
+    fi
+  done < "${SYSCTL_FILE}"
+  if [[ "${failed}" -gt 0 ]]; then
+    echo "  共 ${failed} 项参数在当前环境不可写，其余已生效。" >&2
+  fi
+  return 0
 }
 
 install_optimization() {
@@ -882,7 +958,7 @@ install_optimization() {
     fi
   fi
 
-  ensure_bbr_module
+  ensure_bbr_module || true
   if write_sysctl; then
     sysctl_changed=true
   fi
@@ -891,13 +967,14 @@ install_optimization() {
   if [[ "${sysctl_changed}" == "true" ]]; then
     echo "已更新 TCP 系统参数（无需重启网络）。"
   fi
+  report_sysctl_failures
 
   # 只有网络配置真的变化时才重启网络
   if [[ "${net_changed}" == "true" ]]; then
     restart_network
   fi
 
-  write_qdisc_service "${iface}"
+  write_qdisc_service "${iface}" || true
   show_status "${iface}" "${config_type}" "${config_file}"
   green "感谢使用，再见👋"
 }

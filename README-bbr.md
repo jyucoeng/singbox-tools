@@ -139,6 +139,7 @@ TCP_RMEM_MAX=33554432 \
 - 发行版：**Alpine**（自动安装 bash 并走 OpenRC）、**Debian / Ubuntu**（systemd / netplan）
 - 网络栈：**IPv4 / IPv6 / IPv6-only** 均可（自动检测默认路由：先 IPv4 后 IPv6）
 - 容器环境：无 systemd / openrc 也能运行（直接应用运行时配置，命令全部容错）
+- OpenVZ/LXC 等容器：`venet0` 这类 noqueue 网卡无法设置 qdisc，脚本会跳过 fq 并如实提示；BBR 取决于宿主机内核，内核未开启时只应用可用的 TCP 参数，不会假装成功
 - 依赖：`ip` / `tc` / `sysctl` / `python3`（缺失时脚本会自动调用 `apt` / `dnf` / `yum` / `pacman` / `apk` 安装）
 
 > 使用 `./bbr.sh` 时自动以 root 校验；非 root 请用 `sudo` 运行。
@@ -181,4 +182,4 @@ tc qdisc show dev eth0
 
 ---
 
-> 版本：`1.5.0(2026-10-20)`
+> 版本：`1.5.1(2026-10-20)`
