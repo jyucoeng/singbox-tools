@@ -48,7 +48,7 @@ NETDEV_MAX_BACKLOG="${NETDEV_MAX_BACKLOG:-16384}"
 SOMAXCONN="${SOMAXCONN:-8192}"
 TCP_MAX_SYN_BACKLOG="${TCP_MAX_SYN_BACKLOG:-8192}"
 
-VERSION="1.5.2(2026-10-20)"
+VERSION="1.5.3(2026-10-20)"
 AUTHOR="jyucoeng"
 INTERFACES_FILE="${INTERFACES_FILE:-}"
 IFACE="${IFACE:-}"
@@ -599,37 +599,51 @@ save_origin_state() {
 
 write_sysctl() {
   mkdir -p "$(dirname "${SYSCTL_FILE}")"
-  # 内容一致则跳过，避免重复写文件/重复触发 sysctl -p（幂等）
   local tmp
   tmp="$(mktemp)"
-  local has_bbr=false
+
+  # 只写入当前环境真实存在的键：OpenVZ/LXC 里大量 net.ipv4.tcp_* 根本不存在，
+  # 写进去只会让 sysctl -p 报错，且配置文件与实际生效项不一致。
+  local pairs=()
   if bbr_available; then
-    has_bbr=true
+    pairs+=("net.ipv4.tcp_congestion_control|bbr")
   fi
-  {
-    if [[ "${has_bbr}" == "true" ]]; then
-      echo "net.ipv4.tcp_congestion_control = bbr"
+  if [[ -f /proc/sys/net/core/default_qdisc ]]; then
+    pairs+=("net.core.default_qdisc|fq")
+  fi
+  pairs+=("net.ipv4.tcp_wmem|4096 16384 ${TCP_WMEM_MAX}")
+  pairs+=("net.ipv4.tcp_rmem|4096 131072 ${TCP_RMEM_MAX}")
+  pairs+=("net.ipv4.tcp_limit_output_bytes|${TCP_LIMIT_OUTPUT_BYTES}")
+  if [[ "${LATENCY_TUNING}" == "1" ]]; then
+    pairs+=("net.ipv4.tcp_notsent_lowat|${TCP_NOTSENT_LOWAT}")
+    pairs+=("net.ipv4.tcp_slow_start_after_idle|0")
+    pairs+=("net.ipv4.tcp_fastopen|3")
+    pairs+=("net.ipv4.tcp_tw_reuse|1")
+    pairs+=("net.ipv4.tcp_fin_timeout|15")
+    pairs+=("net.ipv4.tcp_mtu_probing|1")
+    pairs+=("net.core.netdev_max_backlog|${NETDEV_MAX_BACKLOG}")
+    pairs+=("net.core.somaxconn|${SOMAXCONN}")
+    pairs+=("net.ipv4.tcp_max_syn_backlog|${TCP_MAX_SYN_BACKLOG}")
+  fi
+
+  local pair key val
+  : > "${tmp}"
+  for pair in ${pairs[@]+"${pairs[@]}"}; do
+    key="${pair%%|*}"
+    val="${pair#*|}"
+    if [[ -w "/proc/sys/${key//./\/}" ]]; then
+      echo "${key} = ${val}" >> "${tmp}"
     fi
-    if [[ -f /proc/sys/net/core/default_qdisc ]]; then
-      echo "net.core.default_qdisc = fq"
-    fi
-    echo "net.ipv4.tcp_wmem = 4096 16384 ${TCP_WMEM_MAX}"
-    echo "net.ipv4.tcp_rmem = 4096 131072 ${TCP_RMEM_MAX}"
-    echo "net.ipv4.tcp_limit_output_bytes = ${TCP_LIMIT_OUTPUT_BYTES}"
-    if [[ "${LATENCY_TUNING}" == "1" ]]; then
-      echo "net.ipv4.tcp_notsent_lowat = ${TCP_NOTSENT_LOWAT}"
-      echo "net.ipv4.tcp_slow_start_after_idle = 0"
-      echo "net.ipv4.tcp_fastopen = 3"
-      echo "net.ipv4.tcp_tw_reuse = 1"
-      echo "net.ipv4.tcp_fin_timeout = 15"
-      echo "net.ipv4.tcp_mtu_probing = 1"
-      echo "net.core.netdev_max_backlog = ${NETDEV_MAX_BACKLOG}"
-      echo "net.core.somaxconn = ${SOMAXCONN}"
-      echo "net.ipv4.tcp_max_syn_backlog = ${TCP_MAX_SYN_BACKLOG}"
-    fi
-  } > "${tmp}"
+  done
+
+  # 内容一致则跳过，避免重复写文件/重复触发 sysctl -p（幂等）
   if [[ -f "${SYSCTL_FILE}" ]] && cmp -s "${SYSCTL_FILE}" "${tmp}"; then
     rm -f "${tmp}"
+    return 1
+  fi
+  if [[ ! -s "${tmp}" ]]; then
+    rm -f "${tmp}"
+    echo "警告：当前环境没有任何可写的 sysctl 键，跳过 sysctl 配置。" >&2
     return 1
   fi
   mv -f "${tmp}" "${SYSCTL_FILE}"
