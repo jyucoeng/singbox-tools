@@ -1,7 +1,36 @@
 # bbr.sh（BBR 单流性能优化一键脚本）
 
 `bbr.sh` 是一个 BBR + TCP 单流性能优化脚本，支持 **交互式菜单** 与 **无交互参数** 两种模式，
-可在 **Alpine / Debian / Ubuntu** 下运行，兼容 **IPv4 / IPv6** 环境，且支持重复执行（幂等）。
+可在 **Alpine / Debian / Ubuntu** 下运行（需 **KVM / 独立内核**，OpenVZ 容器用不了，见下节），
+兼容 **IPv4 / IPv6** 环境，且支持重复执行（幂等）。
+
+---
+
+## ⚠️ 环境要求：OpenVZ / LXC 容器用不了
+
+**本脚本的核心功能（BBR + fq 队列）在 OpenVZ / LXC 容器里无法生效。**
+
+先花 10 秒确认机器类型：
+
+| 检查命令 | 命中结果 | 含义 |
+|---|---|---|
+| `systemd-detect-virt` | `openvz` / `lxc` | 容器，不支持 |
+| `ip -br link` | 出现 `venet0` | OpenVZ，不支持 |
+| `tc qdisc show dev venet0` | `qdisc noqueue` | 该网卡挂不了 qdisc |
+| `sysctl net.ipv4.tcp_available_congestion_control` | 列表里没有 `bbr` | 宿主机内核没开 BBR |
+
+只要命中任意一条，**BBR 和 fq 都不会生效**，原因：
+
+- `venet0` 是 OpenVZ 的虚拟网卡，内核**不允许**给它挂 qdisc，`tc qdisc add` 必然失败，开机服务也会 `failed`；
+- 容器与宿主机**共用内核**，容器内 `modprobe tcp_bbr` 无效，BBR 完全取决于宿主机内核；
+- OpenVZ 里大量 `/proc/sys/net/ipv4/*` 是只读或缺失的，`sysctl` 写入会静默失败。
+
+这种情况下脚本只能应用少数全局可写的参数（`tcp_fastopen`、`somaxconn` 等），
+对延迟和吞吐的提升非常有限。
+
+> **想要 BBR 请换 KVM 架构的机器。**
+> 脚本在 OpenVZ 上不会假装成功：会跳过 fq、不写 `tcp_congestion_control`，
+> 并输出「优化部分生效」+ 未生效项清单。
 
 ---
 
@@ -139,7 +168,7 @@ TCP_RMEM_MAX=33554432 \
 - 发行版：**Alpine**（自动安装 bash 并走 OpenRC）、**Debian / Ubuntu**（systemd / netplan）
 - 网络栈：**IPv4 / IPv6 / IPv6-only** 均可（自动检测默认路由：先 IPv4 后 IPv6）
 - 容器环境：无 systemd / openrc 也能运行（直接应用运行时配置，命令全部容错）
-- OpenVZ/LXC 等容器：`venet0` 这类 noqueue 网卡无法设置 qdisc，脚本会跳过 fq 并如实提示；BBR 取决于宿主机内核，内核未开启时只应用可用的 TCP 参数，不会假装成功
+- OpenVZ/LXC 等容器：**核心功能不可用**，详见上文「⚠️ 环境要求」；脚本会跳过 fq、不写 BBR 配置，并如实报告「部分生效」
 - 依赖：`ip` / `tc` / `sysctl` / `python3`（缺失时脚本会自动调用 `apt` / `dnf` / `yum` / `pacman` / `apk` 安装）
 
 > 使用 `./bbr.sh` 时自动以 root 校验；非 root 请用 `sudo` 运行。
@@ -182,4 +211,4 @@ tc qdisc show dev eth0
 
 ---
 
-> 版本：`1.5.1(2026-10-20)`
+> 版本：`1.5.2(2026-10-20)`

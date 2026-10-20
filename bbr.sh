@@ -48,7 +48,7 @@ NETDEV_MAX_BACKLOG="${NETDEV_MAX_BACKLOG:-16384}"
 SOMAXCONN="${SOMAXCONN:-8192}"
 TCP_MAX_SYN_BACKLOG="${TCP_MAX_SYN_BACKLOG:-8192}"
 
-VERSION="1.5.1(2026-10-20)"
+VERSION="1.5.2(2026-10-20)"
 AUTHOR="jyucoeng"
 INTERFACES_FILE="${INTERFACES_FILE:-}"
 IFACE="${IFACE:-}"
@@ -933,6 +933,14 @@ install_optimization() {
   echo "检测到配置方式: ${config_type}"
   echo "=================================="
   echo
+
+  # OpenVZ/LXC 容器：noqueue 网卡 + 宿主机内核无 BBR，核心优化必然无效，提前说清楚
+  if ! iface_supports_qdisc "${iface}" && ! bbr_available; then
+    echo "⚠️  检测到 OpenVZ/LXC 容器环境：${iface} 为 noqueue，且内核不支持 BBR。" >&2
+    echo "    本脚本的 BBR + fq 优化在此环境无法生效，只会应用少量全局 TCP 参数。" >&2
+    echo "    需要 BBR 请使用 KVM 架构的机器（详见 README 的环境要求章节）。" >&2
+    echo >&2
+  fi
 
   # 记录安装前状态（原始 MTU / 原始 sysctl 值），供 reset 精确还原
   save_origin_state "${iface}"
