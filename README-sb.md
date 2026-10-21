@@ -952,6 +952,11 @@ sb log_stop        查看服务停止原因日志（排查崩溃用）
 
 ## 7、 版本变更信息
 
+v3.2.12 (2026-10-21)
+ - **日志轮转的 cron 现在会自动补装并启动**：`install_deps` 把 `crontab` 纳入依赖检查——Debian/Ubuntu 补 `cron`、RHEL 系补 `cronie`、Alpine 仅在 busybox 没带 `crontab` 时补 `dcron`（避免和 busybox 冲突）；装完由 `install_log_rotate` 把守护进程拉起来
+   - 容器里 `apt install cron` 常被 policy-rc.d 拦住不会自动启动，旧版只会提示「需自行安排定时执行」；现在按 systemd → openrc → sysvinit（`service cron start`）→ 直接拉进程的顺序兜底，全都失败才退回手动提示
+   - 不再要求用户自己 `crontab -e`，日志轮转开箱即用
+
 v3.2.11 (2026-10-19)
  > 体检第三批（P2：低频 / 体验 / 隐患）。全部在 VPS 上实测过。
 
