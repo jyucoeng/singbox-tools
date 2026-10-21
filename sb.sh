@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.12(2026-10-21)"
+VERSION="3.2.11(2026-10-19)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -413,7 +413,6 @@ install_deps() {
     # - fuser：用于等待 apt/dpkg 锁（psmisc）
     # - base64/stat/等：coreutils（不同系统差异大时更稳）
     # - xxd：某些本地推导会用到（常见在 vim-common / vim / xxd）
-    # - crontab：日志轮转的定时任务（缺了自动补装 cron/cronie/dcron）
 
     debug_log "【调试】install_deps安装函数开始了……"
 
@@ -425,7 +424,6 @@ install_deps() {
         fuser
         base64
         xxd
-        crontab # 日志轮转的定时任务；缺了按发行版补装 cron/cronie/dcron
     )
 
     # 失败包记录文件
@@ -556,7 +554,6 @@ install_deps() {
             coreutils
             ca-certificates
             xxd vim-common # xxd：Debian 12+ 为独立包，旧版由 vim-common 提供（装不上自动跳过）
-            cron # 日志轮转用；装完不一定自动启动，install_log_rotate 会负责拉起
         )
 
         local -a APT_CMD=(
@@ -584,7 +581,6 @@ install_deps() {
             coreutils
             ca-certificates
             vim-common # 多数发行版提供 xxd
-            cronie # 日志轮转用（RHEL 系的 cron 包名）
         )
 
         if [ "$pm" = "dnf" ]; then
@@ -613,9 +609,6 @@ install_deps() {
             coreutils
             ca-certificates
         )
-
-        # Alpine 的 crontab 通常由 busybox 自带；只有缺了才装 dcron，避免和 busybox 冲突
-        command -v crontab > /dev/null 2>&1 || APK_PKGS+=(dcron)
 
         local -a APK_CMD=(apk add --no-cache)
         install_pkgs_resilient "apk" APK_CMD APK_PKGS
@@ -2955,70 +2948,11 @@ EOF
     chmod +x "$LOG_ROTATE_SCRIPT" 2> /dev/null || true
 }
 
-# cron 守护进程是否在跑（Debian 叫 cron，RHEL/Alpine 叫 crond）
-cron_running() {
-    pgrep -x cron > /dev/null 2>&1 \
-        || pgrep -x crond > /dev/null 2>&1 \
-        || ps -ef 2> /dev/null | grep -qE '[c]ron(d)?( |$)'
-}
-
-# 确保 cron 守护进程在跑：依赖阶段已补装 cron 包，但容器里装完通常不会自动启动。
-# 起不来就返回 1，调用方退回“手动安排”的提示，不影响主流程。
-ensure_cron_daemon() {
-    command -v crontab > /dev/null 2>&1 || return 1
-    if cron_running; then
-        return 0
-    fi
-
-    # systemd（Debian/Ubuntu/RHEL 等）
-    if command -v systemctl > /dev/null 2>&1 && [ -d /run/systemd/system ]; then
-        systemctl enable --now cron > /dev/null 2>&1 \
-            || systemctl enable --now crond > /dev/null 2>&1 || true
-    fi
-
-    # openrc（Alpine：busybox 的 crond，或单独装的 dcron）
-    if ! cron_running \
-        && command -v rc-update > /dev/null 2>&1 \
-        && command -v rc-service > /dev/null 2>&1; then
-        rc-update add crond default > /dev/null 2>&1 || true
-        rc-service crond start > /dev/null 2>&1 \
-            || {
-                rc-update add dcron default > /dev/null 2>&1 || true
-                rc-service dcron start > /dev/null 2>&1 || true
-            }
-    fi
-
-    # sysvinit / 没有 systemd 的 Debian 容器
-    if ! cron_running && command -v service > /dev/null 2>&1; then
-        service cron start > /dev/null 2>&1 \
-            || service crond start > /dev/null 2>&1 || true
-        if command -v update-rc.d > /dev/null 2>&1; then
-            update-rc.d cron defaults > /dev/null 2>&1 || true
-        fi
-    fi
-
-    # 没有任何 init 的容器：直接拉起守护进程（Debian 的 cron 会自己 daemonize）
-    if ! cron_running; then
-        if command -v cron > /dev/null 2>&1; then
-            cron > /dev/null 2>&1 || true
-        elif command -v crond > /dev/null 2>&1; then
-            crond -b > /dev/null 2>&1 || true
-        fi
-    fi
-
-    sleep 1
-    cron_running
-}
-
 # 安装每小时轮转的 cron（已存在则替换，避免重复堆积）
 install_log_rotate() {
     gen_log_rotate_script
-
-    # 依赖阶段已经补装 cron 包；这里把守护进程拉起来（容器里装完通常不会自动启动）
-    ensure_cron_daemon > /dev/null 2>&1 || true
-
     if ! command -v crontab > /dev/null 2>&1; then
-        yellow "⚠ 未检测到 crontab（自动安装也失败），已生成轮转脚本 $LOG_ROTATE_SCRIPT，需自行安排定时执行"
+        yellow "⚠ 未检测到 crontab，已生成轮转脚本 $LOG_ROTATE_SCRIPT，需自行安排定时执行"
         return 0
     fi
     local ct_tmp
@@ -3028,9 +2962,6 @@ install_log_rotate() {
     echo "17 * * * * $LOG_ROTATE_SCRIPT >/dev/null 2>&1" >> "$ct_tmp"
     if crontab "$ct_tmp" > /dev/null 2>&1; then
         debug_print green "✅ 已开启日志轮转（每小时检查，单文件超过 $((LOG_ROTATE_SIZE_KB / 1024))MB 时轮转）"
-        if ! cron_running; then
-            yellow "⚠ crontab 已写入，但 cron 守护进程没在运行；重启后请检查 cron 是否自启"
-        fi
     else
         yellow "⚠ 写入 crontab 失败，日志轮转未生效（可手动执行 $LOG_ROTATE_SCRIPT）"
     fi
