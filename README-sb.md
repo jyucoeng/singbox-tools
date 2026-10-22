@@ -12,7 +12,7 @@
 #### 📌 快速定位
 #### [**① 基础命令**](#mod-1)　[**② 直连协议片段**](#mod-2)　[**③ Argo 协议片段**](#mod-3)　[**④ 回源协议片段**](#mod-4)　[**⑤ Nginx 模块**](#mod-5)
 #### [**综合示例（直连 + Argo + 回源全开）**](#full-example)　[**如何卸载**](#uninstall)　
-#### [**CF（Cloudflare）回源规则部署**](#cf-origin)　[**第 1 章 · 安装与卸载**](#c1)　[**第 2 章 · 其余说明**](#c2)
+#### [**🌐 CF（Cloudflare）回源规则部署**](#cf-origin)　[**第 1 章 · 安装与卸载**](#c1)　[**第 2 章 · 其余说明**](#c2)
 
 # 1、 sing-box 安装与卸载
 ## 支持的协议
@@ -535,11 +535,21 @@ CDN 回源到服务器 `nginx_pt`（默认 8080），去 Cloudflare 后台把 or
 **与 Argo 并存**：可同时开 `ws_cdn` 和 `argo`，两者节点都输出（共用同一本地 ws 端口与 nginx 反代，仅客户端握手域名不同）。
 
 <a id="cf-origin"></a>
-### 5、 CF（Cloudflare）回源规则如何配置？
+### 5、 🌐 CF（Cloudflare）回源规则如何配置？（⚠️ 三步缺一不可）
 
-WS-CDN 回源链路：`客户端 → CDN(ws_cdn_cf_pt) → 服务器 nginx_pt(默认 8080)`。要让 Cloudflare 把你的回源域名请求回源到你服务器的 nginx，需要三步：**Origin Rules（回源端口）** + **DNS 记录** + **SSL 加密模式设为「灵活」**，缺一不可。
+> [!IMPORTANT]
+> **三步缺一不可：① Origin Rules 改回源端口 → ② 加 DNS 记录 → ③ SSL 模式设「灵活」。**
+> 最容易漏的是 ③：漏了只有 WS-CDN 节点全挂（525），Argo / 直连却正常。
 
-#### 步骤 1：添加一个回源端口规则（Origin Rules）
+| 步骤 | 做什么 | 漏了会怎样 |
+|---|---|---|
+| **①** | Origin Rules：`*node.你的域名` 的回源端口改成 `nginx_pt` | **521 / 522 / 523** |
+| **②** | 给每个当 SNI 用的域名加 **A 记录** | **530（Origin DNS Error）** |
+| **③** | node 子域 **SSL/TLS = 灵活（Flexible）** | **525（SSL Handshake Failed）** |
+
+WS-CDN 回源链路：`客户端 → CDN(ws_cdn_cf_pt) → 服务器 nginx_pt(默认 8080)`。
+
+#### 步骤 1：🟦 添加回源端口规则（Origin Rules）
 
 进入 Cloudflare，点击具体域名（如 `xxxx.nyc.mn`）→ **规则** → **页面规则**，在页面右侧**流量序列**里找到 **Origin Rules · 更改目标源服务器**，点击它 → 点右上角**+ 创建规则**（蓝色按钮）→ 选中**源服务器规则**，进入 **Origin Rules**：
 
@@ -552,7 +562,7 @@ WS-CDN 回源链路：`客户端 → CDN(ws_cdn_cf_pt) → 服务器 nginx_pt(�
 
 > 规则里的 `*node.xxxx.nyc.mn` 通配符能覆盖你实际用的三个回源域名：`vmess` / `vless` / `trojan`（这3个协议可以共用一个回源域名，也可以用三个不同的域名）。
 
-#### 步骤 2：添加 DNS 记录
+#### 步骤 2：🟩 添加 DNS 记录
 
 添加下面三条 **A 记录**，其中 `192.9.100.***` 为你的小鸡（服务器）的 IPv4：
 
@@ -566,9 +576,11 @@ trojan-node.xxxx.nyc.mn   →  192.9.100.***   （小黄云开不开都可以）
 - `小黄云`（Cloudflare 橙色云代理）开或不开都可以——开=走 CDN+CDN TLS 终结，关=仅 CDN 反代一样能到 nginx。
 - **⚠️ 当 SNI 用的回源域名必须有 DNS 记录**：节点里的 `sni/host` 取自 `ws_cdn_vmess_sni` / `ws_cdn_vless_sni` / `ws_cdn_trojan_sni`（没设专属就回退 `ws_cdn_sni`）。缺哪条记录，对应节点就报 **530（Origin DNS Error）**。
 
-#### 步骤 3：SSL 加密模式必须设成「灵活（Flexible）」（否则回源必定 525）
+#### 步骤 3：🟥 SSL 加密模式必须设成「灵活（Flexible）」（否则回源必定 525）
 
-⚠️ **这是最容易漏、漏了三个 CDN 节点全连不上的一步**（现象：Argo / 直连都正常，只有 WS-CDN 节点不通）。
+> [!CAUTION]
+> **这是最容易漏、漏了三个 CDN 节点全连不上的一步。**
+> 现象：Argo / 直连都正常，只有 WS-CDN 节点不通 —— 先回来检查这里。
 
 只要 A 记录开了**橙云（已代理）**，Cloudflare 会先替客户端终止 TLS，然后**再向源站发起一次连接**。第二次连接用什么协议，由这个域名（或子域）的 **SSL/TLS 加密模式** 决定：
 
@@ -590,7 +602,7 @@ trojan-node.xxxx.nyc.mn   →  192.9.100.***   （小黄云开不开都可以）
 
 > 无论选哪种，**客户端 → Cloudflare 这段始终是 HTTPS**（节点链接不变），只是 Cloudflare → 你服务器这段变成明文 HTTP。如果你必须保持全链路加密（完全/完全严格），则需给服务器的 nginx_pt 配 TLS 证书（属于改脚本，工作量更大），否则只能设「灵活」。
 
-#### 步骤 4：与脚本参数对应关系速查
+#### 步骤 4：🔎 与脚本参数对应关系速查
 
 | 你在哪填 | 对应的脚本变量 | 说明 |
 |---|---|---|
@@ -606,9 +618,9 @@ trojan-node.xxxx.nyc.mn   →  192.9.100.***   （小黄云开不开都可以）
 
 | 表现 | Cloudflare 错误码 | 原因 | 解决 |
 |---|---|---|---|
-| vmess/vless/trojan-WS-CDN 全不通，Argo/直连正常 | **525** | 橙云记录 + SSL 模式「完全/完全严格」，Cloudflare 用 TLS 回源，而 nginx_pt 只讲 HTTP | 按上面**步骤 3** 把 node 子域 SSL 加密模式设成「灵活」 |
-| trojan-WS-CDN（或某个协议）单独不通 | **530**（Origin DNS Error） | 该协议当 SNI 用的回源域名（如 `trojan-cdn-node.xxxx.nyc.mn`）**没有 DNS 记录** | 在 DNS 里补一条 A/CNAME 记录，见**步骤 2** 警告 |
-| 所有 WS / Argo 都不通 | 521 / 522 / 523 | nginx 没运行、回源端口被防火墙挡、Origin Rules 端口没对上 | 检查 `nginx` 状态、防火墙放行 nginx_pt、Origin Rules 目标端口是否正确 |
+| 🔴 vmess/vless/trojan-WS-CDN 全不通，Argo/直连正常 | **525** | 橙云记录 + SSL 模式「完全/完全严格」，Cloudflare 用 TLS 回源，而 nginx_pt 只讲 HTTP | 按上面**步骤 3** 把 node 子域 SSL 加密模式设成「灵活」 |
+| 🟠 trojan-WS-CDN（或某个协议）单独不通 | **530**（Origin DNS Error） | 该协议当 SNI 用的回源域名（如 `trojan-cdn-node.xxxx.nyc.mn`）**没有 DNS 记录** | 在 DNS 里补一条 A/CNAME 记录，见**步骤 2** 警告 |
+| 🟡 所有 WS / Argo 都不通 | 521 / 522 / 523 | nginx 没运行、回源端口被防火墙挡、Origin Rules 端口没对上 | 检查 `nginx` 状态、防火墙放行 nginx_pt、Origin Rules 目标端口是否正确 |
 
 
 
