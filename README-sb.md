@@ -1,29 +1,34 @@
-#  singbox 一键安装脚本
+# sing-box 一键安装脚本
 
-> 本脚本支持两种安装方式：
-> - **交互式菜单安装**：直接运行 `bash sb.sh`（不带参数），通过菜单引导完成安装/卸载/查看等操作。
-> - **非交互式安装**：以环境变量 + 参数命令的方式一行完成（见下方示例）。可以搭配 [命令生成版界面](https://singbox.dingdang.de5.net/) 使用
->
-> 安装后支持 **`sb` 快捷指令**：直接执行 `sb` 打开主菜单，或用 `sb ins` / `sb rep` / `sb list` / `sb rt` / `sb node` / `sb sub` / `sb del` 等一步直达对应功能（完整清单见「[sb 快捷指令](#6-sb-快捷指令)」）。
+支持两种安装方式：
+
+- **交互式**：直接运行 `bash sb.sh`（不带参数），按菜单提示完成安装、卸载、查看等操作。
+- **非交互式**：用环境变量 + 参数一行完成（见下方示例），也可搭配 [命令生成版界面](https://singbox.dingdang.de5.net/) 使用。
+
+安装后可用 **`sb` 快捷指令**：`sb` 打开主菜单，`sb ins` / `sb rep` / `sb list` / `sb rt` / `sb node` / `sb sub` / `sb del` 一步直达对应功能（完整清单见 [sb 快捷指令](#26-sb-快捷指令)）。
 
 <a id="c1"></a>
 
 #### 📌 快速定位
 #### [**① 基础命令**](#mod-1)　[**② 直连协议片段**](#mod-2)　[**③ Argo 协议片段**](#mod-3)　[**④ 回源协议片段**](#mod-4)　[**⑤ Nginx 模块**](#mod-5)
-#### [**综合示例（直连 + Argo + 回源全开，整段可复制）**](#full-example)　[**如何卸载**](#uninstall)　
+#### [**综合示例（直连 + Argo + 回源全开）**](#full-example)　[**如何卸载**](#uninstall)　
 #### [**CF（Cloudflare）回源规则部署**](#cf-origin)　[**第 1 章 · 安装与卸载**](#c1)　[**第 2 章 · 其余说明**](#c2)
 
-# 1、 singbox 安装以及卸载
-## singbox 一键安装脚本（vmess argo/trojan argo/vless argo 可多选 + hy2+vless-Reality+tuic+anytls+socks5 + ws_cdn 三协议 CDN 回源，这些协议可自由组合）
+# 1、 sing-box 安装与卸载
+## 支持的协议
 
-举个例子🌰说明（这里会列出所有支持的环境变量）：
+vmess / trojan / vless（走 Argo，可多选）+ Hysteria2 + VLESS-Reality + TUIC + AnyTLS + Socks5，以及 vmess / vless / trojan 的 ws_cdn CDN 回源；这些协议可自由组合。
 
-> **⚠️ 为了统一，sb.sh 仅接受单引号包裹的字符串值，也就是说不是数字时，强烈建议使用英文输入法的单引号包裹整个字符串起来。请不要使用双引号，因为socks5_password有些人用了特殊字符，特殊字符遇到双引号或者没加任何引号会有问题，所以这里规定只能用英文输入法的单引号包裹字符串**
+下面按「基础命令 + 协议片段」列出所有环境变量。
 
-**示例：拆成「基础命令 + 直连 / Argo / 回源」几个部分。** 基础命令是所有协议共用的、只写一次；要哪类协议，就把对应片段拼到基础命令上方。**任意组合，只要加上基础命令就是一条完整可运行命令**；删除某一行，即表示不启用对应的协议/功能。
+> **⚠️ 引号规则**：非数字的值请用**英文单引号**包起来，例如 `name='小叮当'`、`socks5_password='a@b#c'`。这样密码里的 `$`、`!`、`#` 等字符不会被 shell 提前展开；纯数字（端口、`ippz`、`DEBUG_FLAG`）不用引号。
+
+**用法：基础命令只写一次，协议片段按需拼在基础命令上方。** 拼好后就是一条完整命令；删掉某行即不启用对应协议。
+
+> ②③④ 的片段只列变量，最后一行带 `\`，直接接 ① 的变量区即可（结尾仍是 `bash ... rep`）。
 
 <a id="mod-1"></a>
-## ① 基础命令（含订阅开关 `subscribe` / 订阅端口 `nginx_pt`；整条命令的结尾 `bash <(...) rep` 在这里，整条命令只保留这一处）
+## ① 基础命令（所有协议共用；结尾的 `bash <(...) rep` 只写这一处）
 
 ```bash
 uuid=0631a7f3-09f8-4144-acf2-a4f5bd9ed200 \
@@ -31,16 +36,18 @@ ippz=4 \
 name='小叮当-美国加州' \
 nginx_pt=41007 \
 subscribe=true \
-out_ip='特殊出口IP' \              # 仅当出口 IP 与服务器 IP 不一致时配合 ippz 使用（一般不填）
-direct_host='你的对外域名' \       # 用域名替换直连协议(hy2/tuic/vless/anytls/socks5)链接里的 IP；需自行加 DNS 记录并关闭小黄云
 DEBUG_FLAG=0 \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
+> 可选变量（需要时加到 `DEBUG_FLAG` 之前，不需要就别写）：
+> - `out_ip='216.166.22.30'`：出口 IP 与 SSH IP 不一致时，指定节点里显示的 IP
+> - `direct_host='node.example.com'`：直连协议链接里的 IP 换成域名（需自行加 DNS 记录并关闭小黄云）
+
 > **基础命令变量说明：**
 >
 > - `uuid`：节点 UUID，不传则自动生成
-> - `ippz`：出口 IP 偏好（`4`=仅 IPv4、`6`=仅 IPv6，不传=双栈）
+> - `ippz`：出口 IP 偏好（`4`=仅 IPv4、`6`=仅 IPv6，不传=自动，优先 IPv4）
 > - `name`：节点名称前缀
 > - `subscribe` / `nginx_pt`：开启订阅及订阅端口（`nginx_pt` 也是 ws_cdn 回源端口）
 > - `out_ip`：特殊出口 IP（仅当出口 IP 与服务器 IP 不一致时，配合 `ippz` 使用；一般不填）
@@ -51,31 +58,38 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ### 1、 命令参数：rep / del / delall / list / list key
 
-- 如果 `bash` 后面跟了一个参数 `rep`，代表覆盖式安装（会卸载后再安装）。你可以用这个改成其他功能，比如 `del` 代表卸载（保留二进制文件，比如 singbox / cloudflared 等的安装二进制文件），`delall` 代表全部卸载 + 删除二进制文件，`list` 代表查看节点。具体有哪些值你可以跑一次安装脚本你就知道怎么用了。
-- `bash sb.sh list key` 有 2 个参数 `list key`，代表显示节点的同时会显示 vless Reality 的密钥。如果不加 `key` 参数，就只显示节点。
+| 参数 | 作用 |
+|---|---|
+| `rep` | 覆盖安装（先卸载再安装） |
+| `del` | 卸载，保留 sing-box / cloudflared 等二进制 |
+| `delall` | 彻底卸载，连二进制和配置一起删 |
+| `list` | 查看节点 |
+| `list key` | 查看节点 + VLESS Reality 私钥 |
 
-### 2、 uuid=XXXX-xxx-XXXX（可传，也可不传）
+- 不带参数 = 进入交互菜单。
+- `list key` 是把 `list` 和 `key` 两个参数一起传，不是两条命令。
+
+### 2、 uuid（节点 UUID，可选）
 
 **含义**
-- 不传uuid → 脚本自动生成 UUID
-- 传uuid → 使用你指定的 UUID
+- 不传 `uuid` → 脚本自动生成
+- 传 `uuid` → 使用你指定的 UUID
 
 
 ### 3、 ippz 和 out_ip（IP显示策略和特殊出口 IP，可选）
 
-| ippz值 |    含义        |
-|--------|---------------|
-| 4      | 强制使用 IPv4  |
-| 6      | 强制使用 IPv6  |
-| 空     | 自动判断       |
+| ippz | 含义 |
+|---|---|
+| `4` | 只用 IPv4 |
+| `6` | 只用 IPv6 |
+| 不传 | 自动（优先 IPv4，没有 IPv4 再用 IPv6） |
 
- 👉 ippz只影响 节点输出，不影响服务运行
+`ippz` 决定节点里写 IPv4 还是 IPv6，也会影响 sing-box / nginx 是否监听 IPv6（`ippz=4` 时不监听 `[::]`）。
 
- 👉 out_ip='你的特殊出口ip(仅当你的出口ip和服务器ip不一致时有效，需配合ipzz使用)' ，比如：
+`out_ip` 用于「SSH 连的 IP」和「脚本探测到的出口 IP」不一致的情况：脚本默认把探测到的出口 IP 写进节点，但客户端要连的是你 SSH 的那个 IP，这时用 `out_ip` 指定后者：
 
- - 出口为ipv4, out_ip='216.166.22.30',ippz=4(当服务器的 ssh ip和出口ip不一致，比如vps里面获取到ip为216.166.22.250（出口ip）时，但是你ssh ip为216.166.22.30，正常情况下，脚本会默认使用250这个ip作为出口ip，但是你节点出来之后如果用250会不通，因为跟你ssh ip不一致，你需要手动改成30这个ip才通，针对你这个需求，你就可以设置这个out_ip变量来解决这个设定出口为30的特殊要求)
- 
-- 出口为ipv6, out_ip='2602:294:0:b7:1234:1234:d9d4:0001',ippz=6 (当服务器ip为2602:294:0:b7:1234:1234:d9d4:2600时，你的出口ip由于某个原因被分给了2602:294:0:b7:1234:1234:d9d4:0001，正常情况下，脚本会默认使用2600这个ip作为出口ip，针对你这个需求，你就可以设置这2个变量来解决这个设定出口为0001的特殊要求)
+- IPv4：`out_ip='216.166.22.30' ippz=4`
+- IPv6：`out_ip='2602:294:0:b7:1234:1234:d9d4:0001' ippz=6`
 
 
  <img width="602" height="132" alt="CleanShot 2026-01-26 at 12 57 34" src="https://github.com/user-attachments/assets/57c1a329-9292-45b5-aa23-3c59cd3e3356" />
@@ -83,28 +97,28 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 ### 4、 direct_host（直连协议对外域名，掩盖 IP，可选）
 
-👉 `direct_host='你的对外域名'`：系统把直连协议（hy2/tuic/vless-reality/anytls/socks5）链接里的 host 从「服务器 IP」替换成该域名。
+👉 `direct_host='你的对外域名'`：脚本把直连协议（hy2/tuic/vless-reality/anytls/socks5）链接里的 host 从「服务器 IP」替换成该域名。
 
 **前提（脚本不处理 DNS，需自行完成）：**
 1. 到 [Cloudflare 控制台](https://dash.cloudflare.com/) 的对应域名下的 DNS 给该域名添加解析记录，指向服务器**真正绑定的对外 IP**：IPv4 用 A 记录、IPv6 用 AAAA 记录（脚本安装时的 `direct_host` 提示会根据 out_ip / 检测到的 IP 自动算出该绑的地址）；
 2. **务必关闭「小黄云」(Proxy / 橙色云)，保持灰云 (DNS only)**；否则 UDP 直连(hy2/tuic)无法穿透，节点不通；
 3. 端口不变 = 直连协议各自的本地监听端口（`hypt`/`vlrt`/`tupt`/`anypt`/`socks5pt`）。
 
-👉 不传则直连链接继续显示真实服务器 IP，不影响服务运行。该变量**只影响直连协议链接输出**，Argo / CDN 回源链路各有自己的 CDN 域名，不受影响；安装后可用菜单 `node → 直连对外域名 (掩盖IP)` 查看/修改/清除。
+👉 不传则直连链接继续显示真实服务器 IP，不影响服务运行。该变量**只影响直连协议链接输出**，Argo / CDN 回源链路不受影响。安装后可在菜单 `node → 直连对外域名 (掩盖IP)` 查看、修改或清除。
 
 
 ### 5、 nginx_pt（nginx 订阅端口，默认 8080）
 
-- 不传 → 默认 8080
-- 传 → nginx订阅使用的监听端口
+- 不传：默认 8080
+- 传：nginx 订阅监听该端口
 
-❗注意：nginx_pt与argo_pt的值不能同时为8001，不然会导致监听混乱(换句人话：如果你不改argo_pt的值，nginx_pt就不能设置为8001)。
+❗`nginx_pt` 不能和 `argo_pt` 相同。`argo_pt` 默认 8001，所以不改 `argo_pt` 时，`nginx_pt` 不要设成 8001。
 
 
 ### 6、 subscribe（订阅开关，默认 false，即不需要 nginx 订阅）
 
-- false → 默认 不生成订阅；但若启用了 Argo，Nginx 仍会因回源反代被安装
-- true →  会生成订阅。当设置为true时，需要同时设置nginx的订阅端口参数：nginx_pt=?
+- `false`（默认）：不生成订阅；但如果启用了 Argo，Nginx 仍会因回源反代被安装
+- `true`：生成订阅，建议同时指定 `nginx_pt`（订阅端口，不指定默认 8080）
 
 
 
@@ -131,7 +145,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 <a id="mod-2"></a>
 ## ② 直连协议片段（VLESS-Reality + Hysteria2 + TUIC + AnyTLS + Socks5）
 
-> 拼到基础命令上方；删掉某个端口行（`vlrt / hypt / tupt / anypt / socks5pt`）= 不装对应直连协议；`socks5_*` 仅在启用 Socks5 时填写。`out_ip` / `direct_host` 属基础命令（①），不写在这里。
+> 拼到基础命令上方（这段最后一行以 `\` 结尾，直接接基础命令的第一行变量即可）；删掉某个端口行（`vlrt / hypt / tupt / anypt / socks5pt`）= 不装对应协议；`socks5_*` 仅在启用 Socks5 时填。`out_ip` / `direct_host` 属基础命令（①），不写在这里。
 
 ```bash
 vl_sni='www.apple.com' \
@@ -163,7 +177,7 @@ socks5_ips='1.2.3.4,5.6.7.0/24' \
 
 ### 1、 伪装 SNI 通用说明（hy_sni / vl_sni / tu_sni / any_sni）
 
-各直连协议的伪装 SNI 一览（这些值不会填的话就不要瞎传，直接留空或删去即可）：
+各直连协议的伪装 SNI 一览（不会填就留空或删掉，脚本会用默认值）：
 
 | 变量 | 协议 | 说明 | 缺省值 |
 |------|------|------|--------|
@@ -184,7 +198,7 @@ socks5_ips='1.2.3.4,5.6.7.0/24' \
 
 - `vl_sni` / `vl_sni_pt`：伪装 SNI / SNI 端口（默认 443）
 - `vlrt`：VLESS-Reality 端口
-- `reality_private`：Reality 私钥。传它是为了安装/重装时 vless 节点保持一致，不用来回导入；不传自动生成，并在安装或重装完成时打印一次。忘记保存可重装或 `bash sb.sh list key` 再次打印；不要乱填，正确值应为 43 个字符。
+- `reality_private`：Reality 私钥。传它是为了安装/重装时 vless 节点保持一致，不用来回导入；不传自动生成，并在安装或重装完成时打印一次。忘记保存可重装，或 `sb list key` 再次打印；不要乱填，正确值应为 43 个字符。
 - `reality_public`（可选）：Reality 节点对外暴露的公钥。一般不传——脚本会根据 `reality_private` 自动推导配套公钥；只有当你已经持有公钥并希望强制指定它时才需要传，传了 `reality_private` 时以私钥推导为准。
 
 ### 3、 Hysteria2 (hy2)
@@ -236,37 +250,37 @@ socks5://user:pass@ip:port#name
 ### 组合示例
 > 常见组合示例：整段可复制直接运行，删除某行即不启用对应功能。
 
-### 组合1️⃣、 仅 1个直连协议（不走 Argo,hypt与vlrt、tupt这几个端口参数选一个来写）
+### 组合 1：只装 1 个直连协议（`hypt` / `vlrt` / `tupt` / `anypt` 选一个）
 
-#### 仅hy2协议
+#### 仅 hy2 协议
 
 ```bash
 hypt=2082 \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
-#### 仅vless Reality协议
+#### 仅 vless Reality 协议
 
 ```bash
 vlrt=2083 \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
-#### 仅tuic协议
+#### 仅 tuic 协议
 
 ```bash
 tupt=2082 \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
-#### 仅anytls协议
+#### 仅 anytls 协议
 
 ```bash
 anypt=2082 \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
-### 仅socks5 协议
+#### 仅 socks5 协议
 
 ```bash
 # 密码含特殊字符(!#$等)必须用单引号包裹；socks5_wl_flag 可选：开启IP白名单；socks5_ips 可选：白名单IP，CIDR
@@ -278,7 +292,7 @@ socks5_ips='1.2.3.4,5.6.7.0/24' \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
-### 组合2️⃣、 仅 2个直连协议（不走 Argo,hypt与vlrt参数都写，代表hy2和vless-reality 协议都会出来）
+### 组合 2：装 2 个直连协议（同时写 `hypt` 和 `vlrt`）
 
 ```bash
 hypt=2082 \
@@ -287,19 +301,17 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 ```
 
 <a id="mod-3"></a>
-## ③ Argo 协议片段（Vmess-WS-TLS / Trojan-WS-TLS / Vless-WS-TLS 走 Cloudflare Tunnel）
+## ③ Argo 协议片段（VMess-WS-TLS / Trojan-WS-TLS / VLESS-WS-TLS 走 Cloudflare Tunnel）
 
-> 拼到基础命令上方；不启用 Argo 就整段不贴（或删掉 `argo` 开头的行）；`argo` 支持多选：`'vmess'` / `'trojan'` / `'vless'`，逗号组合如 `'vmess,vless,trojan'`。
+> 拼到基础命令上方；不启用 Argo 就整段不贴；`argo` 支持多选：`'vmess'` / `'trojan'` / `'vless'`，逗号组合如 `'vmess,vless,trojan'`。
 
 ```bash
-# 共有（所有 Argo 协议通用）
 argo='vmess,vless,trojan' \
 argo_cf_host='saas.sin.fan' \
 argo_cf_pt=443 \
 argo_pt=8001 \
 agn='固定Argo隧道域名' \
-agk='固定Argo隧道token/Auth JSON,ey开头那一串是token' \
-# 各协议独有（可选，未填回退共享 argo_cf_host / argo_cf_pt）
+agk='固定Argo隧道token' \
 argo_vmess_cf_host='vm.example.com' \
 argo_vmess_cf_pt=443 \
 argo_vless_cf_host='vl.example.com' \
@@ -308,27 +320,15 @@ argo_trojan_cf_host='tr.example.com' \
 argo_trojan_cf_pt=443 \
 ```
 
-> **Argo 片段变量说明（按「共有 → 各协议独有」归拢）：**
->
-> **共有（所有 Argo 协议通用）：**
-> - `argo`：Argo 协议，逗号分隔可多选 `vmess,trojan,vless`（留空/不传=不启用）
-> - `argo_cf_host` / `argo_cf_pt`：共享 CF 优选域名/端口（默认 `saas.sin.fan` / `443`）
-> - `argo_pt`：Argo 本地回源端口（默认 8001，一般不改）
-> - 固定隧道：`agn='固定Argo隧道域名'` + `agk='固定Argo隧道token'`（不填则临时 trycloudflare）
->
-> **各协议独有（可选，未填回退共享）：**
-> - `argo_vmess_cf_host` / `argo_vmess_cf_pt`、`argo_vless_cf_host` / `argo_vless_cf_pt`、`argo_trojan_cf_host` / `argo_trojan_cf_pt`
+- 前 6 行三种 Argo 协议共用；后 6 行按协议覆盖共享的 `argo_cf_host` / `argo_cf_pt`，不写就用共享值。
+- `agn` / `agk` 不填 = 临时 trycloudflare 隧道；`agk` 是 token 或 Auth JSON（`ey` 开头的那串是 token）。
 
-> **③ Argo 协议 · 详细变量说明**
----
+下面逐项说明。
 
 ### 1、 argo_cf_host / argo_cf_pt（共享对外域名/端口）
 
-- `argo_cf_host` / `argo_cf_pt` 用在以下地方（Argo 场景的对外端口为 `argo_cf_pt`，默认值 443，可自定义为 https 系端口中的一个：443,2053,2083,2087,2096,8443 [任选]）：
-  - VMess Argo：`"add":"${argo_cf_host}"`
-  - Trojan Argo：`trojan://${uuid}@${argo_cf_host}:${argo_cf_pt}?...`
-  - Vless Argo：`vless://${uuid}@${argo_cf_host}:${argo_cf_pt}?...`
-- `argo_cf_host` 指的是用 argo 时的 cf 域名，缺省值 `saas.sin.fan`，可传自己的值（如 `www.visa.com`）；`argo_cf_pt` 是 cf 域名对应的端口；不传就用缺省值兜底。
+- 三种 Argo 协议共用的对外域名和端口，默认 `saas.sin.fan` / `443`；端口只能选 https 系：443、2053、2083、2087、2096、8443。
+- 也可以填自己的域名或优选 IP（如 `www.visa.com`）；不填就用默认值。
 
 ### 2、 每协议独立指定（可选，未填回退共享）
 
@@ -337,91 +337,88 @@ argo_trojan_cf_pt=443 \
 ### 3、 兼容旧名
 
 - `cdn_host` / `cdn_pt` 仍可用（`argo_cf_host` / `argo_cf_pt` 优先，旧名兜底），方便旧命令直接复用。
-- 举🌰：
+- 例如旧命令里的 `cdn_host` / `cdn_pt` 会被当作 `argo_cf_host` / `argo_cf_pt`：
 ```
 trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
 ```
 
 ### 4、 argo（Cloudflare Argo 开关，可多选）
 
-- `argo=vmess` 启用 Vmess Argo；`argo=trojan` 启用 Trojan Argo；`argo=vless` 启用 Vless Argo
+- `argo=vmess` 启用 VMess Argo；`argo=trojan` 启用 Trojan Argo；`argo=vless` 启用 VLESS Argo
 - 可多选：`argo=vmess,vless`、`argo=vmess,trojan,vless` 等任意组合；留空或不传 → 不启用 Argo
-- ⚠️ Argo 只能用于 VMess / Trojan / Vless，支持多选，可与 ws_cdn 同时存在；对 `hypt / vlrt / tupt` 无效
+- ⚠️ Argo 只能用于 VMess / Trojan / VLESS，支持多选，可与 ws_cdn 同时存在；对 `hypt / vlrt / tupt` 无效
 - ⚠️ argo 值统一转小写后校验（接受任意 vmess / vless / trojan 组合）；旧值 `vmpt / trpt / vlpt` 已废弃；这三个协议的启用完全由 `argo=` 决定，本地回源端口不接受指定（自动随机/复用文件）
 
 ### 5、 argo_pt（Argo 本地回源端口）
 
-- 本地监听端口默认 8001，可自定义（不建议改，改了需同步去 Cloudflare 把对应 HTTP 改成自定义端口）。
+- 本地监听端口默认 8001，一般不改。若你在 Cloudflare Tunnel 的 Public Hostname 里写死了 `http://localhost:8001`，改这里后要同步改。
 
 <img width="1514" height="621" alt="CleanShot 2026-01-25 at 12 50 32" src="https://github.com/user-attachments/assets/ec1d2396-4832-4b1b-9da7-cbda4e9c56f1" />
 
 ### 6、 agn / agk（Argo 固定隧道）
 
-- `agn="argo固定隧道域名"`；`agk="argo隧道token"`
-- agk 为普通字符串时用英文双引号 `""` 包裹；agk 为 JSON 格式时只能用英文单引号 `''` 包裹
-- **是否必须？** ❌ 不传 → 临时 Argo（trycloudflare，前提是你必须指定 argo 开关）；✅ 只有你自己有 CF Tunnel 才传
+- `agn='固定隧道域名'`、`agk='隧道 token 或 Auth JSON'`；不传 = 临时 trycloudflare 隧道（前提是 `argo` 已启用）。
+- 只有你自己有 CF Tunnel 时才需要填。
+- **JSON 写法**：JSON 本身含双引号，外面必须用**英文单引号**包住，例如 `agk='{"AccountTag":"...","TunnelID":"..."}'`；普通 token 用单引号或双引号都行。
 
 
 
-### 组合示例
-> 常见组合示例：整段可复制直接运行，删除某行即不启用对应功能。
-
-#### 附：Json Argo Tunnel 获取（固定隧道 JSON token）
-用户可以通过 Cloudflare Json 生成网轻松获取: https://fscarmen.cloudflare.now.cc
-
-或者直接看fscarmen的说明: https://github.com/fscarmen/sing-box/blob/main/README.md#5json-argo-tunnel-%E8%8E%B7%E5%8F%96-%E6%8E%A8%E8%8D%90
+#### 附：JSON 格式的 Argo Tunnel 怎么获取
+- 在线生成：<https://fscarmen.cloudflare.now.cc>
+- 图文说明：<https://github.com/fscarmen/sing-box/blob/main/README.md#5json-argo-tunnel-%E8%8E%B7%E5%8F%96-%E6%8E%A8%E8%8D%90>
 
 
-### 组合3️⃣、 VMess  Argo/ Trojan  Argo / Vless Argo（可多选，任意组合）
+### 组合 3：Argo 单协议（VMess / Trojan / VLESS 任选）
 
-#### 当使用Vmess Argo时
+#### 使用 VMess Argo 时
 
 ```bash
 ippz=4 \
 argo=vmess \
-agn='test-trojan.xxxx.xyz' \
+agn='test-vmess.xxxx.xyz' \
 agk='ey开头的那一串' \
-name='小叮当-韩国春川vmess'  \
-bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)  rep
+name='小叮当-韩国春川vmess' \
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
-### 当使用trojan Argo时
+#### 使用 Trojan Argo 时
 
 ```bash
 ippz=4 \
 argo=trojan \
-agn='test-vmess.xxxx.xyz' \
+agn='test-trojan.xxxx.xyz' \
 agk='ey开头的那一串' \
-name='小叮当-韩国春川trojanc'  \
-bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)  rep
+name='小叮当-韩国春川trojan' \
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
-### 当使用vless Argo时
+#### 使用 VLESS Argo 时
 
 ```bash
 ippz=4 \
 argo=vless \
 agn='test-vless.xxxx.xyz' \
 agk='ey开头的那一串' \
-name='小叮当-韩国春川vless'  \
-bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)  rep
+name='小叮当-韩国春川vless' \
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
-### 组合3️⃣多选、 Argo 多协议同时启用（如 vmess+trojan 同时走 Argo）
+### 组合 3（多选）：Argo 同时启用多个协议
 
 ```bash
 ippz=4 \
 argo=vmess,trojan \
-# 共享 CF 优选域名/端口（未填默认 saas.sin.fan / 443）；每协议也可分开填 argo_vmess_cf_host / argo_trojan_cf_host 等
 argo_cf_host='saas.sin.fan' \
 argo_cf_pt=443 \
 agn='test-xxx.xxxx.xyz' \
 agk='ey开头的那一串' \
-name='小叮当-韩国春川'  \
-bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)  rep
+name='小叮当-韩国春川' \
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
-### 4️⃣ 、VMess + Hysteria2+ vless
+> `argo_cf_host` / `argo_cf_pt` 是共享值（默认 `saas.sin.fan` / `443`）；每个协议也可以单独填 `argo_vmess_cf_host` / `argo_trojan_cf_host` 等覆盖。
+
+### 组合 4：VMess(Argo) + Hysteria2 + VLESS-Reality
 
 ```bash
 ippz=4 \
@@ -430,12 +427,12 @@ vlrt=41002 \
 argo=vmess \
 agn='test-vmess.xxxx.xyz' \
 agk='ey开头的那一串' \
-name='小叮当-韩国春川'  \
-bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)  rep
+name='小叮当-韩国春川' \
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
 
-#### argo tunnel的json token的场景：（请一定要记得json格式的时候，要用英文单引号包裹起来）
+#### JSON token 场景（JSON 外层必须用英文单引号）
 
 ```bash
 uuid=0631a7f3-09f8-4144-acf2-a4f5bd9ed281 \
@@ -446,7 +443,7 @@ tupt=41005 \
 argo='trojan' \
 agn='northCarolina.xxxx.xyz' \
 agk='{"AccountTag":"xxxxxxxxxxxxxx","TunnelSecret":"xxxxxxxxxxxxxx","TunnelID":"xxxxxxxxxxxxxx","Endpoint":""}' \
-name='小叮当-美国北卡'  \
+name='小叮当-美国北卡' \
 bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
 ```
 
@@ -462,17 +459,9 @@ ws_cdn_sni='cdn.example.com' \
 ws_cdn_cf_pt=443 \
 ```
 
-> 回源片段变量说明：
-> - `ws_cdn`：CDN 回源协议，逗号分隔可多选 `vmess,vless,trojan`（经自己 CDN 反代到 nginx，与 Argo 可共存）
-> - `ws_cdn_cf_host` / `ws_cdn_sni` / `ws_cdn_cf_pt`：共享回源域名 / SNI / 端口（回源端口 = 服务器 `nginx_pt`，已在①基础命令）
-> - 每协议专属：`ws_cdn_vmess_cf_host` / `ws_cdn_vmess_sni` / `ws_cdn_vmess_cf_pt`、`ws_cdn_vless_*`、`ws_cdn_trojan_*`（未填回退共享）
+下面逐项说明。
 
-
-> **④ 回源协议 · 详细变量说明**
-
----
-
-### 1、 ws_cdn（Vmess / Vless / Trojan WS 走 CDN 回源，不使用 Argo）
+### 1、 ws_cdn（VMess / VLESS / Trojan WS 走 CDN 回源，不使用 Argo）
 
 让 vmess / vless / trojan 的 WS 节点直接经过你自己的 **CDN / 反代** 转发到服务器 nginx（回源到服务器 `nginx_pt`，通常 8080），**不启用 cloudflared**。
 
@@ -490,50 +479,44 @@ ws_cdn_cf_pt=443 \
 | `ws_cdn_vmess_sni` 等 | 各协议专属回源域名（host/SNI） | 为空时回退共享 ws_cdn_sni |
 | `ws_cdn_vmess_cf_pt` 等 | 各协议专属 CF 优选端口 | 为空时回退共享 ws_cdn_cf_pt |
 | `ws_cdn_cf_host` | 共享 CF 优选域名（各协议**连接地址 add** 兜底；可填优选 IP/域名） | 为空时回退默认 saas.sin.fan |
-| `ws_cdn_sni` | 共享回源域名（真实回源域名；作为节点 host/SNI 与**订阅地址**域名，Cloudflare 按此域名匹配回源规则转发到你的 nginx_pt） | 为空时回退 ws_cdn_eff_host |
+| `ws_cdn_sni` | 共享回源域名（真实回源域名；作为节点 host/SNI 与**订阅地址**域名，Cloudflare 按此域名匹配回源规则转发到你的 nginx_pt） | 为空时回退该协议的 `ws_cdn_*_cf_host`（最终 `saas.sin.fan`；host 是 IP 时不回退） |
 | `ws_cdn_cf_pt` | 共享 CDN 端口（仅限 https 系端口） | 443 |
 
 ### 2、 完整示例（共享 + 专属混合）
 
-> vless 和 trojan 用不同回源域名，vmess 用共享：
+> vless 和 trojan 用不同的 CF 域名（同时作为回源 SNI），vmess 用共享：
 
 ```bash
-ws_cdn='vmess,vless,trojan' ws_cdn_cf_host='cdn.example.com' ws_cdn_vless_cf_host='vless.example.com' ws_cdn_trojan_cf_host='trojan.example.com' subscribe=true bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) ins
+ws_cdn='vmess,vless,trojan' \
+ws_cdn_cf_host='cdn.example.com' \
+ws_cdn_vless_cf_host='vless.example.com' \
+ws_cdn_trojan_cf_host='trojan.example.com' \
+subscribe=true \
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) ins
 ```
 
 ### 3、 回源端口
 
 CDN 回源到服务器 `nginx_pt`（默认 8080），去 Cloudflare 后台把 origin 指向该端口（或用 origin rule 泛域名回源）。
 
-### 4、 订阅地址域名（show_sub_url）取值顺序
+### 4、 订阅地址用哪个域名（自动判定）
 
-**取值顺序（自动判定）：**
-
-```
-① 固定 Argo 隧道域名（不以 trycloudflare.com 结尾的固定隧道，且隧道存活）        ← 第一顺位
-② 共享回源域名 ws_cdn_sni
-③ 专属回源域名（固定顺序 vmess→vless→trojan，取第一个非空）
-④ 临时 Argo 域名（含 trycloudflare，隧道存活才用）
-⑤ http://服务器IP:nginx_port（兜底，含节点口令，一般只安了直连节点会直接用这个，仅建议可信网络使用）
-```
-
-- 脚本自动按 ①→②→③→④→⑤ 判定，自动选哪个取决于你实际配置了哪些域名。
-- **✅ 有固定 Argo 隧道时，后面全部不用填**：一旦配了固定 Argo（①），订阅地址自动就是 `https://固定Argo域名/sub/{uuid}`，`ws_cdn_sni` 和 `ws_cdn_vmess_sni` / `ws_cdn_vless_sni` / `ws_cdn_trojan_sni` 这些回源域名**一个都不用写**，省心。
-- 回源域名（②③）唯一的意义是：**没有固定 Argo 时**（或想强制走 CDN）也能让订阅走一个稳定 https 域名，而不是跌到明文 HTTP。
-
-**完整顺延链路**（不足一级就顺延到下一级）：
+按 ①→②→③→④→⑤ 顺序，取第一个可用的：
 
 ```
-① 固定 Argo 隧道域名（如 argo.example.com，非 trycloudflare）  → https://固定Argo域名/sub/{uuid}
- ↓ 无固定 Argo 或隧道未存活
-② 共享回源域名 ws_cdn_sni                                  → https://共享回源域名:pt/sub/{uuid}
- ↓ 无共享
-③ 专属回源域名（ws_cdn_vmess_sni→ws_cdn_vless_sni→ws_cdn_trojan_sni，取第一个非空）→ https://专属回源域名:pt/sub/{uuid}
- ↓ 无任何回源域名
-④ 临时 Argo 域名（形如 xxx.trycloudflare.com，隧道存活）    → https://临时域名/sub/{uuid}
- ↓ 无 Argo
-⑤ http://服务器IP:nginx_port/sub/{uuid}（明文 HTTP，含节点口令，仅建议可信网络）
+① 固定 Argo 隧道域名（非 trycloudflare，且隧道存活） → https://固定Argo域名/sub/{uuid}
+ ↓ 没有固定 Argo 或隧道没活
+② 共享回源域名 ws_cdn_sni → https://共享回源域名:端口/sub/{uuid}
+ ↓ 没配
+③ 专属回源域名（vmess → vless → trojan，取第一个非空） → https://专属回源域名:端口/sub/{uuid}
+ ↓ 没配
+④ 临时 Argo 域名（xxx.trycloudflare.com，隧道存活） → https://临时域名/sub/{uuid}
+ ↓ 没有 Argo
+⑤ http://服务器IP:nginx_pt/sub/{uuid}（明文，含节点口令，仅建议可信网络）
 ```
+
+- **有固定 Argo 时，②③④ 都不用配**：订阅地址直接是 `https://固定Argo域名/sub/{uuid}`。
+- 回源域名（②③）的作用：没有固定 Argo 时，让订阅走一个稳定的 https 域名，而不是明文 HTTP。
 
 - **为什么任意一个回源域名都行**：回源域名在 Cloudflare 里按 Origin Rule/DNS 回源到**同一个 nginx 端口（nginx_pt，默认 8080）**，而 nginx 是 `server_name _`（不分 hostname、按路径干活）。所以 `vmess.example.com/sub/{uuid}`、`vless.example.com/sub/{uuid}`、`trojan.example.com/sub/{uuid}` **任何一个都能访问订阅**——用哪个都通。
 
@@ -581,7 +564,7 @@ trojan-node.xxxx.nyc.mn   →  192.9.100.***   （小黄云开不开都可以）
 
 - 可以每个协议一个 DNS 记录，也可以 3 个协议共用一个 DNS 记录，这个子域名记录指向**同一个 IPv4**（同一台服务器），配合上面的 Origin Rules 泛域名回源到 nginx_pt。
 - `小黄云`（Cloudflare 橙色云代理）开或不开都可以——开=走 CDN+CDN TLS 终结，关=仅 CDN 反代一样能到 nginx。
-- **⚠️ 每个实际用到的 SNI 回源域名都必须有 DNS 记录**。节点里的 `sni/host` 用的分别是 `ws_cdn_vmess_sni` / `ws_cdn_vless_sni` / `ws_cdn_trojan_sni`（没设专属就回退共享 `ws_cdn_sni`），**凡是当 SNI 用的回源域名，每个都必须在 DNS 里有一条记录**，缺哪个哪个节点就是 **530（Origin DNS Error）**。
+- **⚠️ 当 SNI 用的回源域名必须有 DNS 记录**：节点里的 `sni/host` 取自 `ws_cdn_vmess_sni` / `ws_cdn_vless_sni` / `ws_cdn_trojan_sni`（没设专属就回退 `ws_cdn_sni`）。缺哪条记录，对应节点就报 **530（Origin DNS Error）**。
 
 #### 步骤 3：SSL 加密模式必须设成「灵活（Flexible）」（否则回源必定 525）
 
@@ -603,8 +586,7 @@ trojan-node.xxxx.nyc.mn   →  192.9.100.***   （小黄云开不开都可以）
    - **然后（Then）操作**：选 **SSL**，值选 **灵活（Flexible）**
 3. **保存 / 部署**
 
-**做法 B（简单，整站生效，但是如果你有别的服务用到这个域下的其他子域名，直接用做法B可能会受到影响，建议用做法A ）：**
-- `域名 → SSL/TLS → 加密模式 → 灵活（Flexible）`
+**做法 B（简单，整站生效）**：`域名 → SSL/TLS → 加密模式 → 灵活（Flexible）`。如果这个域名下还有别的服务，建议用做法 A，避免影响它们。
 
 > 无论选哪种，**客户端 → Cloudflare 这段始终是 HTTPS**（节点链接不变），只是 Cloudflare → 你服务器这段变成明文 HTTP。如果你必须保持全链路加密（完全/完全严格），则需给服务器的 nginx_pt 配 TLS 证书（属于改脚本，工作量更大），否则只能设「灵活」。
 
@@ -612,7 +594,7 @@ trojan-node.xxxx.nyc.mn   →  192.9.100.***   （小黄云开不开都可以）
 
 | 你在哪填 | 对应的脚本变量 | 说明 |
 |---|---|---|
-| 上面三条 A 记录的回源域名 | `ws_cdn_vmess_cf_host` / `ws_cdn_vless_cf_host` / `ws_cdn_trojan_cf_host` | 各协议的专属回源域名（连接地址 add 可以仍用优选域名/IP） |
+| A 记录里的回源域名 | `ws_cdn_vmess_sni` / `ws_cdn_vless_sni` / `ws_cdn_trojan_sni`（也可同时填到对应的 `_cf_host`） | 既作为节点 SNI，也常作为客户端连接地址 |
 | Origin Rules 的目标端口 | `nginx_pt`（默认 8080） | CDN 回源到服务器 nginx 的端口 |
 | 客户端连 CDN 的端口 | `ws_cdn_cf_pt`（默认 443） | CDN 对外 HTTPS 端口 |
 | 各协议/共享 SNI（真实域名） | `ws_cdn_vmess_sni` 等 / `ws_cdn_sni` | 对应上面 A 记录的某个回源域名 |
@@ -633,7 +615,7 @@ trojan-node.xxxx.nyc.mn   →  192.9.100.***   （小黄云开不开都可以）
 ### 组合示例
 > 常见组合示例：整段可复制直接运行，删除某行即不启用对应功能。
 
-### 组合5️⃣、WS-CDN 直连（不经 Argo，客户端经你自己的 CDN 反代到服务器 nginx，可多选）
+### 组合 5：WS-CDN 直连（不经 Argo，客户端经自己的 CDN 反代到服务器 nginx）
 
 #### 三个协议用一个共享 CF 优选域名 + 共享回源域名
 
@@ -702,19 +684,19 @@ Nginx 的一份配置里同时监听 `nginx_pt`（默认 8080，对外）和 `12
 | 订阅输出 | `^~ /sub/{uuid}` | alias `/var/www/singbox/sub.txt` | subscribe=true 才生成；对外地址 `http://IP:nginx_pt/sub/{uuid}` |
 | 其他所有路径 | `/` | 无（`return 404`） | 兜底，防端口扫描 |
 
-> `{uuid}` 为安装时的 UUID；`port_vm_ws / port_vl_ws / port_tr` 为 Argo 共用的本地 ws 端口，`port_vmess_ws_cdn / port_vless_ws_cdn / port_trojan_ws_cdn` 为 ws_cdn 独立回源端口（均由脚本自动随机或复用落盘文件，不对外公开）。
+> `{uuid}` 为安装时的 UUID；`port_vm_ws / port_vl_ws / port_tr` 为 Argo 各协议的本地 ws 端口，`port_vmess_ws_cdn / port_vless_ws_cdn / port_trojan_ws_cdn` 为 ws_cdn 独立回源端口（均由脚本自动随机或复用落盘文件，不对外公开）。
 > 直连协议（VLESS-Reality / Hysteria2 / TUIC / AnyTLS / Socks5）**不走 Nginx**，客户端直接连各自端口 `vlrt / hypt / tupt / anypt / socks5pt`。
 
 
 <a id="c2"></a>
-# 2、 完整例子
+# 2、 完整示例
 
 <a id="full-example"></a>
-## 1、 聚合节点文件（所有已选协议都会输出到 jh.txt）
+## 2.1 聚合节点文件（所有已选协议都会输出到 jh.txt）
+
+> 下面把基础命令 + 直连 + Socks5 + Argo + 回源写在一起，只作变量清单参考。**`out_ip`、`direct_host`、`agn`、`agk`、`reality_private` 是占位值，必须改成真实值或整行删掉**，否则会安装失败；不需要的行（连同行尾 `\`）直接删。
 
 ```bash
-# 综合示例：直连 + Argo + 回源 全开，所有环境变量都在这（整段可复制；删除某行=不启用对应功能；带“你的”字样的占位请改成真实值）
-# ===== 基础命令 =====
 uuid=0631a7f3-09f8-4144-acf2-a4f5bd9ed200 \
 ippz=4 \
 name='小叮当-美国加州' \
@@ -723,44 +705,37 @@ subscribe=true \
 out_ip='特殊出口IP' \
 direct_host='你的对外域名' \
 DEBUG_FLAG=0 \
-# ===== 直连：伪装 SNI =====
 hy_sni='www.apple.com' \
 vl_sni='www.apple.com' \
 vl_sni_pt=443 \
 tu_sni='www.apple.com' \
 any_sni='www.apple.com' \
-# ===== 直连：端口 =====
 vlrt=41003 \
 hypt=41004 \
 tupt=41005 \
 anypt=41006 \
 reality_private='GHxxxxxxxxxxxxx-xxxxxx-VnXH6FjxxA' \
-# ===== Socks5 =====
 socks5pt=41017 \
 socks5_username='zhangsan' \
 socks5_password='Zsztm4gdsg!' \
 socks5_wl_flag=true \
 socks5_ips='1.2.3.4,5.6.7.0/24' \
-# ===== Argo：共有 =====
 argo='vmess,vless,trojan' \
 argo_cf_host='saas.sin.fan' \
 argo_cf_pt=443 \
 argo_pt=8001 \
 agn='固定Argo隧道域名' \
 agk='固定Argo隧道token' \
-# ===== Argo：各协议独有 =====
 argo_vmess_cf_host='vm.example.com' \
 argo_vmess_cf_pt=443 \
 argo_vless_cf_host='vl.example.com' \
 argo_vless_cf_pt=443 \
 argo_trojan_cf_host='tr.example.com' \
 argo_trojan_cf_pt=443 \
-# ===== 回源（ws_cdn）：共有 =====
 ws_cdn='vmess,vless,trojan' \
 ws_cdn_cf_host='cdn.example.com' \
 ws_cdn_sni='cdn.example.com' \
 ws_cdn_cf_pt=443 \
-# ===== 回源（ws_cdn）：各协议独有 =====
 ws_cdn_vmess_cf_host='vm-cdn.example.com' \
 ws_cdn_vmess_sni='vm-cdn.example.com' \
 ws_cdn_vmess_cf_pt=443 \
@@ -776,10 +751,11 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 
 
+
 <a id="uninstall"></a>
-## 2、 如何卸载呢？
+## 2.2 如何卸载
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh)  delall
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) delall
 ```
 
 > `delall`：与 `del` 效果类似，但会 **完全删除** sing-box 文件夹（不保留二进制文件 / 配置），相当于彻底卸载。
@@ -787,39 +763,19 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 
 
-## 3、 以此类推，最后给一下协议组合吧
+## 2.3 协议组合速查
 
-| 你设置了什么                   | 实际生成的节点                                          |
-| ---------------------------- | ----------------------------------------------------- |
-| hypt                         | 1（hy2）                                              |
-| vlrt                         | 1（vless）                                            |
-| tupt                         | 1（tuic）                                             |
-| anypt                        | 1（anytls）                                           |
-| socks5pt                     | 1（socks5）                                           |
-| argo=vmess                    | 1（Argo-vmess）                                       |
-| argo=trojan                   | 1（Argo-trojan）                                      |
-| argo=vless                    | 1（Argo-vless）                                       |
-| argo=vmess,vless              | 2（Argo-vmess + Argo-vless）                          |
-| argo=vmess,trojan,vless       | 3（Argo 三协议全开）                                   |
-| ws_cdn=vmess                  | 1（CDN-vmess 回源）                                   |
-| ws_cdn=vmess,vless            | 2（CDN-vmess + CDN-vless 回源）                       |
-| ws_cdn=vmess,vless,trojan     | 3（CDN 三协议回源）                                   |
-| argo=vmess + ws_cdn=vmess     | **2（Argo-vmess + CDN-vmess 并存）**                  |
-| argo=vmess,trojan + ws_cdn=vless | **3（Argo 两协议 + CDN-vless）**                    |
-| hypt + vlrt                  | 2（hy2和vless-reality直连）                                   |
-| hypt + vlrt + tupt           | 3（hy2、vless、tuic直连）                             |
-| hypt + vlrt + tupt + anypt   | 4（hy2、vless、tuic、anytls直连）                     |
-| hypt + vlrt + socks5pt       | 3（hy2、vless、socks5直连）                           |
-| hypt + vlrt + tupt + anypt + socks5pt | 5（hy2、vless、tuic、anytls、socks5直连）     |
-| hypt + vlrt + argo=vmess     | **3（hy2、vless直连+Argo-vmess）**                    |
-| hypt + vlrt + argo=vmess,vless | **4（hy2、vless直连+Argo-vmess、Argo-vless）**      |
-| hypt + vlrt + tupt + argo    | **4（hy2、vless、tuic直连+Argo 多协议）**            |
-| hypt + vlrt + tupt + anypt + argo | **5（hy2、vless、tuic、anytls直连+Argo 多协议）** |
-| hypt + vlrt + tupt + anypt + socks5pt + argo | **6（hy2、vless、tuic、anytls、socks5直连+Argo 多协议）** |
-| hypt + vlrt + argo=vmess + ws_cdn=vmess,trojan | **5（hy2、vless直连 + Argo-vmess + CDN vm/trojan 回源）** |
-| 全开（直连 + Argo 三选多 + ws_cdn 三选多） | **直连 n + Argo n + CDN n（总数为实际选中协议数）** |
+| 你设置了什么 | 实际生成的节点 |
+|---|---|
+| 单个直连（`hypt` / `vlrt` / `tupt` / `anypt` / `socks5pt`） | 1 |
+| 多个直连 | 直连协议数 |
+| `argo=vmess,trojan` 等 | 选中的 Argo 协议数（1~3） |
+| `ws_cdn=vmess,vless` 等 | 选中的 CDN 回源协议数（1~3） |
+| 直连 + Argo + ws_cdn 混用 | 三者相加（互不冲突） |
+| 例：`hypt` + `vlrt` + `argo=vmess,vless` + `ws_cdn=vmess` | 5（2 直连 + 2 Argo + 1 CDN） |
+| 例：`argo=vmess` + `ws_cdn=vmess` | 2（同一协议可同时走 Argo 和 CDN） |
 
-## 4、 日志查看
+## 2.4 日志查看
 
 sing-box 和 cloudflared 启动失败时，可以通过下面命令定位问题。
 
@@ -831,7 +787,7 @@ sing-box 和 cloudflared 启动失败时，可以通过下面命令定位问题�
 sb logs              打开日志菜单（Sing-box / Argo / Nginx / 安装日志）
 sb log_sb 100        查看 Sing-box 运行日志（最近100行）
 sb log_argo 100      查看 Argo 隧道日志（最近100行）
-sb log_ins 100       查看脚本安装日志（最近100行）
+sb log_ins           查看最近一次安装日志（全文）
 sb log_stop          查看服务停止原因日志（排查崩溃用）
 ```
 
@@ -852,7 +808,7 @@ tail -200 /root/doraemon/logs/argo.log
 ```
 
 
-## 5、 防火墙规则排查（Debian/Ubuntu/Alpine 通用）
+## 2.5 防火墙规则排查（Debian/Ubuntu/Alpine 通用）
 
 ### 查看本脚本的规则
 
@@ -918,7 +874,7 @@ cat /root/doraemon/port_socks5
 ```
 
 
-## 6、 sb 快捷指令
+## 2.6 sb 快捷指令
 
 安装后会在系统创建 `sb` 快捷命令，常用指令如下：
 
@@ -950,7 +906,7 @@ sb log_ins         查看最近一次安装日志（全文）
 sb log_stop        查看服务停止原因日志（排查崩溃用）
 ```
 
-## 7、 版本变更信息
+## 2.7 版本变更信息
 
 v3.2.12 (2026-10-21)
  - **日志轮转的 cron 现在会自动补装并启动**：`install_deps` 把 `crontab` 纳入依赖检查——Debian/Ubuntu 补 `cron`、RHEL 系补 `cronie`、Alpine 仅在 busybox 没带 `crontab` 时补 `dcron`（避免和 busybox 冲突）；装完由 `install_log_rotate` 把守护进程拉起来
@@ -1288,7 +1244,7 @@ v1.0.6
 
 ---
 
-## 8、 感谢以下开发者的贡献
+## 2.8 感谢以下开发者的贡献
 
 - [77160860大佬](https://github.com/77160860/proxy)
 
