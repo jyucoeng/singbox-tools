@@ -920,6 +920,53 @@ sb log_stop        查看服务停止原因日志（排查崩溃用）
 
 ## 2.7 版本变更信息
 
+v3.2.19 (2026-10-23)
+ - **`cron_running()` 在 Alpine 上误报「cron 没在运行」**：用的是 `pgrep -x cron/crond`，而 busybox 的 `-x` 是「整条命令行精确匹配」，`crond` 的 cmdline 是 `/usr/sbin/crond -c /etc/crontabs -f`，永远匹配不到；`ps -ef` 兜底在 busybox 上也不可用（只支持 `-o`/`-T`）。改为按 `/proc/<pid>/comm` 匹配，`ps` 兜底同时保留 `ps -ef` 与裸 `ps` 两种写法
+
+v3.2.18 (2026-10-23)
+ > 状态面板的「内存占用」显示错误（Alpine/OpenRC 上显示 1M）。
+
+ - **根因**：原来用 `pgrep -f "<安装路径>/sing-box"` 找 pid。OpenRC 的 `supervise-daemon` 命令行是 `supervise-daemon --exec /root/doraemon/sing-box ...`，里面也带这个路径，而它的 pid 比真正的服务进程小，`head -1` 一定选中它 —— 守护进程 RSS 只有几百 KB，面板就把 1M 当成了服务内存
+ - **修法**：按 `/proc/<pid>/comm` 精确匹配进程名（`sing-box` / `cloudflared`），多个同名进程的 `VmRSS` 求和；不再依赖 `pgrep` 的匹配语义
+ - **实测**（Alpine 3.22 / MemTotal 125MB）：修复前 sing-box `1M`、cloudflared `1M`；修复后 `29M` / `28M`，与 `ps -o rss` 一致
+ - 「运行中 / 已停止」判定改用同一份 pid 快照，不再因为守护进程还活着而误报运行中
+ - 顺带记录：`pgrep -x sing-box` 在 busybox 上是「整条命令行精确匹配」，永远匹配不到，不能用来找服务进程
+
+v3.2.17 (2026-10-23)
+ > Alpine / OpenRC 适配。
+
+ - **看门狗在 Alpine 上原本是空转的**：OpenRC 下 `sb` 的服务名是 **`sing-box`**（`/etc/init.d/sing-box`），而 systemd 下是 `sb`。原来两处都传 `sb`，Alpine 上永远匹配不到。现在按 init 系统分别处理
+ - **OpenRC 分支增加「是否开机自启」判断**：用 `/etc/runlevels/default/<服务>` 软链判断（等价于 systemd 的 `is-enabled`），用户 `rc-update del` 掉的服务不会被看门狗拉起来
+ - **`low_mem_tune` 在 Alpine 上不再打印误导性横幅**：Alpine 既没有 journald 也没有 apt 定时器，直接跳过并只写 debug 日志
+ - 其余改动本身与 init 系统无关（`GOMEMLIMIT` / `GOGC` / `GOMAXPROCS` 已同时写进 OpenRC 的 init 脚本，`--ha-connections 1` 在 systemd / openrc / nohup 三处都生效）
+
+v3.2.16 (2026-10-23)
+ > OOM 被杀可以接受，但被杀之后必须能自己回来。
+
+ - **`sb.service` / `argo.service` 加 `StartLimitIntervalSec=0`**：systemd 默认「10 秒内启动 5 次」就放弃并把单元停在 `failed`，之后没有任何东西再去拉它。设为 0 后配合 `Restart=always`，OOM 反复杀也会一直重试，内存缓过来自己就起来了
+ - **新增服务看门狗** `singbox-watchdog.sh`（cron 每 2 分钟，纯 sh + systemctl，占用 <2MB）：
+   - systemd 只处理 `failed`、openrc 只处理 `crashed` —— **手动 `systemctl stop` / `rc-service stop` / `disable` 的一律不碰**
+   - **沙箱 nginx 不在 systemd 里**，被杀就永远躺那儿；看门狗靠 pid 文件判断：pid 文件在但进程没了（被 OOM 杀）才重启，而 `nginx_stop` 会删 pid 文件，所以主动停的不受影响；pid 被系统复用给别的进程时会先校验 `/proc/<pid>/comm`
+   - 日志写 `logs/watchdog.log`（超过 128KB 自动清空），卸载时连 crontab 条目一起清掉
+
+v3.2.15 (2026-10-23)
+ - **`argo.service` 不再设 `OOMScoreAdjust=500`**：这个键只在「整机 / 容器级 OOM」时参与挑受害者；argo 撞到自己 `MemoryMax` 时是 cgroup 内部 OOM，组里只有它一个进程，设不设都是它自己死。真正决定 argo 会不会被杀的是 `GOMEMLIMIT` / `MemoryMax` / `--ha-connections 1`，这三样都保留。想恢复「整机吃紧先牺牲 argo」在 unit 里加回一行即可
+
+v3.2.14 (2026-10-23)
+ > 面向 128MB 小内存机器的稳定性修复。不减少协议、不影响 Argo。
+
+ - **不再挂裸 `sniff`**：sing-box 的 sniff 默认超时 300ms，纯直连节点没有域名规则时每条连接都要白等 300ms（日志里表现为 `inbound connection from` → `inbound connection to` 固定 350~430ms，且与目标无关）。`resolve` 保留，继续承载 `sbyx` 的 IPv4/IPv6 策略
+ - **改配置不再清空自定义出站 / 分流规则**：`sbbout()` 原来 `.outbounds = [direct, block]`、`.route.rules = [...]` 整体覆盖 —— 覆盖安装、改协议、改订阅开关之后，`[5] 分流管理` 里加的落地出站和「附着协议到代理」的规则会被静默抹掉，流量退回 `direct`。现在只补 `direct`/`block`，保留已有出站与非 sniff/resolve 规则
+ - **修掉遗留 `.warp_config` 分支的悬空引用**：规则指向 `wireguard-out`，但出站表里已经没有它，sing-box 会直接起不来；现在只有该出站存在时才生成对应规则
+ - **`sb.service` 补齐内存约束**：systemd 分支原来完全没有限制（只有 openrc 写了 `GOMEMLIMIT`）。小内存机器按 MemTotal 注入 `GOMEMLIMIT` / `GOGC=30` / `GOMAXPROCS=1` / `MemoryHigh` / `MemoryMax`，并加 `LimitNOFILE=65535`；≥1G 的机器不受影响
+ - **`argo.service` 同样加内存约束**（`OOMScoreAdjust=500` 在 v3.2.15 已去掉，见上）
+ - **小内存机器 Argo 边缘连接数 4 → 1**（`--ha-connections 1`）：每条 QUIC 连接都有自己的收发缓冲和 goroutine，只影响边缘冗余，断了会自动重连
+ - **沙箱 nginx 的 WS 反代补超时**：6 个 `/{uuid}-*` location 加 `proxy_read_timeout` / `proxy_send_timeout 3600s`、`proxy_buffering off`、`proxy_socket_keepalive on`、`access_log off`。nginx 默认 60s 会把空闲的 VMess/VLESS/Trojan over WS 直接断开（隧道模式下只有上游读写挂定时器），表现为「用着用着就掉线」
+ - **nginx `worker_connections` 1024 → 512**：128MB 上 1024 是浪费，重连风暴时 512 也远超实际并发
+ - **日志默认级别 `info` → `warn`**：info 会给每条连接写 2 行、每次 DNS 解析再写 N 行，小机器上既费 CPU 又费 768MB 的盘。排查连接问题时临时切回：`jq '.log.level="info"' /root/doraemon/sb.json > /tmp/sb.json && mv /tmp/sb.json /root/doraemon/sb.json && sb res`
+ - **下载前磁盘预检**：sing-box 需 ≥120MB、cloudflared 需 ≥80MB，不够直接给清理命令（768MB 盘装完两个二进制就所剩无几，写满后 sing-box 直接崩）
+ - **<256MB 机器自动瘦身**：journald 限到 16MB、停掉 `apt-daily.timer` / `apt-daily-upgrade.timer` / `unattended-upgrades.service`（apt 峰值 50MB+，很多小机器就是凌晨这个窗口被 OOM 杀的）。全部可逆，`systemctl enable --now` 即可恢复
+
 v3.2.12 (2026-10-21)
  - **日志轮转的 cron 现在会自动补装并启动**：`install_deps` 把 `crontab` 纳入依赖检查——Debian/Ubuntu 补 `cron`、RHEL 系补 `cronie`、Alpine 仅在 busybox 没带 `crontab` 时补 `dcron`（避免和 busybox 冲突）；装完由 `install_log_rotate` 把守护进程拉起来
    - 容器里 `apt install cron` 常被 policy-rc.d 拦住不会自动启动，旧版只会提示「需自行安排定时执行」；现在按 systemd → openrc → sysvinit（`service cron start`）→ 直接拉进程的顺序兜底，全都失败才退回手动提示

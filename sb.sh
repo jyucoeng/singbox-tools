@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.12(2026-10-21)"
+VERSION="3.2.19(2026-10-23)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -1097,6 +1097,38 @@ _pid_is_sb_nginx() {
     esac
 }
 
+# 按 /proc/<pid>/comm 精确匹配进程名，输出 pid（每行一个）。
+# ⚠️ 为什么不用 pgrep：
+#   - `pgrep -x sing-box` 在 busybox（Alpine）上是「整条命令行精确匹配」，
+#     而 cmdline 是 `/root/doraemon/sing-box run -c ...`，永远匹配不到（实测返回空）；
+#   - `pgrep -f <安装路径>/sing-box` 又会匹配到 OpenRC 的 supervise-daemon
+#     （命令行是 `supervise-daemon --exec /root/doraemon/sing-box ...`），
+#     而守护进程的 pid 更小，`head -1` 一定选到它 —— 面板上就显示成 1M。
+pids_by_comm() {
+    local _want="${1:-}" _d
+    [ -n "$_want" ] || return 0
+    for _d in /proc/[0-9]*; do
+        [ -r "$_d/comm" ] || continue
+        [ "$(cat "$_d/comm" 2> /dev/null)" = "$_want" ] || continue
+        printf '%s\n' "${_d#/proc/}"
+    done
+    return 0
+}
+
+# 同名进程的 VmRSS 总和（KB）；一个都没匹配到就什么都不输出
+rss_kb_by_comm() {
+    local _want="${1:-}" _p _k _sum=0 _hit=""
+    [ -n "$_want" ] || return 0
+    for _p in $(pids_by_comm "$_want"); do
+        _k="$(awk '/VmRSS/{print $2}' "/proc/$_p/status" 2> /dev/null)"
+        [ -n "$_k" ] || continue
+        _sum=$(( _sum + _k ))
+        _hit=1
+    done
+    [ -n "$_hit" ] && printf '%s\n' "$_sum"
+    return 0
+}
+
 sb_nginx_running() {
     local pid
     [ -s "$SB_NGINX_PID" ] || return 1
@@ -1113,7 +1145,9 @@ daemon on;
 pid logs/nginx.pid;
 error_log logs/error.log warn;
 events {
-    worker_connections 1024;
+    # 128MB 小鸡上 1024 是浪费：每个连接都要占 nginx 的 buffer + 内核 socket 内存，
+    # 客户端重连风暴时 512 已经远超实际并发，同时把内存上限压住
+    worker_connections 512;
 }
 http {
     default_type text/plain;
@@ -1183,14 +1217,14 @@ install_nginx_pkg() {
 
             if [ ! -s "$tmp" ]; then
                 _last_err="下载文件为空"
-                red "❌ 下载失败（$_url）：$_last_err"
+                red "❌ 下载失败（${_url}）：$_last_err"
                 continue
             fi
 
             # 拒绝下到 HTML 错误页
             if head -c 15 "$tmp" 2> /dev/null | grep -qi '<'; then
                 _last_err="返回内容不是二进制"
-                red "❌ 下载失败（$_url）：$_last_err"
+                red "❌ 下载失败（${_url}）：$_last_err"
                 continue
             fi
 
@@ -1200,7 +1234,7 @@ install_nginx_pkg() {
                 _computed="$(file_sha256 "$tmp")"
                 if [ -z "$_computed" ] || [ "$_computed" != "$_expect" ]; then
                     _last_err="SHA256 校验失败（期望 ${_expect}，实际 ${_computed:-无法计算}）"
-                    red "❌ 下载失败（$_url）：$_last_err"
+                    red "❌ 下载失败（${_url}）：$_last_err"
                     continue
                 fi
                 green "✅ 沙箱 Nginx SHA256 校验通过"
@@ -1956,6 +1990,27 @@ file_sha256() {
     fi
 }
 
+# 下载前磁盘预检：sing-box 解压后约 60MB、cloudflared 约 45MB，再叠加日志和包缓存，
+# 768MB 的机器很容易见底；写满后 sing-box 落盘失败直接崩，表现出来又是一片连接重置。
+# 参数：需要的空闲 MB（默认 120）
+check_disk_space() {
+    local need_mb="${1:-120}" avail_mb="" _probe=""
+    if [ -d "$SINGBOX_FOLDER_PATH" ]; then
+        _probe="$SINGBOX_FOLDER_PATH"
+    else
+        _probe="/"
+    fi
+    avail_mb=$(df -Pm "$_probe" 2>/dev/null | awk 'NR==2 {print $4}')
+    [ -n "$avail_mb" ] || return 0
+    if [ "$avail_mb" -lt "$need_mb" ]; then
+        red "❌ 磁盘剩余 ${avail_mb}MB，低于本次安装所需 ${need_mb}MB（${_probe}）"
+        yellow "  先清理再重试，例如：du -sh $SINGBOX_FOLDER_PATH/* /tmp/* 2>/dev/null | sort -h | tail"
+        return 1
+    fi
+    debug_log "【调试】磁盘预检通过：剩余 ${avail_mb}MB（阈值 ${need_mb}MB）"
+    return 0
+}
+
 # download Sing-box
 # 检测已安装版本，需要更新时下载并安装 sing-box 二进制
 update_singbox() {
@@ -1987,6 +2042,8 @@ update_singbox() {
     local url="https://github.com/jyucoeng/singbox-tools/releases/download/v${sb_ver}/${archive}"
     # local url="https://github.com/SagerNet/sing-box/releases/download/v${sb_ver}/${archive}"
     local tmp_archive="/tmp/${archive}"
+
+    check_disk_space 120 || exit 1
 
     (curl -Lo "$tmp_archive" -# --connect-timeout 5 --max-time 120 --retry 2 --retry-delay 2 --retry-all-errors "$url") \
         || (wget -O "$tmp_archive" --tries=2 --timeout=120 --dns-timeout=5 --read-timeout=60 "$url")
@@ -2605,8 +2662,10 @@ installsb() {
     # 让后续 rand_port 随机端口避开，防止多个协议随机/显式端口互相冲突
     sb_take_known_ports
 
-    # Initialize JSON with log config (matching index.js generateSingBoxConfig style)
-    jq -n --arg logfile "$LOGS_DIR/singbox.log" '{log: {disabled: false, level: "info", timestamp: true, output: $logfile}, inbounds: []}' > "$sbj"
+    # ⚠️ 日志级别默认 warn：info 会给每条连接写 2 行（inbound/outbound）、每次 DNS 解析
+    #    再写 N 行，小内存机器上既费 CPU 又费 768MB 的盘。排查连接问题时临时切回 info：
+    #    jq '.log.level="info"' /root/doraemon/sb.json > /tmp/sb.json && mv /tmp/sb.json /root/doraemon/sb.json && sb res
+    jq -n --arg logfile "$LOGS_DIR/singbox.log" '{log: {disabled: false, level: "warn", timestamp: true, output: $logfile}, inbounds: []}' > "$sbj"
 
     # 添加tuic协议
     if [ -n "$tup" ]; then
@@ -2880,7 +2939,7 @@ installsb() {
             local _wl_ips=""
             [ -s "$SINGBOX_FOLDER_PATH/socks5_ips" ] && _wl_ips=$(cat "$SINGBOX_FOLDER_PATH/socks5_ips" | tr -d '\r\n')
             if [ -n "$_wl_ips" ]; then
-                yellow "Socks5白名单：已开启(防火墙规则)（允许：$_wl_ips）"
+                yellow "Socks5白名单：已开启(防火墙规则)（允许：${_wl_ips}）"
             else
                 yellow "Socks5白名单：已开启（IP列表为空，等同于关闭）"
             fi
@@ -2909,6 +2968,65 @@ installsb() {
 #    sbbout() 里仍保留对旧 .warp_config 文件的读取逻辑，仅用于兼容历史安装，
 #    该文件现在不会再被生成，因此这段分支实际不生效。
 
+# 当前环境是否有可用的 memory cgroup 控制器。
+# LXC/OpenVZ 容器里偶尔没有（cgroup v1 未挂 memory 子系统，或 v2 没委派），
+# 这种情况下给 systemd 单元写 MemoryHigh/MemoryMax 会被拒（轻则告警、重则单元起不来），
+# 所以只在控制器确实存在时才加这两行；GOMEMLIMIT 是 Go 自己的软上限，任何环境都生效。
+has_memory_cgroup() {
+    if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+        grep -qw memory /sys/fs/cgroup/cgroup.controllers 2> /dev/null
+    else
+        [ -d /sys/fs/cgroup/memory ]
+    fi
+}
+
+# ================== 小内存机器瘦身 ==================
+# 128MB 的 LXC 小鸡上，systemd + sshd + cron 已经占掉一半内存，再叠加
+# sing-box（多协议入站）+ cloudflared（Argo）+ 沙箱 nginx 就是超配。
+# 这里只做「不减协议、不动 Argo」的两件事：
+#   1) 限制 journald 的占用（默认按磁盘比例留，768MB 盘上能吃掉几十 MB，且常驻内存）
+#   2) 停掉 apt 每日自动更新定时器（apt/dpkg/unattended-upgrades 峰值能吃 50MB+，
+#      很多 128MB 机器就是凌晨这个窗口被 OOM 杀的）
+# 只对 MemTotal < 256MB 生效，大机器完全不动；全部可逆（enable --now 即可恢复）。
+low_mem_tune() {
+    local _mem_kb="" _t=""
+    _mem_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)
+    [ -n "$_mem_kb" ] || return 0
+    if [ "$_mem_kb" -ge 262144 ]; then
+        debug_log "【调试】low_mem_tune：MemTotal=$(( _mem_kb / 1024 ))MB ≥ 256MB，跳过瘦身"
+        return 0
+    fi
+
+    # Alpine/openrc 上没有 journald，也没有 apt 定时器，这两件事都不存在，直接跳过
+    if ! command -v systemctl > /dev/null 2>&1 || [ ! -d /run/systemd/system ]; then
+        debug_log "【调试】low_mem_tune：非 systemd 环境（Alpine/openrc），无需 journald/apt 瘦身"
+        return 0
+    fi
+
+    green "🧠 检测到小内存机器（$(( _mem_kb / 1024 ))MB），执行轻量瘦身（不减少协议、不影响 Argo）"
+
+    # journald：限制持久化与运行时占用（768MB 盘上尤其重要）
+    if [ -d /etc/systemd/journald.conf.d ] || mkdir -p /etc/systemd/journald.conf.d 2> /dev/null; then
+        cat > /etc/systemd/journald.conf.d/99-sb-lowmem.conf << 'EOF'
+[Journal]
+SystemMaxUse=16M
+RuntimeMaxUse=8M
+EOF
+        systemctl restart systemd-journald > /dev/null 2>&1 || true
+        green "  ✓ journald 上限已收紧（SystemMaxUse=16M）"
+    fi
+
+    # apt 每日更新：小机器上跑一次 dpkg 就可能把 sing-box 顶进 OOM
+    for _t in apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service; do
+        if systemctl list-unit-files --no-legend "$_t" 2> /dev/null | grep -q "^${_t}"; then
+            if systemctl disable --now "$_t" > /dev/null 2>&1; then
+                green "  ✓ 已停用 ${_t}（需要时 systemctl enable --now $_t 恢复）"
+            fi
+        fi
+    done
+    return 0
+}
+
 # ================== 日志轮转 ==================
 # sing-box / cloudflared 的日志都是追加写入且没有上限：info 级别下 100M 级的 LXC 小鸡
 # 一天能写 20M 左右，几百 M 的根分区跑久了会被写满，进而拖垮 nginx / cloudflared。
@@ -2921,6 +3039,8 @@ installsb() {
 #     inode 才能让后续写入落回原文件名（nginx 因此也不需要额外的 USR1 reopen）。
 LOG_ROTATE_SIZE_KB="${LOG_ROTATE_SIZE_KB:-10240}"
 LOG_ROTATE_SCRIPT="$SINGBOX_FOLDER_PATH/singbox-log-rotate.sh"
+# 服务看门狗：cron 每 2 分钟跑一次，把「异常退出后没被拉起来」的服务补起来
+WATCHDOG_SCRIPT="$SINGBOX_FOLDER_PATH/singbox-watchdog.sh"
 # 应用 / 守护进程日志（logs/）
 LOG_ROTATE_FILES="singbox.log argo.log supervise-singbox.log supervise-argo.log stop_reason.log"
 # 沙箱 nginx 日志（nginx/logs/）
@@ -2957,9 +3077,16 @@ EOF
 
 # cron 守护进程是否在跑（Debian 叫 cron，RHEL/Alpine 叫 crond）
 cron_running() {
-    pgrep -x cron > /dev/null 2>&1 \
-        || pgrep -x crond > /dev/null 2>&1 \
-        || ps -ef 2> /dev/null | grep -qE '[c]ron(d)?( |$)'
+    # ⚠️ 不能用 pgrep -x：busybox（Alpine）的 -x 是「整条命令行精确匹配」，
+    #    crond 的 cmdline 是 `/usr/sbin/crond -c /etc/crontabs -f`，永远匹配不到
+    #    （实测：服务明明在跑，却提示「cron 守护进程没在运行」）。
+    if [ -n "$(pids_by_comm cron)" ] || [ -n "$(pids_by_comm crond)" ]; then
+        return 0
+    fi
+    # 兜底：/proc 不可用时按 ps 输出匹配
+    ps -ef 2> /dev/null | grep -qE '[c]ron(d)?( |$)' && return 0
+    ps 2> /dev/null | grep -qE '[c]ron(d)?( |$)' && return 0
+    return 1
 }
 
 # 确保 cron 守护进程在跑：依赖阶段已补装 cron 包，但容器里装完通常不会自动启动。
@@ -3018,7 +3145,7 @@ install_log_rotate() {
     ensure_cron_daemon > /dev/null 2>&1 || true
 
     if ! command -v crontab > /dev/null 2>&1; then
-        yellow "⚠ 未检测到 crontab（自动安装也失败），已生成轮转脚本 $LOG_ROTATE_SCRIPT，需自行安排定时执行"
+        yellow "⚠ 未检测到 crontab（自动安装也失败），已生成轮转脚本 ${LOG_ROTATE_SCRIPT}，需自行安排定时执行"
         return 0
     fi
     local ct_tmp
@@ -3032,7 +3159,116 @@ install_log_rotate() {
             yellow "⚠ crontab 已写入，但 cron 守护进程没在运行；重启后请检查 cron 是否自启"
         fi
     else
-        yellow "⚠ 写入 crontab 失败，日志轮转未生效（可手动执行 $LOG_ROTATE_SCRIPT）"
+        yellow "⚠ 写入 crontab 失败，日志轮转未生效（可手动执行 ${LOG_ROTATE_SCRIPT}）"
+    fi
+    rm -f "$ct_tmp"
+}
+
+# ================== 服务看门狗 ==================
+# 起因：128MB 机器上 OOM 杀掉进程是可以接受的，但「杀了之后自己回不来」不行。
+# systemd 的 Restart=always 在两种情况下会放弃：
+#   1) 撞到默认的 StartLimitBurst=5 / StartLimitIntervalSec=10s（短时间内反复重启）；
+#   2) 单元因为别的原因进入 failed，之后没有任何东西再去动它。
+# 另外沙箱 nginx 完全不在 systemd 里，被杀了就永远躺那儿，只有用户重跑脚本才会起来。
+#
+# 所以这里放一个极轻量的看门狗（cron 每 2 分钟，纯 POSIX sh，busybox ash 也能跑）：
+#   - systemd 用 systemctl，Alpine/OpenRC 用 rc-service（注意 OpenRC 下 sb 叫 sing-box）
+#   - 只处理「异常退出」：systemd 的 failed、openrc 的 crashed、nginx 的 pid 文件还在但进程没了
+#   - 用户主动 systemctl stop / rc-service stop / 菜单里停 nginx 的，一律不动
+#   - 顺带 StartLimitIntervalSec=0 已经写进 sb/argo 的 unit，正常情况下 systemd 自己会无限重试，
+#     看门狗只是最后一道保险
+gen_watchdog_script() {
+    mkdir -p "$LOGS_DIR" 2> /dev/null
+    cat > "$WATCHDOG_SCRIPT" << EOF
+#!/bin/sh
+# 由 $SB_SCRIPT_NAME 自动生成：服务看门狗（cron 每 2 分钟一次），请勿手改
+LOG="$LOGS_DIR/watchdog.log"
+NGINX_DIR="$SB_NGINX_DIR"
+NGINX_BIN="$SB_NGINX_BIN"
+NGINX_PID="$SB_NGINX_PID"
+
+# 看门狗自己的日志超过 128KB 直接清空（它只记「什么时候拉起了谁」）
+if [ -f "\$LOG" ]; then
+    _sz=\$(wc -c < "\$LOG" 2>/dev/null || echo 0)
+    [ "\$_sz" -gt 131072 ] && : > "\$LOG"
+fi
+
+say() { echo "\$(date '+%F %T') \$*" >> "\$LOG" 2>/dev/null; }
+
+# systemd：只有 failed 才动手。inactive 是「手动停的」，不碰
+ensure_systemd() {
+    _u="\$1"
+    systemctl is-enabled --quiet "\$_u" 2>/dev/null || return 0
+    [ "\$(systemctl is-failed "\$_u" 2>/dev/null)" = "failed" ] || return 0
+    systemctl reset-failed "\$_u" >/dev/null 2>&1
+    systemctl start "\$_u" >/dev/null 2>&1
+    say "systemd: \$_u 处于 failed，已 reset-failed 并重新启动"
+}
+
+# openrc（Alpine）：只有 crashed 才动手。stopped 是「手动停的」，不碰
+#   注意服务名和 systemd 不一样：sb 在 openrc 下叫 sing-box（/etc/init.d/sing-box）
+#   「是否开机自启」用 runlevel 里的软链判断，等价于 systemd 的 is-enabled
+ensure_openrc() {
+    _u="\$1"
+    [ -e "/etc/runlevels/default/\$_u" ] || return 0
+    rc-service "\$_u" status 2>&1 | grep -q "crashed" || return 0
+    rc-service "\$_u" start >/dev/null 2>&1
+    say "openrc: \$_u 处于 crashed，已重新启动"
+}
+
+if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+    ensure_systemd sb
+    ensure_systemd argo
+elif command -v rc-service >/dev/null 2>&1; then
+    # Alpine/openrc：sb 的服务名是 sing-box
+    ensure_openrc sing-box
+    ensure_openrc argo
+fi
+
+# 沙箱 nginx：不在 systemd 里，靠 pid 文件判断
+#   没有 pid 文件 = 用户主动停的（nginx_stop 会删），不碰
+#   有 pid 文件但进程没了 = 被 OOM 杀了，重启
+if [ -x "\$NGINX_BIN" ] && [ -f "\$NGINX_PID" ]; then
+    _pid=\$(cat "\$NGINX_PID" 2>/dev/null | tr -d ' \r\n')
+    _alive=0
+    if [ -n "\$_pid" ] && kill -0 "\$_pid" 2>/dev/null; then
+        _alive=1
+        # pid 可能被系统复用给别的进程，确认一下确实是 nginx
+        if [ -r "/proc/\$_pid/comm" ] && ! grep -qi nginx "/proc/\$_pid/comm" 2>/dev/null; then
+            _alive=0
+        fi
+    fi
+    if [ "\$_alive" = "0" ]; then
+        rm -f "\$NGINX_PID" 2>/dev/null
+        "\$NGINX_BIN" -p "\$NGINX_DIR/" -c conf/nginx.conf >/dev/null 2>&1
+        say "nginx: pid 文件存在但进程已消失，已重新启动"
+    fi
+fi
+
+exit 0
+EOF
+    chmod 700 "$WATCHDOG_SCRIPT" 2> /dev/null || true
+}
+
+install_service_watchdog() {
+    gen_watchdog_script
+
+    if ! command -v crontab > /dev/null 2>&1; then
+        yellow "⚠ 未检测到 crontab，已生成看门狗脚本 ${WATCHDOG_SCRIPT}，需自行安排定时执行"
+        return 0
+    fi
+    local ct_tmp
+    ct_tmp="$(mktemp /tmp/crontab.XXXXXX 2> /dev/null)" || ct_tmp="/tmp/crontab.tmp.$$"
+    crontab -l > "$ct_tmp" 2> /dev/null || : > "$ct_tmp"
+    sed -i '/singbox-watchdog/d' "$ct_tmp" 2> /dev/null
+    echo "*/2 * * * * $WATCHDOG_SCRIPT >/dev/null 2>&1" >> "$ct_tmp"
+    if crontab "$ct_tmp" > /dev/null 2>&1; then
+        debug_print green "✅ 已开启服务看门狗（每 2 分钟检查 sb / argo / 沙箱 nginx）"
+        if ! cron_running; then
+            yellow "⚠ 看门狗已写入 crontab，但 cron 守护进程没在运行；重启后请检查 cron 是否自启"
+        fi
+    else
+        yellow "⚠ 写入 crontab 失败，看门狗未生效（可手动执行 ${WATCHDOG_SCRIPT}）"
     fi
     rm -f "$ct_tmp"
 }
@@ -3051,18 +3287,28 @@ sbbout() {
             need_youtube=$(cat "$SINGBOX_FOLDER_PATH/.warp_config")
         fi
 
+        # ✅ 只补 direct/block，保留已有的自定义出站：
+        #    旧版是 `.outbounds = [direct, block]` 整体覆盖，改个协议/订阅开关就会把
+        #    用户手写的链式/中转出站静默清空 → 流量改走 direct，可能直接连回自己的域名。
+        # ❗ 不再挂 `{action:"sniff"}`：sing-box 的 sniff 默认超时 300ms（官方文档
+        #    rule_action#timeout），纯直连节点没有域名规则时，每条连接都要白等 300ms，
+        #    日志里表现为 inbound→outbound 固定 350~430ms。resolve 保留，用于按 sbyx
+        #    决定 IPv4/IPv6 解析策略。
         jq --arg sbyx "$sbyx" --argjson warp "$warp_enabled" --argjson need_youtube "$need_youtube" '
-            .outbounds = [{type: "direct", tag: "direct"}, {type: "block", tag: "block"}]
+            .outbounds = ([{type: "direct", tag: "direct"}, {type: "block", tag: "block"}]
+                          + [(.outbounds // [])[] | select(.tag != "direct" and .tag != "block")])
             | .route.final = "direct"
-            | if $warp then
-                if $need_youtube then
-                    .route.rules = [{rule_set: ["netflix", "openai", "youtube"], outbound: "wireguard-out"}] + [{action: "sniff"}, {action: "resolve", strategy: $sbyx}]
-                else
-                    .route.rules = [{rule_set: ["netflix", "openai"], outbound: "wireguard-out"}] + [{action: "sniff"}, {action: "resolve", strategy: $sbyx}]
-                end
-              else
-                .route.rules = [{action: "sniff"}, {action: "resolve", strategy: $sbyx}]
-              end
+            | .route.rules = (
+                [(.route.rules // [])[] | select((.action // "") != "sniff" and (.action // "") != "resolve")]
+                + (if $warp and (.outbounds | map(.tag) | index("wireguard-out")) then
+                      (if $need_youtube
+                       then [{rule_set: ["netflix", "openai", "youtube"], outbound: "wireguard-out"}]
+                       else [{rule_set: ["netflix", "openai"], outbound: "wireguard-out"}]
+                       end)
+                   else []
+                   end)
+                + [{action: "resolve", strategy: $sbyx}]
+              )
         ' "$sbj" > "$tmpj" && sbj_save "$tmpj"
         rm -f "$tmpj" 2> /dev/null || true
         # sb.json 内含全部协议口令，收紧权限（jq 写 tmp+mv 会重建文件，需重新 chmod）
@@ -3073,13 +3319,35 @@ sbbout() {
 
         if has_systemd && [ "$EUID" -eq 0 ]; then
             debug_log "【调试】sbbout：使用 systemd 管理/启动 sb 服务"
+            # 小内存机器（<1G，LXC 小鸡常见）给 Go 运行时软上限 + cgroup 硬上限。
+            # 旧版只有 openrc 分支写了 GOMEMLIMIT，systemd 分支完全没限制：堆一路涨到
+            # 整机 OOM，内核随机挑进程杀（通常是 sing-box 或 cloudflared），
+            # 表现出来就是 nginx 侧一片 "recv() failed (104)" + 客户端反复重连。
+            # 用 MemTotal 百分比而不是写死，2G/4G 的机器不会被误伤。
+            local _sb_mem_conf="" _mem_kb=""
+            _mem_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)
+            if [ -n "$_mem_kb" ] && [ "$_mem_kb" -lt 1048576 ]; then
+                _sb_mem_conf="Environment=GOMEMLIMIT=$(( _mem_kb * 25 / 100 / 1024 ))MiB
+Environment=GOGC=30
+Environment=GOMAXPROCS=1"
+                if has_memory_cgroup; then
+                    _sb_mem_conf="${_sb_mem_conf}
+MemoryHigh=$(( _mem_kb * 40 / 100 / 1024 ))M
+MemoryMax=$(( _mem_kb * 50 / 100 / 1024 ))M"
+                fi
+            fi
             cat > /etc/systemd/system/sb.service << EOF
 [Unit]
 Description=sb service
 After=network.target
+# 关掉启动频率限制：OOM 反复杀进程时 systemd 默认 5 次/10 秒后就放弃（failed），
+# 之后没人再拉它。设为 0 让它配合 Restart=always 无限重试，内存缓过来自己就回来了。
+StartLimitIntervalSec=0
 [Service]
 Type=simple
 NoNewPrivileges=yes
+${_sb_mem_conf}
+LimitNOFILE=65535
 ExecStartPre=/bin/sh -c '[ -f /etc/iptables/rules.v4 ] && iptables-restore < /etc/iptables/rules.v4 2>/dev/null || true'
 ExecStartPre=/bin/sh -c '[ -f /etc/iptables/rules.v6 ] && ip6tables-restore < /etc/iptables/rules.v6 2>/dev/null || true'
 ExecStart=$SINGBOX_FOLDER_PATH/sing-box run -c $SINGBOX_FOLDER_PATH/sb.json
@@ -3122,10 +3390,12 @@ command="$SINGBOX_FOLDER_PATH/sing-box"
 command_args="run -c $SINGBOX_FOLDER_PATH/sb.json"
 pidfile="/run/sing-box.pid"
 ${_sb_sup_conf}
-# 小内存机器（<1G，LXC 小鸡常见）：给 Go 运行时一个软上限，
-# 避免流量高峰时堆无限增长把容器撑爆、被内核 OOM 直接杀掉
+# 小内存机器（<1G，LXC 小鸡常见）：给 Go 运行时一个软上限 + 压低 GC 阈值，
+# 避免流量高峰时堆无限增长把容器撑爆、被内核 OOM 直接杀掉（口径与 systemd 分支一致）
 _mem_kb=\$(awk '/^MemTotal:/{print \$2}' /proc/meminfo 2>/dev/null)
-[ -z "\$GOMEMLIMIT" ] && [ -n "\$_mem_kb" ] && [ "\$_mem_kb" -lt 1048576 ] && export GOMEMLIMIT=\$(( _mem_kb * 50 / 100 ))KiB
+[ -z "\$GOMEMLIMIT" ] && [ -n "\$_mem_kb" ] && [ "\$_mem_kb" -lt 1048576 ] && export GOMEMLIMIT=\$(( _mem_kb * 25 / 100 ))KiB
+[ -z "\$GOGC" ] && [ -n "\$_mem_kb" ] && [ "\$_mem_kb" -lt 1048576 ] && export GOGC=30
+[ -z "\$GOMAXPROCS" ] && [ -n "\$_mem_kb" ] && [ "\$_mem_kb" -lt 1048576 ] && export GOMAXPROCS=1
 depend() { need net; }
 start_pre() {
     [ -f /etc/iptables/rules.v4 ] && iptables-restore < /etc/iptables/rules.v4 2>/dev/null || true
@@ -3294,6 +3564,17 @@ EOF
         [ -f "$webroot/sub.txt" ] || : > "$webroot/sub.txt"
     fi
 
+    # WS 长连接公共参数：
+    # nginx 默认 proxy_read_timeout / proxy_send_timeout 都是 60s，且隧道模式下
+    # 只有「上游读/写」会挂定时器（nginx 源码 ngx_http_upstream_process_upgraded），
+    # 也就是 sing-box 60 秒没吐数据就会被 nginx 断开 → 客户端表现为「用着用着就掉线」。
+    # VMess/VLESS/Trojan over WS 本身不发心跳，所以必须显式拉长，否则必踩 60s。
+    local _ws_extra="        proxy_buffering off;
+        proxy_socket_keepalive on;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        access_log off;"
+
     cat >> "$conf" << EOF
 
     # --------- ws 反代（固定 Argo 同域名下可代理节点） ---------
@@ -3307,6 +3588,7 @@ EOF
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
+${_ws_extra}
     }
 
 EOF
@@ -3320,6 +3602,7 @@ EOF
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
+${_ws_extra}
     }
 
 EOF
@@ -3333,6 +3616,7 @@ EOF
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
+${_ws_extra}
     }
 
 EOF
@@ -3347,6 +3631,7 @@ EOF
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
+${_ws_extra}
     }
 
 EOF
@@ -3359,6 +3644,7 @@ EOF
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
+${_ws_extra}
     }
 
 EOF
@@ -3371,6 +3657,7 @@ EOF
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
+${_ws_extra}
     }
 
 EOF
@@ -3561,6 +3848,9 @@ ensure_cloudflared() {
     #    而且 curl 没有 -f，404/502 的 HTML 错误页也会被当成「下载成功」写进去。
     local _cf_tmp="$out.new.$$"
     rm -f "$_cf_tmp" 2> /dev/null
+
+    check_disk_space 80 || return 1
+
     (curl -fLo "$_cf_tmp" -# --connect-timeout 5 --max-time 120 \
         --retry 2 --retry-delay 2 --retry-all-errors "$url") \
         || (wget -O "$_cf_tmp" --tries=2 --timeout=60 --dns-timeout=5 --read-timeout=60 "$url")
@@ -3643,6 +3933,30 @@ install_argo_service_systemd() {
         return 1
     fi
 
+    # cloudflared 也是 Go 程序，同样是内存大户（Argo 隧道 + 默认 4 条 QUIC 边缘连接）。
+    # 小内存机器上和 sb 一样给软/硬上限，并把边缘连接数降到 1 条：
+    #   - 4 条 QUIC 连接每条都有自己的收发缓冲和 goroutine，128MB 上纯浪费；
+    #   - --ha-connections 1 只影响边缘冗余，不影响能不能连上（断了会自动重连）。
+    # 这里刻意不设 OOMScoreAdjust：
+    #   - 它只在「整机 / 容器级 OOM」时参与挑受害者；argo 撞到自己 MemoryMax 时是
+    #     cgroup 内部 OOM，组里只有它一个进程，设不设都是它自己死；
+    #   - 真正决定 argo 会不会被杀的，是下面的 GOMEMLIMIT 和 MemoryMax；
+    #   - 想恢复「整机吃紧先牺牲 argo」的话，在下面字符串里追加一行
+    #     OOMScoreAdjust=500 即可（一行的事，随时可加）。
+    local _argo_mem_conf="" _argo_ha="" _mem_kb=""
+    _mem_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)
+    if [ -n "$_mem_kb" ] && [ "$_mem_kb" -lt 1048576 ]; then
+        _argo_mem_conf="Environment=GOMEMLIMIT=$(( _mem_kb * 25 / 100 / 1024 ))MiB
+Environment=GOGC=40
+Environment=GOMAXPROCS=1"
+        if has_memory_cgroup; then
+            _argo_mem_conf="${_argo_mem_conf}
+MemoryHigh=$(( _mem_kb * 30 / 100 / 1024 ))M
+MemoryMax=$(( _mem_kb * 40 / 100 / 1024 ))M"
+        fi
+        _argo_ha=" --ha-connections 1"
+    fi
+
     if [ "$mode" = "json" ]; then
         debug_log "【调试】使用 json 模式安装 argo 服务(systemd)"
 
@@ -3650,11 +3964,15 @@ install_argo_service_systemd() {
 [Unit]
 Description=argo service
 After=network.target
+# 同 sb.service：OOM 后无限重试，不撞启动频率限制
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 NoNewPrivileges=yes
-ExecStart=$SINGBOX_FOLDER_PATH/cloudflared tunnel --edge-ip-version auto --config $SINGBOX_FOLDER_PATH/tunnel.yml run
+${_argo_mem_conf}
+LimitNOFILE=65535
+ExecStart=$SINGBOX_FOLDER_PATH/cloudflared tunnel --edge-ip-version auto${_argo_ha} --config $SINGBOX_FOLDER_PATH/tunnel.yml run
 Restart=always
 RestartSec=5s
 
@@ -3668,11 +3986,15 @@ EOF
 [Unit]
 Description=argo service
 After=network.target
+# 同 sb.service：OOM 后无限重试，不撞启动频率限制
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 NoNewPrivileges=yes
-ExecStart=$SINGBOX_FOLDER_PATH/cloudflared tunnel --no-autoupdate --edge-ip-version auto run --token ${token}
+${_argo_mem_conf}
+LimitNOFILE=65535
+ExecStart=$SINGBOX_FOLDER_PATH/cloudflared tunnel --no-autoupdate --edge-ip-version auto${_argo_ha} run --token ${token}
 Restart=always
 RestartSec=5s
 
@@ -3709,14 +4031,18 @@ install_argo_service_openrc() {
     fi
 
     local command_path="$SINGBOX_FOLDER_PATH/cloudflared"
-    local args=""
+    local args="" _argo_ha=""
+    local _mem_kb=""
+    _mem_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)
+    # 小内存机器把 Argo 边缘连接数从默认 4 条降到 1 条（与 systemd 分支保持一致）
+    [ -n "$_mem_kb" ] && [ "$_mem_kb" -lt 1048576 ] && _argo_ha=" --ha-connections 1"
 
     if [ "$mode" = "json" ]; then
         debug_log "【调试】使用 json 模式安装 argo 服务(openrc)"
-        args="tunnel --edge-ip-version auto --config $SINGBOX_FOLDER_PATH/tunnel.yml run"
+        args="tunnel --edge-ip-version auto${_argo_ha} --config $SINGBOX_FOLDER_PATH/tunnel.yml run"
     else
         debug_log "【调试】使用 token 模式安装 argo 服务(openrc)"
-        args="tunnel --no-autoupdate --edge-ip-version auto run --token ${token}"
+        args="tunnel --no-autoupdate --edge-ip-version auto${_argo_ha} run --token ${token}"
     fi
 
     # 与 sb 服务同理：用 supervise-daemon 托管，cloudflared 掉线/被杀后自动重启
@@ -3737,6 +4063,10 @@ command="${command_path}"
 command_args="${args}"
 pidfile="/run/argo.pid"
 ${_argo_sup_conf}
+# 小内存机器：给 cloudflared 的 Go 运行时软上限（与 systemd 分支口径一致）
+_mem_kb=\$(awk '/^MemTotal:/{print \$2}' /proc/meminfo 2>/dev/null)
+[ -z "\$GOMEMLIMIT" ] && [ -n "\$_mem_kb" ] && [ "\$_mem_kb" -lt 1048576 ] && export GOMEMLIMIT=\$(( _mem_kb * 25 / 100 / 1024 ))MiB
+[ -z "\$GOMAXPROCS" ] && [ -n "\$_mem_kb" ] && [ "\$_mem_kb" -lt 1048576 ] && export GOMAXPROCS=1
 depend() { need net; }
 EOF
 
@@ -3758,19 +4088,28 @@ start_argo_no_daemon() {
     local mode="$1"
     local token="$2"
     local port="$3"
+    local _argo_ha="" _mem_kb=""
     mkdir -p "$LOGS_DIR" 2> /dev/null
+
+    # 与 systemd/openrc 分支同口径：小内存机器降边缘连接数 + 压 Go 堆上限
+    _mem_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)
+    if [ -n "$_mem_kb" ] && [ "$_mem_kb" -lt 1048576 ]; then
+        _argo_ha=" --ha-connections 1"
+        [ -z "${GOMEMLIMIT:-}" ] && export GOMEMLIMIT="$(( _mem_kb * 25 / 100 / 1024 ))MiB"
+        [ -z "${GOMAXPROCS:-}" ] && export GOMAXPROCS=1
+    fi
 
     if [ "$mode" = "json" ]; then
         debug_log "【调试】使用 json 模式，nohup 启动 argo"
         nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel \
-            --edge-ip-version auto \
+            --edge-ip-version auto${_argo_ha} \
             --config "$SINGBOX_FOLDER_PATH/tunnel.yml" run \
             > "$LOGS_DIR/argo.log" 2>&1 &
     elif [ -n "$token" ]; then
         debug_log "【调试】使用 token 模式，nohup 启动 argo"
         nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel \
             --no-autoupdate \
-            --edge-ip-version auto run \
+            --edge-ip-version auto${_argo_ha} run \
             --token "$token" \
             > "$LOGS_DIR/argo.log" 2>&1 &
     else
@@ -4360,6 +4699,12 @@ ins() {
     # 日志轮转：sing-box / cloudflared 日志无上限，小硬盘机器跑久了会被写满
     install_log_rotate
 
+    # 小内存机器（<256MB）瘦身：journald 限额 + 停 apt 每日更新定时器
+    low_mem_tune
+
+    # 服务看门狗：OOM/崩溃后把 sb、argo、沙箱 nginx 补拉起来（每 2 分钟）
+    install_service_watchdog
+
     # 把ip写入server_ip
     write_server_ip
 
@@ -4621,7 +4966,7 @@ update_subscription_file() {
 # 输出订阅链接
 # 域名优先级（自动判定，不接受 sub_domain 手动强制）：
 #   固定 Argo > 共享 ws_cdn_cf_host > 任意 Argo(含临时 trycloudflare) > http://IP:nginx_port
-# Argo 隧道实际可用性：cloudflared 已存在（PATH 或自定义目录 $SINGBOX_FOLDER_PATH）且 进程在运行
+# Argo 隧道实际可用性：cloudflared 已存在（PATH 或自定义目录 ${SINGBOX_FOLDER_PATH}）且 进程在运行
 # （否则 AGN 域名只是"配置了 Argo"，隧道没连上，走它做订阅会 530）
 argo_tunnel_alive() {
     if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ]; then
@@ -5193,7 +5538,7 @@ cleanup_nginx() {
         rm -rf "$SB_NGINX_DIR" 2> /dev/null
         green "  ✓ 沙箱 Nginx 已清理（二进制与配置均已删除）"
     else
-        green "  ✓ 沙箱 Nginx 已停止（二进制保留在 $SB_NGINX_DIR）"
+        green "  ✓ 沙箱 Nginx 已停止（二进制保留在 ${SB_NGINX_DIR}）"
     fi
 }
 
@@ -5227,6 +5572,7 @@ cleandel() {
     # 只删本脚本自己写的任务；原来的 /.*singbox.*/d 会把用户任何含 singbox 的
     # 无关定时任务一起删掉
     sed -i '/singbox-log-rotate/d' "$ct_tmp"
+    sed -i '/singbox-watchdog/d' "$ct_tmp"
     sed -i '/.*agsb.*/d' "$ct_tmp"
     crontab "$ct_tmp" > /dev/null 2>&1
     rm -f "$ct_tmp"
@@ -5878,8 +6224,10 @@ menu_status_block() {
             else
                 timeout 3 "$SINGBOX_FOLDER_PATH/sing-box" version 2>/dev/null | head -1 | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/sbv"
             fi
-            pgrep -f "$SINGBOX_FOLDER_PATH/sing-box" 2>/dev/null | head -1 > "$_tmpd/sbp"
-            { awk '/VmRSS/{print $2}' "/proc/$(cat "$_tmpd/sbp" 2>/dev/null)/status" 2> /dev/null; } > "$_tmpd/sbm"
+            # 按进程名精确匹配（sing-box / cloudflared 的 comm 是稳定的），
+            # 不能用 pgrep -f <路径>：OpenRC 的 supervise-daemon 命令行里也带这个路径
+            pids_by_comm sing-box 2> /dev/null | head -1 > "$_tmpd/sbp"
+            rss_kb_by_comm sing-box > "$_tmpd/sbm"
         fi
     } & _p1=$!
     {
@@ -5891,8 +6239,8 @@ menu_status_block() {
             else
                 timeout 3 "$_cfb" version 2>/dev/null | sed -n 's/.*version \([0-9]\{4\}\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/cfv" || true
             fi
-            pgrep -f "$_cfb" 2>/dev/null | head -1 > "$_tmpd/cfp"
-            { awk '/VmRSS/{print $2}' "/proc/$(cat "$_tmpd/cfp" 2>/dev/null)/status" 2> /dev/null; } > "$_tmpd/cfm"
+            pids_by_comm cloudflared 2> /dev/null | head -1 > "$_tmpd/cfp"
+            rss_kb_by_comm cloudflared > "$_tmpd/cfm"
         fi
     } & _p2=$!
     {
@@ -5955,6 +6303,11 @@ menu_status_block() {
         fi
     } 2>/dev/null
 
+    # 运行判定用的 pid 快照（临时目录马上要删，先记下来）
+    local _sb_alive="" _cf_alive=""
+    [ -s "$_tmpd/sbp" ] && _sb_alive=1
+    [ -s "$_tmpd/cfp" ] && _cf_alive=1
+
     # 只删自己建的临时目录；任何情况下都不碰安装目录（防 mktemp 异常导致误删）
     case "$_tmpd" in
         "" | "$SINGBOX_FOLDER_PATH" | "$SINGBOX_FOLDER_PATH"/*) : ;;
@@ -5962,7 +6315,7 @@ menu_status_block() {
     esac
 
     # sing-box 运行判定
-    if pgrep -f "$SINGBOX_FOLDER_PATH/sing-box" > /dev/null 2>&1; then
+    if [ -n "$_sb_alive" ]; then
         st_sb="$(green "● 运行中")"
     elif [ -n "$v_sb" ]; then
         st_sb="$(red "■ 已停止")"
@@ -5974,7 +6327,7 @@ menu_status_block() {
     # cloudflared 运行判定
     local cf_running=false
     if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ] || command -v cloudflared > /dev/null 2>&1; then
-        if pgrep -f "$SINGBOX_FOLDER_PATH/cloudflared" > /dev/null 2>&1; then
+        if [ -n "$_cf_alive" ]; then
             st_cf="$(green "● 运行中")"; cf_running=true
         else
             st_cf="$(red "■ 已停止")"
@@ -6026,9 +6379,9 @@ menu_status_block() {
     elif [ ! -x "$SB_NGINX_BIN" ]; then
         green "  Nginx       : ${st_nginx}（${sub_desc}，端口：${nginx_port}）"
     elif sb_nginx_running; then
-        green "  Nginx       : ${st_nginx}${v_nginx:+ $v_nginx}（${sub_desc}，端口：${nginx_port}）${m_nginx:+（内存: $m_nginx）}"
+        green "  Nginx       : ${st_nginx}${v_nginx:+ $v_nginx}（${sub_desc}，端口：${nginx_port}）${m_nginx:+（内存: ${m_nginx}）}"
     else
-        green "  Nginx       : ${st_nginx}（${sub_desc}，端口：${nginx_port}）${m_nginx:+（内存: $m_nginx）}"
+        green "  Nginx       : ${st_nginx}（${sub_desc}，端口：${nginx_port}）${m_nginx:+（内存: ${m_nginx}）}"
     fi
 }
 
