@@ -920,6 +920,20 @@ sb log_stop        查看服务停止原因日志（排查崩溃用）
 
 ## 2.7 版本变更信息
 
+v3.2.20 (2026-10-29)
+ > Argo token 校验过严：带 `=` 的**合法** token 被拒。
+
+ - **根因**：`is_valid_argo_token` 用的是白名单正则 `^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$`。Cloudflare 下发的 token 是 `base64(base64url(JSON))`，长度不整除 3 时自带 `=` 填充（尾部 `In0=` 就是 `"}` 的填充），合法 token 会被直接判非法，`prepare_argo_credentials` 中止安装
+ - **改为黑名单**：只拒绝真正会破坏落地处的字符，其余全部放行
+   - 空白 / 控制字符（CR LF TAB）：systemd `ExecStart` 会按空白分词；写 unit 与 init 脚本时行被断开
+   - `"` `'`：破坏引号包裹（unit `ExecStart` / init 的 `command_args` / `--token "$token"`）
+   - `` ` `` `$` `\`：shell 与 init 脚本里会被当作命令替换、变量展开、转义
+   - `%`：systemd unit 的指符展开（`%i` / `%n` 等），`%` 后接未知字母会让 unit 直接报错
+   - 放行：`= + / @ : , . ; # ! * ? & | < > ( ) [ ] { } ~ ^ _ -` 以及全部字母数字
+ - **`argo.service` 的 `ExecStart` 给 token 补双引号**：原来 `--token ${token}` 未加引号，是三个落地点（systemd / openrc / nohup）里唯一没有引号保护的
+ - **`sbargotoken` 落盘 `echo` → `printf '%s\n'`**：token 以 `-n` / `-e` 开头时 `echo` 会把它们当选项吞掉，文件内容被写坏（读回时 token 缺头）
+ - 影响面：`prepare_argo_credentials`、`install_argo_service`（systemd）、`install_argo_service_openrc`、`start_argo_no_daemon` 共用这一个校验函数，改一处全链路生效；`sb.sh` 与 `sb00.sh` 同步修改
+
 v3.2.19 (2026-10-23)
  - **`cron_running()` 在 Alpine 上误报「cron 没在运行」**：用的是 `pgrep -x cron/crond`，而 busybox 的 `-x` 是「整条命令行精确匹配」，`crond` 的 cmdline 是 `/usr/sbin/crond -c /etc/crontabs -f`，永远匹配不到；`ps -ef` 兜底在 busybox 上也不可用（只支持 `-o`/`-T`）。改为按 `/proc/<pid>/comm` 匹配，`ps` 兜底同时保留 `ps -ef` 与裸 `ps` 两种写法
 

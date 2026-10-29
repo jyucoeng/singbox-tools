@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.19(2026-10-23)"
+VERSION="3.2.20(2026-10-29)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -1717,13 +1717,35 @@ is_valid_domain() {
     printf '%s' "$d" | grep -qE '^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$'
 }
 
-# 校验 Argo token（cloudflared token 是 base64url + 点分隔，不含空格/引号/换行）
+# 校验 Argo token —— 黑名单模式：只拒绝真正会破坏落地处的字符，其余一律放行。
+# 放行：A-Za-z0-9 全部可见符号（含 base64 的 '+' '/' 与尾部 '=' 填充）：
+#        = + / @ : , . ; # ! * ? & | < > ( ) [ ] { } ~ ^ _ - 等
+# 拒绝清单及原因：
+#   空白 / 控制字符（CR LF TAB 等）→ systemd ExecStart 按空白分词；写 unit 与 init 脚本时行被断开
+#   "   '                          → 破坏引号包裹（unit ExecStart / init 的 command_args / --token "$t"）
+#   `   $   \                      → shell 与 init 脚本里会被当作命令替换、变量展开、转义
+#   %                              → systemd unit 的指符展开（%i/%n…），% 后接未知字母会让 unit 报错
+# 真实 token（base64(base64url(JSON)) + 点分隔 + 尾部 '=' 填充）不会出现上述字符。
 is_valid_argo_token() {
     local t="${1:-}"
     [ -n "$t" ] || return 1
-    # 拒绝嵌入 CR/LF（同 is_valid_domain，防跨行绕过）
-    [ "$t" = "$(printf '%s' "$t" | tr -d '\r\n')" ] || return 1
-    printf '%s' "$t" | grep -qE '^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$'
+
+    # 空白与控制字符（CR/LF/TAB 及其它不可见字符），防跨行或分词绕过
+    case "$t" in
+        *[[:space:][:cntrl:]]*) return 1 ;;
+    esac
+
+    # 会破坏引号包裹、触发替换或 unit 指符展开的元字符
+    case "$t" in
+        *'"'*) return 1 ;;
+        *"'"*) return 1 ;;
+        *'`'*) return 1 ;;
+        *'$'*) return 1 ;;
+        *'\'*) return 1 ;;
+        *'%'*) return 1 ;;
+    esac
+
+    return 0
 }
 
 # 用法：
@@ -1802,8 +1824,9 @@ EOF
     else
         # token 模式
         if ! is_valid_argo_token "$auth"; then
-            red "❌ Argo token 格式非法：只能包含字母/数字/'-'/'_'/'.'，且不允许空格、引号、换行"
-            red "   请确认你粘贴的是完整的 cloudflared token（形如 ey...-xxx.xxx）"
+            red "❌ Argo token 含有不能写进服务配置的字符：空白（含换行）、双引号、单引号、反引号、美元符、反斜杠、百分号"
+            red "   其余字符全部放行（含 = + / @ : , ; # ! * ? & | < > ( ) [ ] { } ~ ^ 等）"
+            red "   请确认你粘贴的是完整的 cloudflared token（形如 ey...-xxx.xxx，末端带 '=' 也正常）"
             return 1
         fi
         ARGO_MODE="token"
@@ -3994,7 +4017,7 @@ Type=simple
 NoNewPrivileges=yes
 ${_argo_mem_conf}
 LimitNOFILE=65535
-ExecStart=$SINGBOX_FOLDER_PATH/cloudflared tunnel --no-autoupdate --edge-ip-version auto${_argo_ha} run --token ${token}
+ExecStart=$SINGBOX_FOLDER_PATH/cloudflared tunnel --no-autoupdate --edge-ip-version auto${_argo_ha} run --token "${token}"
 Restart=always
 RestartSec=5s
 
@@ -4795,7 +4818,7 @@ ins() {
             echo "$ARGO_DOMAIN" > "$SINGBOX_FOLDER_PATH/argo_domain"
             chmod 600 "$SINGBOX_FOLDER_PATH/argo_domain" 2>/dev/null || true
             # token 模式下才会有 sbargotoken
-            [ "$ARGO_MODE" = "token" ] && { echo "$ARGO_AUTH" > "$SINGBOX_FOLDER_PATH/sbargotoken"; chmod 600 "$SINGBOX_FOLDER_PATH/sbargotoken" 2>/dev/null || true; }
+            [ "$ARGO_MODE" = "token" ] && { printf '%s\n' "$ARGO_AUTH" > "$SINGBOX_FOLDER_PATH/sbargotoken"; chmod 600 "$SINGBOX_FOLDER_PATH/sbargotoken" 2>/dev/null || true; }
         else
             # 临时 Argo（trycloudflare）
             argo_tunnel_type="临时"
