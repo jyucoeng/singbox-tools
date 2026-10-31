@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.20(2026-10-29)"
+VERSION="3.2.21(2026-10-31)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -3703,6 +3703,108 @@ EOF
 }
 
 # 启动沙箱 Nginx（按 pid 文件操作，绝不碰系统/宝塔 nginx 进程或服务单元）
+# ================== 端口占用诊断（只读，绝不动外部进程） ==================
+# 端口 → 监听进程 pid。ss 优先；没有 ss（busybox / Alpine 精简版）时走 /proc 兜底。
+# 只在安装/启动沙箱 Nginx 时调用，频率极低，/proc 遍历开销可接受。
+_listener_pid_of_port() {
+    local port="${1:-}" line pid="" inode="" _hex _d _fd
+    case "$port" in '' | *[!0-9]*) return 1 ;; esac
+
+    if command -v ss > /dev/null 2>&1; then
+        line="$(ss -tln 2> /dev/null | awk -v p=":${port}\$" '$4 ~ p {print; exit}')"
+        if [ -n "$line" ]; then
+            pid="$(printf '%s' "$line" | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | head -n1)"
+            [ -n "$pid" ] && {
+                printf '%s' "$pid"
+                return 0
+            }
+        fi
+    fi
+
+    # /proc/net/tcp{,6}：LISTEN=0A，第 2 列 local_address（ADDR:PORT 十六进制），第 10 列 inode
+    _hex="$(printf '%04X' "$port" 2> /dev/null)" || return 1
+    [ -n "$_hex" ] || return 1
+    inode="$(awk -v h="$_hex" 'FNR > 1 && $4 == "0A" { split($2, a, ":"); if (toupper(a[2]) == h) { print $10; exit } }' \
+        /proc/net/tcp /proc/net/tcp6 2> /dev/null | head -n1)"
+    [ -n "$inode" ] || return 1
+
+    for _d in /proc/[0-9]*; do
+        for _fd in "$_d"/fd/*; do
+            [ -L "$_fd" ] || continue
+            case "$(readlink "$_fd" 2> /dev/null)" in
+                "socket:[${inode}]")
+                    printf '%s' "${_d#/proc/}"
+                    return 0
+                    ;;
+            esac
+        done
+    done
+    return 1
+}
+
+# 安装/启动沙箱 Nginx 前的端口占用预检：明确区分「沙箱 Nginx」与「系统/宝塔 Nginx」。
+# 本脚本绝不停用/禁用外部 Nginx —— 只把病因和可选解法摆到用户面前。
+# 背景：2.0.x 老版本会 apt/yum/apk 装系统 nginx 并 systemctl enable，
+#       升级到沙箱版后系统 nginx 仍开机自启、继续占着 80/8080，沙箱 nginx 必然 bind 失败。
+nginx_port_owner_diagnose() {
+    local _p _pid _comm _cmdline _sbpid="" _hit=0 _ports _seen=" "
+    # argo_pt 与 nginx_pt 相同时只诊断一次，避免同一端口刷两遍
+    for _p in "$(_eff_nginx_pt)" "$(_eff_argo_pt)"; do
+        [ -n "$_p" ] || continue
+        case "$_seen" in *" $_p "*) continue ;; esac
+        _seen="${_seen}${_p} "
+        _ports="${_ports}${_p} "
+    done
+
+    [ -s "$SB_NGINX_PID" ] && _sbpid="$(cat "$SB_NGINX_PID" 2> /dev/null | tr -d ' \r\n')"
+
+    for _p in $_ports; do
+        [ -n "$_p" ] || continue
+        _pid="$(_listener_pid_of_port "$_p")"
+        [ -n "$_pid" ] || continue
+        # 沙箱自己的 nginx master：不是冲突
+        if [ -n "$_sbpid" ] && [ "$_pid" = "$_sbpid" ]; then
+            continue
+        fi
+
+        _comm=""
+        _cmdline=""
+        if [ -r "/proc/$_pid/comm" ]; then
+            _comm="$(tr -d '\000' < "/proc/$_pid/comm" 2> /dev/null)"
+            _cmdline="$(tr '\000' ' ' < "/proc/$_pid/cmdline" 2> /dev/null)"
+        fi
+        # 沙箱 nginx 的 worker/其它实例（cmdline 里带沙箱 prefix）也放行
+        case "$_cmdline" in
+            *"$SB_NGINX_DIR"*) continue ;;
+        esac
+
+        _hit=1
+        red "❌ 端口 ${_p} 已被占用：pid=${_pid} comm=${_comm:-unknown}"
+        case "$_comm" in
+            *nginx*)
+                yellow "   占用者是【系统 / 宝塔 Nginx】，不是本脚本的沙箱 Nginx。"
+                yellow "   本脚本的 Nginx 完全独立（${SB_NGINX_DIR}），不会去停外部 Nginx，"
+                yellow "   所以两者抢同一端口时，沙箱 Nginx 必然起不来，订阅/Argo/CDN 入口全是 404。"
+                yellow ""
+                yellow "   ── 三选一 ──"
+                yellow "   1) 停掉系统 Nginx 并取消开机自启（仅当本机没有别的站点依赖它）:"
+                yellow "        systemctl disable --now nginx                    # systemd 发行版"
+                yellow "        rc-update del nginx && rc-service nginx stop     # Alpine / OpenRC"
+                yellow "   2) 让本脚本换端口重装（推荐，两套 Nginx 互不影响）:"
+                yellow "        nginx_pt=18080 bash <(curl -Ls 安装地址) rep"
+                yellow "   3) 保留现有安装只改端口:  菜单 → 修改端口 → 订阅 Nginx 端口"
+                ;;
+            *)
+                yellow "   占用者不是 Nginx，与「以前装过系统 Nginx」无关；需要释放该进程或换端口。"
+                yellow "   查看占用:  ss -tlnp | grep :${_p}      或      lsof -i :${_p}"
+                yellow "   换端口重装:  nginx_pt=18080 bash <(curl -Ls 安装地址) rep"
+                ;;
+        esac
+        echo ""
+    done
+    return 0
+}
+
 start_nginx_service() {
     debug_log "【调试】start_nginx_service：启动沙箱 Nginx"
     [ -x "$SB_NGINX_BIN" ] || {
@@ -3716,6 +3818,10 @@ start_nginx_service() {
         return 0
     fi
     rm -f "$SB_NGINX_PID" 2> /dev/null
+
+    # 启动前先查端口占用：把「系统/宝塔 Nginx 抢端口」这件事直接说清楚，
+    # 而不是等 bind 失败后只丢一句 error.log 让用户自己猜。
+    nginx_port_owner_diagnose || true
 
     if ! "$SB_NGINX_BIN" -p "$SB_NGINX_DIR/" -c conf/nginx.conf; then
         red "❌ 沙箱 Nginx 启动失败（详见 $SB_NGINX_DIR/logs/error.log）"
@@ -3737,7 +3843,7 @@ start_nginx_service() {
                     yellow "     1) 查看占用者:  lsof -i :${_eport:-端口}   （记下其中的 PID）"
                     yellow "     2) 确认后结束进程: kill <PID>"
                 fi
-                yellow "     或改用其他端口重新安装，例如: bash <(curl -Ls 安装地址) rep 前设置 nginx_pt/argo_pt 为未占用端口"
+                yellow "     或改用其他端口重装，例如: nginx_pt=18080 bash <(curl -Ls 安装地址) rep"
             fi
         } 2> /dev/null
         return 1
@@ -4732,7 +4838,19 @@ ins() {
     write_server_ip
 
     # 2. Nginx（按需：subscribe=true 或启用 argo 才需要）
-    ensure_nginx_if_needed || exit 1
+    # ⚠️ 这里原本是 `|| exit 1`。但上一行 sbbout 已经把 sing-box 起起来了：
+    #    在 Nginx/订阅 这一步 exit 1，用户看到的是「安装失败」，实际节点是通的，
+    #    只是订阅 404 —— 极难自查，还会把「系统 Nginx 占端口」误判成「脚本装不上」。
+    #    改为记录失败 + 告警继续，收尾时统一说明（见 ins 末尾）。
+    NGINX_SETUP_FAILED=0
+    if ! ensure_nginx_if_needed; then
+        NGINX_SETUP_FAILED=1
+        echo ""
+        yellow "⚠️ 订阅服务（沙箱 Nginx）未就绪，原因见上方诊断。"
+        yellow "   sing-box 节点已启动，直连节点仍可正常使用；仅 订阅 / Argo / WS-CDN 入口不可用。"
+        yellow "   修复后无需重装，在菜单里「更新订阅」即可重新生成。"
+        echo ""
+    fi
     debug_log "【调试】ensure_nginx_if_needed 已执行完成（如需 Nginx 则已确保安装/启动）"
     debug_log "【调试】即将判断是否进入 Argo 分支：need_argo=$(need_argo && echo yes || echo no)，vmag=${vmag:-<空>}"
 
@@ -4842,6 +4960,17 @@ ins() {
     # 创建 sb 快捷命令
     ensure_sb_shortcut
     debug_log "【调试】ensure_sb_shortcut 已执行完成（sb 快捷命令）"
+
+    # 订阅/Argo 入口失败时的收尾说明（失败已不再中断安装，见上方 ensure_nginx_if_needed 处）
+    if [ "${NGINX_SETUP_FAILED:-0}" = "1" ]; then
+        echo ""
+        red "⚠️ 本次安装：sing-box 已就绪，但订阅服务（沙箱 Nginx）未就绪。"
+        yellow "   查看原因: $SB_NGINX_DIR/logs/error.log"
+        yellow "   最常见原因: 系统/宝塔 Nginx 占用了 $(_eff_nginx_pt) 或 $(_eff_argo_pt) 端口"
+        yellow "   修复: systemctl disable --now nginx"
+        yellow "     或换端口重装: nginx_pt=18080 bash <(curl -Ls 安装地址) rep"
+        echo ""
+    fi
 }
 
 # 落盘兼容辅助：env 值在此次运行优先写新值；否则保留已有文件；否则从旧名文件迁移；否则写默认/删文件(回退默认)
