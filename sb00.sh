@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.22(2026-10-31)"
+VERSION="3.2.23(2026-10-31)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -3492,14 +3492,74 @@ _eff_argo_pt() {
     fi
 }
 
+# ================== 系统/宝塔 Nginx 遗留监听自愈 ==================
+# 历史背景：2.0.x 老版本会 apt/yum/apk 装系统 nginx，把订阅站点写进
+# /etc/nginx/{conf.d,http.d}/singbox.conf 并 systemctl enable。
+# 升级到沙箱版后脚本会删掉那些配置文件 —— 但运行中的系统 nginx 内存里仍持有旧
+# server 块，31007/8001 的监听不会自己消失，沙箱 nginx 依旧 bind 失败。
+# 更坑的是旧配置里的订阅 location 还在生效，用户会看到「订阅 200」的假成功，
+# 一旦重启机器（nginx enabled 自启并重新读配置）立刻变 404。
+
+# 定位系统/宝塔 Nginx 二进制（沙箱 Nginx 不在候选里，绝不误认）
+_system_nginx_bin() {
+    local f
+    for f in /usr/sbin/nginx /usr/local/sbin/nginx /usr/local/nginx/sbin/nginx /www/server/nginx/sbin/nginx; do
+        [ -x "$f" ] && {
+            printf '%s' "$f"
+            return 0
+        }
+    done
+    return 1
+}
+
+_system_nginx_running() {
+    if command -v pgrep > /dev/null 2>&1; then
+        pgrep -f 'nginx: master process' > /dev/null 2>&1 && return 0
+    fi
+    ps -A 2> /dev/null | grep -q 'nginx: master process' && return 0
+    return 1
+}
+
+# 平滑 reload 系统/宝塔 Nginx，让「删掉遗留配置」真正生效（端口才会释放）。
+# 安全前提：进程在跑 + nginx -t 通过。reload 不断现有连接、不改用户站点配置。
+# 返回 0 = 已发起 reload；1 = 条件不满足（不动它，交回调用方报诊断）。
+_reload_system_nginx_if_safe() {
+    local bin
+    bin="$(_system_nginx_bin)" || return 1
+    _system_nginx_running || return 1
+    # -t 不过就绝不 reload：宁可不修端口，也不能把用户站点搞挂
+    if ! "$bin" -t > /dev/null 2>&1; then
+        yellow "  ⚠ 系统 Nginx 配置校验未通过，跳过 reload（您的站点未受影响）"
+        return 1
+    fi
+    if command -v systemctl > /dev/null 2>&1 && systemctl is-active nginx > /dev/null 2>&1; then
+        systemctl reload nginx > /dev/null 2>&1 && return 0
+    fi
+    if command -v rc-service > /dev/null 2>&1; then
+        rc-service nginx reload > /dev/null 2>&1 && return 0
+    fi
+    "$bin" -s reload > /dev/null 2>&1 && return 0
+    return 1
+}
+
 # 清理旧版误写到系统 nginx 的遗留配置（只删本脚本的文件，不动宝塔/系统其余配置）
 cleanup_legacy_system_nginx_conf() {
-    local f
+    local f _removed=0
     for f in /etc/nginx/conf.d/singbox.conf /etc/nginx/http.d/singbox.conf; do
         if [ -f "$f" ]; then
-            rm -f "$f" 2> /dev/null && green "  ✓ 已清理旧版遗留配置：$f"
+            if rm -f "$f" 2> /dev/null; then
+                green "  ✓ 已清理旧版遗留配置：$f"
+                _removed=1
+            fi
         fi
     done
+    # 只删文件不够：运行中的系统 nginx 仍持有旧 server 块，端口继续被它占着。
+    # 这里补一次平滑 reload，让删除真正落地（旧版遗留的 31007/8001 监听随之释放）。
+    if [ "$_removed" = "1" ]; then
+        if _reload_system_nginx_if_safe; then
+            green "  ✓ 已平滑重载系统 Nginx，旧版遗留监听已释放"
+        fi
+    fi
 }
 
 setup_nginx_subscribe() {
@@ -3809,6 +3869,21 @@ nginx_port_owner_diagnose() {
         _pid="$(printf '%s' "$_pids" | awk '{print $1}')"
         _comm=""
         [ -r "/proc/$_pid/comm" ] && _comm="$(tr -d '\000' < "/proc/$_pid/comm" 2> /dev/null)"
+
+        # 自愈优先：占用者若是系统/宝塔 Nginx，多半是「旧版遗留配置被删掉但没 reload」，
+        # 端口还挂在它内存里的旧 server 块上。先平滑 reload 一次；端口真释放了就静默放行，
+        # 沙箱 Nginx 照常启动，用户什么都不用做。
+        case "$_comm" in
+            *nginx*)
+                if _reload_system_nginx_if_safe; then
+                    sleep 1
+                    if [ -z "$(_listener_pids_of_port "$_p" 2> /dev/null | tr -d ' \n')" ]; then
+                        green "✅ 已平滑重载系统 Nginx，端口 ${_p} 已释放"
+                        continue
+                    fi
+                fi
+                ;;
+        esac
 
         _hit=1
         red "❌ 端口 ${_p} 已被占用：pid=${_pid} comm=${_comm:-unknown}"
@@ -6260,8 +6335,17 @@ check_port_conflicts_or_exit() {
                 # 给出占用者 pid 与 kill 提示（仅提示用户自行执行，本脚本绝不代杀外部进程）
                 {
                     local _fpid _fcomm
-                    _fpid="$(printf '%s\n' "$_all_lines" | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -n1)"
-                    _fcomm="$(printf '%s\n' "$_all_lines" | sed -n 's/users:(("\([^"]*\)".*/\1/p' | head -n1)"
+                    local _fpids _k
+                    _fpids="$(printf '%s\n' "$_all_lines" | grep -o 'pid=[0-9][0-9]*' | cut -d= -f2)"
+                    _fpid="$(printf '%s\n' "$_fpids" | head -n1)"
+                    # nginx 的 worker 常与 master 同列且排在前面；提示 kill 时必须给 master（ppid=1）
+                    for _k in $_fpids; do
+                        if [ "$(_pid_ppid "$_k" 2> /dev/null)" = "1" ]; then
+                            _fpid="$_k"
+                            break
+                        fi
+                    done
+                    _fcomm="$(printf '%s\n' "$_all_lines" | grep -o 'users:(("[^"]*"' | head -n1 | sed 's/^.*((//; s/"//g')"
                     if [ -n "$_fpid" ]; then
                         yellow "     占用者进程: ${_fcomm:-未知} (pid=${_fpid})"
                         yellow "     确认非必要服务后，可手动释放端口: kill ${_fpid}"
