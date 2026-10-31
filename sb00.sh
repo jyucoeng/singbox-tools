@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.25(2026-10-31)"
+VERSION="3.2.26(2026-10-31)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -685,12 +685,88 @@ check_ip_connectivity() {
 
 }
 
+# 生成 sing-box 的 systemd 单元内容（输出到 stdout）
+# sbbout() 与 enable_autostart() 共用一份模板：历史上这两处各写各的，
+# 服务名一度漂移成 singbox-service / sb 两个单元，同时 enable 时抢同一批端口，
+# 后起的那个永远 bind: address already in use → Restart=always 无限重启刷日志。
+gen_sb_unit_systemd() {
+    local _mem_conf="" _mem_kb=""
+    _mem_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)
+    if [ -n "$_mem_kb" ] && [ "$_mem_kb" -lt 1048576 ]; then
+        _mem_conf="Environment=GOMEMLIMIT=$(( _mem_kb * 25 / 100 / 1024 ))MiB
+Environment=GOGC=30
+Environment=GOMAXPROCS=1"
+        if has_memory_cgroup; then
+            _mem_conf="${_mem_conf}
+MemoryHigh=$(( _mem_kb * 40 / 100 / 1024 ))M
+MemoryMax=$(( _mem_kb * 50 / 100 / 1024 ))M"
+        fi
+    fi
+    cat << EOF
+[Unit]
+Description=sb service
+After=network.target
+# 关掉启动频率限制：OOM 反复杀进程时 systemd 默认 5 次/10 秒后就放弃（failed），
+# 之后没人再拉它。设为 0 让它配合 Restart=always 无限重试，内存缓过来自己就回来了。
+StartLimitIntervalSec=0
+[Service]
+Type=simple
+NoNewPrivileges=yes
+${_mem_conf}
+LimitNOFILE=65535
+ExecStartPre=/bin/sh -c '[ -f /etc/iptables/rules.v4 ] && iptables-restore < /etc/iptables/rules.v4 2>/dev/null || true'
+ExecStartPre=/bin/sh -c '[ -f /etc/iptables/rules.v6 ] && ip6tables-restore < /etc/iptables/rules.v6 2>/dev/null || true'
+ExecStart=$SINGBOX_FOLDER_PATH/sing-box run -c $SINGBOX_FOLDER_PATH/sb.json
+StandardOutput=append:$LOGS_DIR/singbox.log
+StandardError=append:$LOGS_DIR/singbox.log
+Restart=always
+RestartSec=5s
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+# 生成 sing-box 的 openrc 脚本内容（输出到 stdout）
+gen_sb_unit_openrc() {
+    local _sup_conf
+    if command -v supervise-daemon > /dev/null 2>&1; then
+        _sup_conf='supervisor="supervise-daemon"
+respawn_delay=5
+respawn_max=0
+respawn_period=60
+output_log="'"$LOGS_DIR"'/supervise-singbox.log"'
+    else
+        _sup_conf='command_background=yes'
+    fi
+    cat << EOF
+#!/sbin/openrc-run
+description="sb service"
+command="$SINGBOX_FOLDER_PATH/sing-box"
+command_args="run -c $SINGBOX_FOLDER_PATH/sb.json"
+pidfile="/run/sing-box.pid"
+${_sup_conf}
+# 小内存机器（<1G，LXC 小鸡常见）：给 Go 运行时一个软上限 + 压低 GC 阈值，
+# 避免流量高峰时堆无限增长把容器撑爆、被内核 OOM 直接杀掉（口径与 systemd 分支一致）
+_mem_kb=\$(awk '/^MemTotal:/{print \$2}' /proc/meminfo 2>/dev/null)
+[ -z "\$GOMEMLIMIT" ] && [ -n "\$_mem_kb" ] && [ "\$_mem_kb" -lt 1048576 ] && export GOMEMLIMIT=\$(( _mem_kb * 25 / 100 ))KiB
+[ -z "\$GOGC" ] && [ -n "\$_mem_kb" ] && [ "\$_mem_kb" -lt 1048576 ] && export GOGC=30
+[ -z "\$GOMAXPROCS" ] && [ -n "\$_mem_kb" ] && [ "\$_mem_kb" -lt 1048576 ] && export GOMAXPROCS=1
+depend() { need net; }
+start_pre() {
+    [ -f /etc/iptables/rules.v4 ] && iptables-restore < /etc/iptables/rules.v4 2>/dev/null || true
+    [ -f /etc/iptables/rules.v6 ] && ip6tables-restore < /etc/iptables/rules.v6 2>/dev/null || true
+}
+EOF
+}
+
 # 开启自启
 enable_autostart() {
     local workdir="$SINGBOX_FOLDER_PATH"
     local bin="$workdir/sing-box"
     local cfg="$workdir/sb.json"
-    local svc="singbox-service"
+    # 服务名必须与 sbbout() 一致：历史上这里叫 singbox-service，而 sbbout 写 sb.service，
+    # 两个单元 ExecStart 完全相同，都 enable 后重启机器会双开抢端口。
+    local legacy_svc="singbox-service"
 
     # 只做“已安装才启用”，避免误触发安装
     if [ ! -x "$bin" ] || [ ! -s "$cfg" ]; then
@@ -700,77 +776,51 @@ enable_autostart() {
 
     # systemd (Debian/Ubuntu 等)
     if command -v systemctl > /dev/null 2>&1 && [ -d /run/systemd/system ]; then
-        cat > /etc/systemd/system/${svc}.service << EOF
-[Unit]
-Description=singbox service
-After=network-online.target
-Wants=network-online.target
+        # 清掉历史遗留的同程序异名单元
+        if [ -f "/etc/systemd/system/${legacy_svc}.service" ]; then
+            systemctl disable --now "${legacy_svc}.service" > /dev/null 2>&1
+            rm -f "/etc/systemd/system/${legacy_svc}.service"
+            systemctl daemon-reload > /dev/null 2>&1
+            yellow "  已清理历史遗留的 ${legacy_svc}.service（与 sb.service 重复，会抢端口）"
+        fi
 
-[Service]
-Type=simple
-User=root
-WorkingDirectory=${workdir}
-ExecCondition=/bin/sh -c 'test -x ${bin} && test -s ${cfg}'
-ExecStart=${bin} run -c ${cfg}
-Restart=always
-RestartSec=2
-LimitNOFILE=1048576
-TimeoutStartSec=30
+        # 已有 sb.service 就保留（sbbout 写的那份带 iptables 恢复/日志重定向/内存上限），只补 enable；
+        # 没有才按同一份模板重建
+        if [ ! -f "/etc/systemd/system/sb.service" ]; then
+            gen_sb_unit_systemd > "/etc/systemd/system/sb.service"
+            systemctl daemon-reload > /dev/null 2>&1
+        fi
 
-[Install]
-WantedBy=multi-user.target
-EOF
-
-        systemctl daemon-reload
-        systemctl enable --now "${svc}.service" > /dev/null 2>&1
-        systemctl restart "${svc}.service" > /dev/null 2>&1
-        echo "✅ 已开启开机自启（systemd）：${svc}"
-        return 0
+        systemctl enable --now sb.service > /dev/null 2>&1
+        if systemctl is-enabled sb.service > /dev/null 2>&1; then
+            systemctl restart sb.service > /dev/null 2>&1
+            echo "✅ 已开启开机自启（systemd）：sb"
+            return 0
+        fi
+        yellow "⚠ systemctl enable sb.service 失败，开机后可能不会自动启动；可用 systemctl status sb 查看"
+        return 1
     fi
 
-    # openrc (Alpine)
+    # openrc (Alpine)：服务名固定 sing-box，与 sbbout() 一致
     if command -v rc-service > /dev/null 2>&1 && command -v rc-update > /dev/null 2>&1; then
-        # ❗ 用 quoted heredoc（<< 'EOF'）写模板，再用 sed 替换占位符 __SB_PATH__。
-        # 避免 bash 在写文件时把 openrc 脚本内部的 ${name}/$command/$pidfile/$command_args/$?
-        # 当成当前 shell 变量展开（旧版 bug：生成文件变成 --exec ""，start/stop 全部失效）。
-        cat > /etc/init.d/${svc} << 'OPENRC_UNIT'
-#!/sbin/openrc-run
-name="singbox service"
-description="singbox service"
-command="__SB_PATH__/sing-box"
-command_args="run -c __SB_PATH__/sb.json"
-pidfile="/run/singbox.pid"
-
-# 有 supervise-daemon 就托管：进程崩溃/被 OOM 杀掉后自动重启；
-# 老版本 openrc 没有它时退回普通的 command_background 后台启动。
-if command -v supervise-daemon > /dev/null 2>&1; then
-  supervisor="supervise-daemon"
-  respawn_delay=5
-  respawn_max=0
-  respawn_period=60
-  output_log="__SB_PATH__/logs/supervise-singbox.log"
-else
-  command_background="yes"
-fi
-
-depend() {
-  need net
-  after firewall
-}
-
-start_pre() {
-  [ -x __SB_PATH__/sing-box ] || return 1
-  [ -s __SB_PATH__/sb.json ] || return 1
-}
-OPENRC_UNIT
-
-        sed -i "s|__SB_PATH__|${SINGBOX_FOLDER_PATH}|g" "/etc/init.d/${svc}"
-
-        chmod +x /etc/init.d/${svc}
-        rc-update add "${svc}" default > /dev/null 2>&1
-        rc-service "${svc}" restart > /dev/null 2>&1
-        echo "✅ 已开启开机自启（openrc）：${svc}"
-        return 0
+        if [ -f "/etc/init.d/${legacy_svc}" ]; then
+            rc-update del "${legacy_svc}" default > /dev/null 2>&1
+            rc-service "${legacy_svc}" stop > /dev/null 2>&1
+            rm -f "/etc/init.d/${legacy_svc}"
+            yellow "  已清理历史遗留的 ${legacy_svc}（与 sing-box 重复，会抢端口）"
+        fi
+        if [ ! -f "/etc/init.d/sing-box" ]; then
+            gen_sb_unit_openrc > /etc/init.d/sing-box
+            chmod +x /etc/init.d/sing-box
+        fi
+        rc-update add sing-box default > /dev/null 2>&1
+        if [ -e "/etc/runlevels/default/sing-box" ]; then
+            rc-service sing-box restart > /dev/null 2>&1
+            echo "✅ 已开启开机自启（openrc）：sing-box"
+            return 0
+        fi
+        yellow "⚠ rc-update add sing-box 失败，开机后可能不会自动启动"
+        return 1
     fi
 
     echo "❗ 未检测到 systemd 或 openrc，无法设置开机自启"
@@ -779,21 +829,38 @@ OPENRC_UNIT
 
 # 关闭自启
 disable_autostart() {
-    local svc="singbox-service"
+    local _any=0 _u=""
 
     if command -v systemctl > /dev/null 2>&1 && [ -d /run/systemd/system ]; then
-        systemctl disable --now "${svc}.service" > /dev/null 2>&1
-        rm -f "/etc/systemd/system/${svc}.service"
-        systemctl daemon-reload > /dev/null 2>&1
-        echo "✅ 已关闭开机自启（systemd）：${svc}"
+        # 两套名字都收：老的 singbox-service 与现在的 sb
+        for _u in sb singbox-service; do
+            [ -f "/etc/systemd/system/${_u}.service" ] || continue
+            systemctl disable --now "${_u}.service" > /dev/null 2>&1
+            rm -f "/etc/systemd/system/${_u}.service"
+            _any=1
+        done
+        [ "$_any" = "1" ] && systemctl daemon-reload > /dev/null 2>&1
+        if [ "$_any" = "1" ]; then
+            echo "✅ 已关闭开机自启（systemd）：sb"
+        else
+            echo "ℹ systemd 下未发现 sing-box 服务单元，无需关闭"
+        fi
         return 0
     fi
 
     if command -v rc-service > /dev/null 2>&1 && command -v rc-update > /dev/null 2>&1; then
-        rc-update del "${svc}" default > /dev/null 2>&1
-        rc-service "${svc}" stop > /dev/null 2>&1
-        rm -f "/etc/init.d/${svc}"
-        echo "✅ 已关闭开机自启（openrc）：${svc}"
+        for _u in sing-box singbox-service; do
+            [ -f "/etc/init.d/${_u}" ] || continue
+            rc-update del "${_u}" default > /dev/null 2>&1
+            rc-service "${_u}" stop > /dev/null 2>&1
+            rm -f "/etc/init.d/${_u}"
+            _any=1
+        done
+        if [ "$_any" = "1" ]; then
+            echo "✅ 已关闭开机自启（openrc）：sing-box"
+        else
+            echo "ℹ openrc 下未发现 sing-box 服务，无需关闭"
+        fi
         return 0
     fi
 
@@ -3514,42 +3581,11 @@ sbbout() {
             # 整机 OOM，内核随机挑进程杀（通常是 sing-box 或 cloudflared），
             # 表现出来就是 nginx 侧一片 "recv() failed (104)" + 客户端反复重连。
             # 用 MemTotal 百分比而不是写死，2G/4G 的机器不会被误伤。
-            local _sb_mem_conf="" _mem_kb=""
-            _mem_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)
-            if [ -n "$_mem_kb" ] && [ "$_mem_kb" -lt 1048576 ]; then
-                _sb_mem_conf="Environment=GOMEMLIMIT=$(( _mem_kb * 25 / 100 / 1024 ))MiB
-Environment=GOGC=30
-Environment=GOMAXPROCS=1"
-                if has_memory_cgroup; then
-                    _sb_mem_conf="${_sb_mem_conf}
-MemoryHigh=$(( _mem_kb * 40 / 100 / 1024 ))M
-MemoryMax=$(( _mem_kb * 50 / 100 / 1024 ))M"
-                fi
-            fi
-            cat > /etc/systemd/system/sb.service << EOF
-[Unit]
-Description=sb service
-After=network.target
-# 关掉启动频率限制：OOM 反复杀进程时 systemd 默认 5 次/10 秒后就放弃（failed），
-# 之后没人再拉它。设为 0 让它配合 Restart=always 无限重试，内存缓过来自己就回来了。
-StartLimitIntervalSec=0
-[Service]
-Type=simple
-NoNewPrivileges=yes
-${_sb_mem_conf}
-LimitNOFILE=65535
-ExecStartPre=/bin/sh -c '[ -f /etc/iptables/rules.v4 ] && iptables-restore < /etc/iptables/rules.v4 2>/dev/null || true'
-ExecStartPre=/bin/sh -c '[ -f /etc/iptables/rules.v6 ] && ip6tables-restore < /etc/iptables/rules.v6 2>/dev/null || true'
-ExecStart=$SINGBOX_FOLDER_PATH/sing-box run -c $SINGBOX_FOLDER_PATH/sb.json
-StandardOutput=append:$LOGS_DIR/singbox.log
-StandardError=append:$LOGS_DIR/singbox.log
-Restart=always
-RestartSec=5s
-[Install]
-WantedBy=multi-user.target
-EOF
+            gen_sb_unit_systemd > /etc/systemd/system/sb.service
             systemctl daemon-reload
-            systemctl enable sb
+            systemctl enable sb > /dev/null 2>&1
+            systemctl is-enabled sb > /dev/null 2>&1 \
+                || yellow "⚠ systemctl enable sb 失败，重启后 sing-box 可能不会自动启动"
             # ⚠️ 必须用 restart 而不是 start：覆盖安装时 sb 服务已在运行，
             #    `systemctl start` 对处于 active 的单元是空操作，新写入的 sb.json 不会生效，
             #    旧进程会继续占着旧端口，而 nginx/订阅已按新端口生成 → 节点全 502
@@ -3563,35 +3599,7 @@ EOF
             #    优先改用 supervise-daemon 托管：进程退出即按 respawn_* 自动重启，并把 stdout/stderr
             #    落盘到 supervise-singbox.log，方便下次出问题时看到 Go 的 panic 栈。
             #    老版本 openrc 没有 supervise-daemon 时回退到原来的 command_background 行为。
-            local _sb_sup_conf
-            if command -v supervise-daemon > /dev/null 2>&1; then
-                _sb_sup_conf='supervisor="supervise-daemon"
-respawn_delay=5
-respawn_max=0
-respawn_period=60
-output_log="'"$LOGS_DIR"'/supervise-singbox.log"'
-            else
-                _sb_sup_conf='command_background=yes'
-            fi
-            cat > /etc/init.d/sing-box << EOF
-#!/sbin/openrc-run
-description="sb service"
-command="$SINGBOX_FOLDER_PATH/sing-box"
-command_args="run -c $SINGBOX_FOLDER_PATH/sb.json"
-pidfile="/run/sing-box.pid"
-${_sb_sup_conf}
-# 小内存机器（<1G，LXC 小鸡常见）：给 Go 运行时一个软上限 + 压低 GC 阈值，
-# 避免流量高峰时堆无限增长把容器撑爆、被内核 OOM 直接杀掉（口径与 systemd 分支一致）
-_mem_kb=\$(awk '/^MemTotal:/{print \$2}' /proc/meminfo 2>/dev/null)
-[ -z "\$GOMEMLIMIT" ] && [ -n "\$_mem_kb" ] && [ "\$_mem_kb" -lt 1048576 ] && export GOMEMLIMIT=\$(( _mem_kb * 25 / 100 ))KiB
-[ -z "\$GOGC" ] && [ -n "\$_mem_kb" ] && [ "\$_mem_kb" -lt 1048576 ] && export GOGC=30
-[ -z "\$GOMAXPROCS" ] && [ -n "\$_mem_kb" ] && [ "\$_mem_kb" -lt 1048576 ] && export GOMAXPROCS=1
-depend() { need net; }
-start_pre() {
-    [ -f /etc/iptables/rules.v4 ] && iptables-restore < /etc/iptables/rules.v4 2>/dev/null || true
-    [ -f /etc/iptables/rules.v6 ] && ip6tables-restore < /etc/iptables/rules.v6 2>/dev/null || true
-}
-EOF
+            gen_sb_unit_openrc > /etc/init.d/sing-box
             chmod +x /etc/init.d/sing-box
             # 同上：openrc 对已启动的服务执行 start 也是空操作，覆盖安装必须 restart
             if [ "${DEBUG_FLAG:-0}" = "1" ]; then
@@ -4419,8 +4427,12 @@ EOF
     chmod 600 /etc/systemd/system/argo.service 2>/dev/null || true
 
     systemctl daemon-reload
-    systemctl enable argo
-    systemctl start argo
+    systemctl enable argo > /dev/null 2>&1
+    systemctl is-enabled argo > /dev/null 2>&1 \
+        || yellow "⚠ systemctl enable argo 失败，重启后 Argo 隧道可能不会自动拉起"
+    # 覆盖安装必须 restart：start 对已 active 的单元是空操作，
+    # 换了 tunnel token / tunnel.yml 后旧进程会继续按旧配置跑（与 sb.service 同理）
+    systemctl restart argo
     echo ""
     debug_print green "✅ Argo 服务已启动并成功设置开机自启动（systemd）"
 }
@@ -4487,11 +4499,13 @@ EOF
     chmod +x /etc/init.d/argo
     if [ "${DEBUG_FLAG:-0}" = "1" ]; then
         rc-update add argo default
-        rc-service argo start
+        rc-service argo restart
     else
         rc-update add argo default > /dev/null 2>&1
-        rc-service argo start > /dev/null 2>&1
+        rc-service argo restart > /dev/null 2>&1
     fi
+    [ -e /etc/runlevels/default/argo ] \
+        || yellow "⚠ rc-update add argo 失败，重启后 Argo 隧道可能不会自动拉起"
     debug_print green "✅ Argo 服务已成功安装并启动（openrc）"
 }
 
