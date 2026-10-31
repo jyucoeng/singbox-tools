@@ -954,6 +954,19 @@ sb log_stop        查看服务停止原因日志（排查崩溃用）
 
 ## 2.7 版本变更信息
 
+v3.2.26 (2026-10-31)
+ > 统一 sing-box 的服务名：`sb autostart` 不再造出与 `sb.service` 重名的单元抢端口。
+
+ - **背景**：`sb autostart`（`enable_autostart`）一直用 `singbox-service` 当服务名，而正常安装路径（`sbbout`）写的是 `sb.service`，两者的 `ExecStart` 完全相同
+ - **后果 1（真机实证）**：装完再跑一次 `sb autostart`，两个单元同时 enabled。重启机器双开，后起的那个报 `FATAL start service: start inbound/tuic[tuic-sb]: listen udp 0.0.0.0:31005: bind: address already in use` → `Restart=always` 每 2 秒重启一次，5 次后 `Failed with result 'exit-code'`，日志被刷爆
+ - **后果 2**：`sb autostart_off` 只删 `singbox-service`，`sb.service` 照样自启 —— 用户以为关了，实际没关
+ - **修法**：抽出 `gen_sb_unit_systemd()` / `gen_sb_unit_openrc()` 两个模板函数，`sbbout()` 与 `enable_autostart()` 共用一份，服务名统一为 systemd 的 `sb` / openrc 的 `sing-box`
+ - `enable_autostart` 先清理历史遗留的 `singbox-service`（disable + 删文件 + 黄色提示）；已有 `sb.service` 就只补 `enable`（保留 sbbout 写的 iptables 恢复 / 日志重定向 / 内存上限），没有才按模板重建
+ - `disable_autostart` 两套名字都收，都没找到时给明确提示，而不是假装成功
+ - **顺带修 argo 的同类问题**：`install_argo_service_systemd` 与 openrc 分支原来用 `start`，对已 active 的单元是空操作 —— 覆盖安装换了 tunnel token 后旧进程继续按旧配置跑。改为 `restart`（`sb.service` 早前踩过同一个坑）
+ - **`systemctl enable sb` / `enable argo` / `rc-update add` 补结果校验**：失败时黄色告警，不再静默
+ - 实测（Debian 13）：`sb autostart` 只产出 `sb.service`；手工造一个遗留 `singbox-service.service` 后会自动清理；`sb autostart_off` 正确关停；重装 3.2.26 后整机 reboot，`sb` / `argo` / `sb-nginx` 全部自启、三个 `NRestarts` 均为 0、订阅 200
+
 v3.2.25 (2026-10-31)
  > 3.2.24 刚加的 unit 在真机上起不来：systemd 读不到 pid，僵在 `activating` 死循环。
 
