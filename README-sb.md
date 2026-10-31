@@ -775,6 +775,40 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 
 
 
+### 3、 沙箱 Nginx 的服务托管与自启
+
+沙箱 Nginx 装在 `$SINGBOX_FOLDER_PATH/nginx`（默认 `/root/doraemon/nginx`），用 jirutka 的静态二进制，**不碰系统的 `nginx` 包，也不写 `/etc/nginx`**。它与系统 Nginx 可以同时存在、各管各的端口。
+
+自 v3.2.24 起，沙箱 Nginx 交给系统的服务管理器托管，不再靠 cron 看门狗兜底：
+
+| 项目 | systemd | openrc |
+|---|---|---|
+| 服务名 | `sb-nginx.service` | `/etc/init.d/sb-nginx` |
+| 开机自启 | `systemctl is-enabled sb-nginx` | `rc-update show default \| grep sb-nginx` |
+| 进程类型 | `Type=forking` + `PIDFile` | `supervise-daemon`（无则 `command_background`） |
+| 被杀自动拉起 | `Restart=always`，`RestartSec=10s` | `respawn_delay=10` |
+| 熔断 | `StartLimitBurst=5` / `StartLimitIntervalSec=300` | `respawn_max=5` / `respawn_period=300` |
+
+几点设计取舍：
+
+- **服务名固定 `sb-nginx`**，永远不与系统的 `nginx.service` 撞名，`cleanup_nginx` 卸载时也只删这一个文件
+- **`Restart=always` 带熔断而非无限重启**：Nginx 的故障（端口被占、配置写错）多是持久性的，无限重启只会把 `error.log` 刷爆；连续 5 次失败后停在 `failed` 等人工介入，在菜单里手动启动时会先 `reset-failed` 复位
+- **人工停止不会被自动拉回**：`systemctl stop sb-nginx` / `sb nginx_stop` 之后服务保持 `inactive`，这是 systemd 的正常语义，`Restart=always` 只针对异常退出
+- **看门狗避让**：出现了 unit 之后，cron 那个每 2 分钟的 `singbox-watchdog.sh` 会跳过 Nginx 分支，避免两边同时拉起撞端口
+- **单元文件带 `# unit-rev: 2` 标记**：老版本装过的机器再跑一次脚本会自动重写 unit，不需要手工删
+
+常用操作：
+
+```bash
+sb nginx_status     查看 Nginx 状态
+sb nginx_start      启动（等价 systemctl start sb-nginx）
+sb nginx_stop       停止（不会被 Restart=always 拉回）
+sb nginx_restart    重启
+```
+
+实测（Debian 13）：`kill -9` master 后第 11 秒自动拉起；`systemctl stop` 后不再复活；整机 `reboot` 后随系统自启，`NRestarts=0` 一次起成功。
+
+
 ## 2.3 协议组合速查
 
 | 你设置了什么 | 实际生成的节点 |
@@ -919,6 +953,63 @@ sb log_stop        查看服务停止原因日志（排查崩溃用）
 ```
 
 ## 2.7 版本变更信息
+
+v3.2.25 (2026-10-31)
+ > 3.2.24 刚加的 unit 在真机上起不来：systemd 读不到 pid，僵在 `activating` 死循环。
+
+ - **根因 1（致命）**：`PIDFile="$SB_NGINX_PID"` 带了引号。`PIDFile=` 与 `ExecStart` 不同，**不做引号解析**，`"` 被当成路径字符，实际去找 `/run/"/root/doraemon/nginx/logs/nginx.pid"`，报 `Can't open PID file (yet?)` → 等满 `TimeoutStartSec=30` → `Failed with result 'timeout'` → `Restart=always` 立刻重启 → 无限循环。表象很坑：进程在跑、订阅 200，但 `ActiveState=activating`、`MainPID=0`
+ - **修法 1**：`PIDFile=$SB_NGINX_PID` 去掉引号。`ExecStart` / `ExecStop` / `ExecReload` 的引号**保留**（那几项 systemd 会正常剥掉，用来兼容安装目录含空格）
+ - **根因 2**：`_sb_nginx_stop_raw` 只看 unit 文件存在就 `systemctl stop`。老安装升级上来的那一次，unit 是刚建的、nginx 还是脚本手工起的进程（不在 systemd 的 cgroup 里）——`systemctl stop` 停不掉它，却会执行 `ExecStop=nginx -s quit`，拿 pid 文件**误杀一个不受 systemd 管理的进程**
+ - **修法 2**：先看 `systemctl is-active`，只有 `active` / `activating` / `reloading` 才交给服务管理器，否则回退按 pid 文件停
+ - unit 模板标记 `unit-rev: 2`，装过 3.2.24 的机器下次执行脚本会自动重写 unit，无需手工删文件
+ - 实测（Debian 13 / VPS）：`kill -9` master → 第 11s 自动拉起、订阅恢复 200；`systemctl stop` 后 12s 仍 `inactive`（人工停的不复活）；`systemctl start` 恢复；`systemctl reload` 平滑重载、`MainPID` 不变；整机 `reboot` 后 55s 起来，`sb-nginx` 自启、`NRestarts=0`
+
+v3.2.24 (2026-10-31)
+ > 沙箱 Nginx 接入服务托管：随开机自启 + 被杀自动拉起。
+
+ - **问题**：沙箱 nginx 一直完全脱离服务管理器，只有 cron 看门狗（每 2 分钟）兜底
+   - 被 OOM 杀掉后最多躺 2 分钟
+   - **整机重启后根本不起来**：pid 文件不在了，而看门狗按设计「没有 pid 文件 = 用户主动停的」不碰 → 订阅入口长期 404，直到用户再跑一次脚本
+ - **新增 unit**：systemd 用 `sb-nginx.service`，openrc 用 `/etc/init.d/sb-nginx`；服务名固定 `sb-nginx`，**绝不与系统的 `nginx.service` 撞名**
+ - **`Type=forking` + `PIDFile`**：`nginx.conf` 里是 `daemon on;`，想用 `Type=simple` 就得 `-g 'daemon off;'`，但那会和配置文件里的 `daemon on;` 撞 `"daemon" directive is duplicate`，nginx 直接起不来
+ - **`Restart=always` 但带熔断**（`RestartSec=10s` / `StartLimitBurst=5` / `StartLimitIntervalSec=300`）：nginx 与 sing-box 不同，端口被占、配置写错都是**持久性**故障，无限重启只会把 `error.log` 刷爆；5 次后停在 `failed` 等人工，用户在菜单里手动启动时会 `reset-failed` 复位
+ - **openrc 侧**优先 `supervise-daemon`（`respawn_delay=10` / `respawn_max=5` / `respawn_period=300`），无此能力时回退 `command_background`
+ - `start_nginx_service` 改走统一入口 `_sb_nginx_start_raw`；`nginx_stop` 走服务管理器（否则 `Restart=always` 会立刻把刚停的进程拉回来）
+ - **看门狗避让**：`gen_watchdog_script` 生成的脚本检测到 unit 存在就跳过 nginx 分支，避免两边同时拉起撞端口
+ - `cleanup_nginx` 先调 `remove_nginx_unit`（stop → disable → 删文件 → `daemon-reload`）
+ - 新增函数：`_sb_nginx_unit_exists` / `install_nginx_unit` / `_sb_nginx_start_raw` / `_sb_nginx_stop_raw` / `remove_nginx_unit`
+
+v3.2.23 (2026-10-31)
+ > 旧版遗留的系统 Nginx 抢端口时自动治愈 —— 修掉「订阅 200 假成功」。
+
+ - **背景**：2.0.x 时期脚本会 `apt-get install -y nginx` / `yum install -y nginx` / `apk add nginx`，并把订阅站点写进 `/etc/nginx/conf.d/singbox.conf`（或 `/etc/nginx/http.d/`）
+ - **根因**：3.2.22 的 `cleanup_legacy_system_nginx_conf` **只 `rm` 不 reload**。系统 nginx 内存里旧 server 块继续占着 31007 / 8001，而旧 location 又正好 serve 新生成的 `sub.txt`（uuid 还是同一个）→ **订阅 HTTP 200，但服务者是系统 nginx 不是沙箱 nginx**。用户以为装好了，一旦 `systemctl restart nginx` 或重启机器，配置重读、旧块消失，订阅立刻 404
+ - **修法**：删完遗留配置补一次**平滑重载**，端口立刻让出来，沙箱 nginx 自己就能起来
+   - 新增 `_system_nginx_bin()`：候选 `/usr/sbin/nginx`、`/usr/local/sbin/nginx`、`/usr/local/nginx/sbin/nginx`、`/www/server/nginx/sbin/nginx`（宝塔）
+   - 新增 `_system_nginx_running()`：`pgrep` 优先，`ps -A | grep 'nginx: master process'` 兜底（busybox）
+   - 新增 `_reload_system_nginx_if_safe()`：**先 `nginx -t`，配置不过就绝不 reload**；然后 `systemctl reload nginx` → `rc-service nginx reload` → `"$bin" -s reload` 三级回退；**绝不 stop / disable 外部 nginx**
+ - `nginx_port_owner_diagnose` 加自愈分支：占用者是 nginx 时先试一次 reload，`sleep 1` 后**重新检测端口归属**，真释放了才 `green` 放行；没释放说明是用户自己的站点，照旧报诊断、不掩盖真实冲突
+ - **顺带修一个显示 bug**：`_fcomm` 的 sed 表达式 `s/users:(("\([^"]*\)".*/\1/p` 在 GNU/BSD sed 上都是「字面反斜杠 + 字面括号」，永远匹配不到，结果整行 `ss` 输出被当进程名打印成 `占用者进程: LISTEN 0 511 127.0.0.1:8001 ... nginx (pid=...)`。改用 `grep -o` 提取，并且多 pid 时**优先挑 `ppid=1` 的 master**（`ss` 里 worker 常排在 master 前面，照老逻辑会提示用户去 kill 一个 worker，白干）
+ - 实测（Debian 13，系统 nginx `active+enabled`）：遗留配置场景零 `❌` 自动接管、订阅 200；用户自有站点场景正确报诊断、站点仍返回原内容、系统 nginx 保持 `active+enabled`；`systemctl restart nginx` 后沙箱 nginx 不受牵连、31007 归属不变
+
+v3.2.22 (2026-10-31)
+ > 修端口归属判定：沙箱 nginx 的 worker 不再被误判成系统 nginx。
+
+ - 3.2.21 上真机后立刻暴露两个 bug（macOS 本地无 `ss` / `/proc`，测不出来）
+ - **bug 1**：`ss -tln` **缺 `-p`** → 根本不输出 `users:(...)` 段 → 永远解析不到 pid，每次都退化到 `/proc` 全扫兜底。能出结果所以本地看不出，但明显变慢
+ - **bug 2**：worker 被误判。真实输出 `users:(("nginx",pid=510688,fd=5),("nginx",pid=510687,fd=5))` —— **worker 排在 master 前面**，而 worker 的 cmdline 只有 `nginx: worker process`，不含安装路径。旧逻辑「取第一个 pid + cmdline 匹配 prefix」一旦 ss 分支修好就会把自家 worker 报成「系统 / 宝塔 Nginx」，天天误报
+ - **修法**：`_listener_pid_of_port` → `_listener_pids_of_port`，返回该端口**全部** pid；新增 `_pid_ppid()`（从最后一个 `) ` 之后切，兼容 comm 含空格/括号）；归属判定改为三条任一成立即放行 —— 命中 master 本人 / `_pid_ppid` 等于 master（认亲 worker）/ cmdline 带 `$SB_NGINX_DIR`
+ - 实测：`_listener_pids_of_port 31007` 返回 `510687 510688`；`_pid_ppid 510688` = 510687；诊断静默放行零误报。`apk add nginx` 造真系统 nginx 后诊断正确报「占用者是【系统 / 宝塔 Nginx】」
+
+v3.2.21 (2026-10-31)
+ > 系统 Nginx 抢端口时给出明确诊断；订阅失败不再中断安装。
+
+ - **背景**：旧版装过系统 nginx 的机器，`nginx_pt` / `argo_pt` 被占 → `ins()` 里 `ensure_nginx_if_needed || exit 1` 直接中断，用户看到「安装失败」，但 sing-box 节点其实已经通了，只是订阅 404
+ - 新增 `_listener_pid_of_port()`：`ss` 优先，`/proc/net/tcp` LISTEN inode 扫 `/proc/*/fd` 兜底（无 `ss` 的极简环境）
+ - 新增 `nginx_port_owner_diagnose()`：区分系统/宝塔 nginx 与沙箱 nginx，给出三选一解法 —— `systemctl disable --now nginx` / `rc-update del nginx` / `nginx_pt=18080` 换端口重装
+ - `start_nginx_service` 在 bind 之前插入诊断，把「谁占了端口」直接说清楚，而不是等 bind 失败后只丢一句 `error.log`
+ - **订阅失败不再中断安装**：改为 `NGINX_SETUP_FAILED=1` + 黄色告警，`ins()` 末尾收尾说明「sing-box 已就绪，但订阅服务（沙箱 Nginx）未就绪」，退出码 0
+ - 修文案 bug：`bash <(curl -Ls 安装地址) rep 前设置 nginx_pt` → `nginx_pt=18080 bash <(curl -Ls 安装地址) rep`（`rep` 不吃位置参数，端口只能走环境变量）
 
 v3.2.20 (2026-10-29)
  > Argo token 校验过严：带 `=` 的**合法** token 被拒。
