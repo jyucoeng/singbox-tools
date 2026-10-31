@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.24(2026-10-31)"
+VERSION="3.2.25(2026-10-31)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -1300,14 +1300,14 @@ install_nginx_unit() {
     if command -v systemctl > /dev/null 2>&1 && [ -d /run/systemd/system ]; then
         local _unit="/etc/systemd/system/${SB_NGINX_SVC}.service"
         # 已写过同一版模板就跳过，避免每次 ins 都 daemon-reload
-        if [ -f "$_unit" ] && grep -q '^# unit-rev: 1$' "$_unit" 2> /dev/null; then
+        if [ -f "$_unit" ] && grep -q '^# unit-rev: 2$' "$_unit" 2> /dev/null; then
             return 0
         fi
         cat > "$_unit" << EOF
 [Unit]
 Description=sb nginx service (sandboxed subscribe/argo gateway)
 After=network.target
-# unit-rev: 1
+# unit-rev: 2
 # 与 sb.service 不同：nginx 的故障（端口被占/配置写错）多为持久性，
 # 重启 5 次仍失败就停在 failed 等人工介入，不无限刷日志。
 StartLimitBurst=5
@@ -1315,7 +1315,7 @@ StartLimitIntervalSec=300
 
 [Service]
 Type=forking
-PIDFile="$SB_NGINX_PID"
+PIDFile=$SB_NGINX_PID
 NoNewPrivileges=yes
 LimitNOFILE=65535
 ExecStartPre=/bin/sh -c 'test -x "$SB_NGINX_BIN"'
@@ -1339,7 +1339,7 @@ EOF
 
     if command -v rc-service > /dev/null 2>&1; then
         local _init="/etc/init.d/${SB_NGINX_SVC}"
-        if [ -f "$_init" ] && grep -q 'unit-rev: 1' "$_init" 2> /dev/null; then
+        if [ -f "$_init" ] && grep -q 'unit-rev: 2' "$_init" 2> /dev/null; then
             return 0
         fi
         local _sup
@@ -1354,7 +1354,7 @@ output_log="'"$SB_NGINX_DIR"'/logs/nginx-supervise.log"'
         fi
         cat > "$_init" << EOF
 #!/sbin/openrc-run
-# unit-rev: 1
+# unit-rev: 2
 description="sb nginx service (sandboxed subscribe/argo gateway)"
 command="$SB_NGINX_BIN"
 command_args="-p \"$SB_NGINX_DIR/\" -c conf/nginx.conf"
@@ -1392,14 +1392,26 @@ _sb_nginx_start_raw() {
 
 # 统一停止入口：返回 0 表示「已交给服务管理器并停好了」，调用方可直接返回
 _sb_nginx_stop_raw() {
+    # ⚠️ 只有「确实由服务管理器托管、且当前就是 active」时才走 systemctl stop。
+    #    否则（老安装升级上来：unit 刚建好但 nginx 还是脚本手工起的那个进程）
+    #    systemctl stop 既停不掉它，还会执行 ExecStop=`nginx -s quit`，
+    #    拿 pid 文件去误杀一个不受 systemd 管理的进程 —— 状态对不上，容易连环出错。
     if _sb_nginx_unit_exists; then
         if command -v systemctl > /dev/null 2>&1 && [ -d /run/systemd/system ]; then
-            systemctl stop "$SB_NGINX_SVC" > /dev/null 2>&1
-            return 0
+            case "$(systemctl is-active "$SB_NGINX_SVC" 2> /dev/null)" in
+                active | activating | reloading)
+                    systemctl stop "$SB_NGINX_SVC" > /dev/null 2>&1
+                    return 0
+                    ;;
+            esac
+            return 1
         fi
         if command -v rc-service > /dev/null 2>&1; then
-            rc-service "$SB_NGINX_SVC" stop > /dev/null 2>&1
-            return 0
+            if rc-service "$SB_NGINX_SVC" status > /dev/null 2>&1; then
+                rc-service "$SB_NGINX_SVC" stop > /dev/null 2>&1
+                return 0
+            fi
+            return 1
         fi
     fi
     return 1
