@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.23(2026-10-31)"
+VERSION="3.2.24(2026-10-31)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -54,6 +54,7 @@ SB_NGINX_BIN="$SB_NGINX_DIR/sbin/nginx"                          # 静态二进�
 SB_NGINX_CONF="$SB_NGINX_DIR/conf/nginx.conf"                    # 主配置
 SB_NGINX_SUB_CONF="$SB_NGINX_DIR/conf/conf.d/singbox.conf"       # 订阅/ws server 块
 SB_NGINX_PID="$SB_NGINX_DIR/logs/nginx.pid"                      # pid 文件
+SB_NGINX_SVC="sb-nginx"                                          # 沙箱 Nginx 的服务名（systemd/openrc，与系统 nginx 无关）
 # 主下载源（jirutka/nginx-binaries 静态构建），SB_NGINX_URL 可整体覆盖
 SB_NGINX_URL_BASE="https://github.com/jirutka/nginx-binaries/raw/binaries"
 # 备用下载源（jsDelivr CDN，内容哈希与主源一致），SB_NGINX_URL_BACKUP 可整体覆盖
@@ -1275,6 +1276,154 @@ install_nginx_pkg() {
 }
 
 # Check if the given port is in the list of HTTPS CDN ports
+# ================== 沙箱 Nginx 服务托管（systemd / openrc）==================
+# 为什么要托管：沙箱 nginx 原来完全脱离服务管理器，只有 cron 看门狗（每 2 分钟）兜底，
+#   → 被 OOM 杀掉最多躺 2 分钟；
+#   → 整机重启后根本不起来（pid 文件不在了，而看门狗按设计「没有 pid 文件 = 用户主动停的」不碰）。
+# 这里给它建独立 unit，服务名固定为 `sb-nginx`，绝不与系统的 `nginx.service` 撞名。
+#
+# 两个实现细节：
+#   1) nginx.conf 里是 `daemon on;`，所以 unit 用 Type=forking + PIDFile 跟踪 master。
+#      不能写 `-g 'daemon off;'` —— 那会和配置文件里的 `daemon on;` 撞
+#      "daemon directive is duplicate"，nginx 直接起不来。
+#   2) 用 Restart=always 但带熔断（RestartSec=10s / StartLimitBurst=5 / 300s）。
+#      nginx 与 sing-box 不同：端口被别人占、配置写错都是**持久性**故障，
+#      无限重启只会把 error.log 刷爆；5 次之后停在 failed 等人工介入更合适。
+#      用户在菜单里手动启动时会 reset-failed，相当于「我改好了，再试一次」。
+_sb_nginx_unit_exists() {
+    [ -f "/etc/systemd/system/${SB_NGINX_SVC}.service" ] || [ -f "/etc/init.d/${SB_NGINX_SVC}" ]
+}
+
+install_nginx_unit() {
+    [ -x "$SB_NGINX_BIN" ] || return 1
+
+    if command -v systemctl > /dev/null 2>&1 && [ -d /run/systemd/system ]; then
+        local _unit="/etc/systemd/system/${SB_NGINX_SVC}.service"
+        # 已写过同一版模板就跳过，避免每次 ins 都 daemon-reload
+        if [ -f "$_unit" ] && grep -q '^# unit-rev: 1$' "$_unit" 2> /dev/null; then
+            return 0
+        fi
+        cat > "$_unit" << EOF
+[Unit]
+Description=sb nginx service (sandboxed subscribe/argo gateway)
+After=network.target
+# unit-rev: 1
+# 与 sb.service 不同：nginx 的故障（端口被占/配置写错）多为持久性，
+# 重启 5 次仍失败就停在 failed 等人工介入，不无限刷日志。
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+[Service]
+Type=forking
+PIDFile="$SB_NGINX_PID"
+NoNewPrivileges=yes
+LimitNOFILE=65535
+ExecStartPre=/bin/sh -c 'test -x "$SB_NGINX_BIN"'
+ExecStartPre=/bin/sh -c 'test -f "$SB_NGINX_CONF"'
+ExecStart="$SB_NGINX_BIN" -p "$SB_NGINX_DIR/" -c conf/nginx.conf
+ExecReload="$SB_NGINX_BIN" -p "$SB_NGINX_DIR/" -c conf/nginx.conf -s reload
+ExecStop="$SB_NGINX_BIN" -p "$SB_NGINX_DIR/" -c conf/nginx.conf -s quit
+Restart=always
+RestartSec=10s
+TimeoutStartSec=30
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        systemctl daemon-reload > /dev/null 2>&1
+        systemctl enable "$SB_NGINX_SVC" > /dev/null 2>&1
+        debug_print green "✅ 已启用沙箱 Nginx 服务托管（${SB_NGINX_SVC}.service，随开机自启）"
+        return 0
+    fi
+
+    if command -v rc-service > /dev/null 2>&1; then
+        local _init="/etc/init.d/${SB_NGINX_SVC}"
+        if [ -f "$_init" ] && grep -q 'unit-rev: 1' "$_init" 2> /dev/null; then
+            return 0
+        fi
+        local _sup
+        if command -v supervise-daemon > /dev/null 2>&1; then
+            _sup='supervisor="supervise-daemon"
+respawn_delay=10
+respawn_max=5
+respawn_period=300
+output_log="'"$SB_NGINX_DIR"'/logs/nginx-supervise.log"'
+        else
+            _sup='command_background=yes'
+        fi
+        cat > "$_init" << EOF
+#!/sbin/openrc-run
+# unit-rev: 1
+description="sb nginx service (sandboxed subscribe/argo gateway)"
+command="$SB_NGINX_BIN"
+command_args="-p \"$SB_NGINX_DIR/\" -c conf/nginx.conf"
+pidfile="$SB_NGINX_PID"
+${_sup}
+EOF
+        chmod 755 "$_init" 2> /dev/null
+        rc-update add "$SB_NGINX_SVC" default > /dev/null 2>&1
+        debug_print green "✅ 已启用沙箱 Nginx 服务托管（/etc/init.d/${SB_NGINX_SVC}，随开机自启）"
+        return 0
+    fi
+
+    debug_log "【调试】install_nginx_unit：当前环境无 systemd/openrc，跳过服务托管"
+    return 0
+}
+
+# 统一启动入口：有 unit 就走服务管理器（能 reset 熔断计数），没有就直跑二进制（老行为）
+_sb_nginx_start_raw() {
+    if _sb_nginx_unit_exists; then
+        if command -v systemctl > /dev/null 2>&1 && [ -d /run/systemd/system ]; then
+            # 熔断后用户手动触发，视为「我改好了，再试一次」
+            if [ "$(systemctl is-failed "$SB_NGINX_SVC" 2> /dev/null)" = "failed" ]; then
+                systemctl reset-failed "$SB_NGINX_SVC" > /dev/null 2>&1
+            fi
+            systemctl start "$SB_NGINX_SVC" > /dev/null 2>&1
+            return $?
+        fi
+        if command -v rc-service > /dev/null 2>&1; then
+            rc-service "$SB_NGINX_SVC" start > /dev/null 2>&1
+            return $?
+        fi
+    fi
+    "$SB_NGINX_BIN" -p "$SB_NGINX_DIR/" -c conf/nginx.conf
+}
+
+# 统一停止入口：返回 0 表示「已交给服务管理器并停好了」，调用方可直接返回
+_sb_nginx_stop_raw() {
+    if _sb_nginx_unit_exists; then
+        if command -v systemctl > /dev/null 2>&1 && [ -d /run/systemd/system ]; then
+            systemctl stop "$SB_NGINX_SVC" > /dev/null 2>&1
+            return 0
+        fi
+        if command -v rc-service > /dev/null 2>&1; then
+            rc-service "$SB_NGINX_SVC" stop > /dev/null 2>&1
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# 卸载时移除服务托管（先停再取消自启，最后删文件）
+remove_nginx_unit() {
+    local _svc="$SB_NGINX_SVC"
+    if [ -f "/etc/systemd/system/${_svc}.service" ]; then
+        systemctl stop "$_svc" > /dev/null 2>&1
+        systemctl disable "$_svc" > /dev/null 2>&1
+        rm -f "/etc/systemd/system/${_svc}.service" 2> /dev/null
+        systemctl daemon-reload > /dev/null 2>&1
+        green "  ✓ 已移除沙箱 Nginx 服务托管（${_svc}.service）"
+    fi
+    if [ -f "/etc/init.d/${_svc}" ]; then
+        rc-service "$_svc" stop > /dev/null 2>&1
+        rc-update del "$_svc" default > /dev/null 2>&1
+        rm -f "/etc/init.d/${_svc}" 2> /dev/null
+        green "  ✓ 已移除沙箱 Nginx 服务托管（/etc/init.d/${_svc}）"
+    fi
+    return 0
+}
+
 is_https_cdn_port() {
     local p="${1:-}"
     local x
@@ -3248,10 +3397,16 @@ elif command -v rc-service >/dev/null 2>&1; then
     ensure_openrc argo
 fi
 
-# 沙箱 nginx：不在 systemd 里，靠 pid 文件判断
+# 沙箱 nginx：若已交由 systemd/openrc 托管，重启交给服务管理器，看门狗不插手
+#   （两边都拉会撞端口，第二个 bind 失败，只是脏日志）
+_ngx_managed=0
+[ -f "/etc/systemd/system/$SB_NGINX_SVC.service" ] && _ngx_managed=1
+[ -f "/etc/init.d/$SB_NGINX_SVC" ] && _ngx_managed=1
+
+# 未托管时（老安装 / 无 systemd 环境）：靠 pid 文件判断
 #   没有 pid 文件 = 用户主动停的（nginx_stop 会删），不碰
 #   有 pid 文件但进程没了 = 被 OOM 杀了，重启
-if [ -x "\$NGINX_BIN" ] && [ -f "\$NGINX_PID" ]; then
+if [ "\$_ngx_managed" = "0" ] && [ -x "\$NGINX_BIN" ] && [ -f "\$NGINX_PID" ]; then
     _pid=\$(cat "\$NGINX_PID" 2>/dev/null | tr -d ' \r\n')
     _alive=0
     if [ -n "\$_pid" ] && kill -0 "\$_pid" 2>/dev/null; then
@@ -3919,6 +4074,8 @@ start_nginx_service() {
         return 1
     }
     [ -f "$SB_NGINX_CONF" ] || write_sb_nginx_conf
+    # 补建服务托管（幂等）：菜单里直接「启动 nginx」时也要落到 systemd 上
+    install_nginx_unit > /dev/null 2>&1 || true
 
     if sb_nginx_running; then
         debug_print green "✅ 沙箱 Nginx 已在运行"
@@ -3930,7 +4087,7 @@ start_nginx_service() {
     # 而不是等 bind 失败后只丢一句 error.log 让用户自己猜。
     nginx_port_owner_diagnose || true
 
-    if ! "$SB_NGINX_BIN" -p "$SB_NGINX_DIR/" -c conf/nginx.conf; then
+    if ! _sb_nginx_start_raw; then
         red "❌ 沙箱 Nginx 启动失败（详见 $SB_NGINX_DIR/logs/error.log）"
         # 定位 bind 失败端口：常见于外部（宝塔/系统）nginx 已占用 nginx_pt/argo_pt
         # 本脚本绝不操作外部 nginx，只能提示用户释放端口或改用其他端口
@@ -3971,6 +4128,13 @@ nginx_start() {
 
 nginx_stop() {
     debug_log "【调试】nginx_stop：停止沙箱 Nginx"
+    # 已托管时必须走服务管理器：直接对 master 发信号会被 systemd 的 Restart=always 立刻拉回来
+    if _sb_nginx_stop_raw; then
+        sleep 1
+        rm -f "$SB_NGINX_PID" 2> /dev/null
+        debug_log "【调试】nginx_stop：沙箱 Nginx 服务已停止（${SB_NGINX_SVC}）"
+        return 0
+    fi
     local pid
     if [ -s "$SB_NGINX_PID" ]; then
         pid="$(cat "$SB_NGINX_PID" 2> /dev/null | tr -d ' \r\n')"
@@ -4481,6 +4645,9 @@ ensure_nginx_if_needed() {
 
     # ✅ 需要 nginx：生成配置（你原来的逻辑）
     setup_nginx_subscribe || return 1
+
+    # ✅ 建服务托管 unit（配置已就位）：随开机自启 + 被杀自动拉起
+    install_nginx_unit > /dev/null 2>&1 || true
 
     # ✅ 只有订阅开启时才清空/准备 sub.txt
     if is_true "$(get_subscribe_flag)"; then
@@ -5783,6 +5950,9 @@ refresh_sb_and_sub() {
 # 绝不 pkill 按名进程、绝不 stop/disable 系统或宝塔的 nginx 服务。
 cleanup_nginx() {
     local mode="${1:-del}"
+
+    # 先移除服务托管，再停进程（否则 systemd 会把刚停的 nginx 又拉起来）
+    remove_nginx_unit
 
     # 停沙箱进程（按 pid 文件）
     nginx_stop
