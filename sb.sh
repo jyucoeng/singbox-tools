@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.21(2026-10-31)"
+VERSION="3.2.22(2026-10-31)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -3704,20 +3704,23 @@ EOF
 
 # 启动沙箱 Nginx（按 pid 文件操作，绝不碰系统/宝塔 nginx 进程或服务单元）
 # ================== 端口占用诊断（只读，绝不动外部进程） ==================
-# 端口 → 监听进程 pid。ss 优先；没有 ss（busybox / Alpine 精简版）时走 /proc 兜底。
-# 只在安装/启动沙箱 Nginx 时调用，频率极低，/proc 遍历开销可接受。
-_listener_pid_of_port() {
-    local port="${1:-}" line pid="" inode="" _hex _d _fd
+# 端口 → 监听进程 pid（可能多个：nginx 的 master 与 worker 会同列，一行一个）。
+# ss -tlnp 优先；无 ss（busybox 精简版）时走 /proc/net/tcp 的 LISTEN inode 兜底。
+# 只在安装/启动沙箱 Nginx 时调用，频率极低。
+_listener_pids_of_port() {
+    local port="${1:-}" line inode="" _hex _d _fd _hit=""
     case "$port" in '' | *[!0-9]*) return 1 ;; esac
 
     if command -v ss > /dev/null 2>&1; then
-        line="$(ss -tln 2> /dev/null | awk -v p=":${port}\$" '$4 ~ p {print; exit}')"
+        # ⚠️ 必须带 -p：`ss -tln` 不输出 users:(...) 段，拿不到 pid 就会静默退化到
+        #    /proc 兜底（能出结果但每次全扫 /proc/*/fd，进程多的机器上明显变慢）
+        line="$(ss -tlnp 2> /dev/null | awk -v p=":${port}\$" '$4 ~ p {print; exit}')"
         if [ -n "$line" ]; then
-            pid="$(printf '%s' "$line" | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | head -n1)"
-            [ -n "$pid" ] && {
-                printf '%s' "$pid"
+            _hit="$(printf '%s' "$line" | grep -o 'pid=[0-9][0-9]*' | cut -d= -f2 | sort -u)"
+            if [ -n "$_hit" ]; then
+                printf '%s\n' "$_hit"
                 return 0
-            }
+            fi
         fi
     fi
 
@@ -3728,18 +3731,31 @@ _listener_pid_of_port() {
         /proc/net/tcp /proc/net/tcp6 2> /dev/null | head -n1)"
     [ -n "$inode" ] || return 1
 
+    # worker 继承 master 的 listen fd，所以可能命中多个 pid，全部输出
     for _d in /proc/[0-9]*; do
         for _fd in "$_d"/fd/*; do
             [ -L "$_fd" ] || continue
             case "$(readlink "$_fd" 2> /dev/null)" in
                 "socket:[${inode}]")
-                    printf '%s' "${_d#/proc/}"
-                    return 0
+                    printf '%s\n' "${_d#/proc/}"
+                    _hit=1
+                    break
                     ;;
             esac
         done
     done
-    return 1
+    [ -n "$_hit" ]
+}
+
+# 进程的父 pid。/proc/<pid>/stat 的 comm 字段可能含空格和括号，
+# 所以从最后一个 ") " 之后切，再取第 2 列（state 之后的 ppid）。
+_pid_ppid() {
+    local pid="${1:-}" _rest
+    case "$pid" in '' | *[!0-9]*) return 1 ;; esac
+    [ -r "/proc/$pid/stat" ] || return 1
+    _rest="$(sed 's/.*) //' "/proc/$pid/stat" 2> /dev/null)" || return 1
+    [ -n "$_rest" ] || return 1
+    printf '%s' "$_rest" | awk '{print $2}'
 }
 
 # 安装/启动沙箱 Nginx 前的端口占用预检：明确区分「沙箱 Nginx」与「系统/宝塔 Nginx」。
@@ -3747,7 +3763,7 @@ _listener_pid_of_port() {
 # 背景：2.0.x 老版本会 apt/yum/apk 装系统 nginx 并 systemctl enable，
 #       升级到沙箱版后系统 nginx 仍开机自启、继续占着 80/8080，沙箱 nginx 必然 bind 失败。
 nginx_port_owner_diagnose() {
-    local _p _pid _comm _cmdline _sbpid="" _hit=0 _ports _seen=" "
+    local _p _pid _pids _comm _cmdline _sbpid="" _ports="" _seen=" " _own _hit=0
     # argo_pt 与 nginx_pt 相同时只诊断一次，避免同一端口刷两遍
     for _p in "$(_eff_nginx_pt)" "$(_eff_argo_pt)"; do
         [ -n "$_p" ] || continue
@@ -3759,24 +3775,40 @@ nginx_port_owner_diagnose() {
     [ -s "$SB_NGINX_PID" ] && _sbpid="$(cat "$SB_NGINX_PID" 2> /dev/null | tr -d ' \r\n')"
 
     for _p in $_ports; do
-        [ -n "$_p" ] || continue
-        _pid="$(_listener_pid_of_port "$_p")"
-        [ -n "$_pid" ] || continue
-        # 沙箱自己的 nginx master：不是冲突
-        if [ -n "$_sbpid" ] && [ "$_pid" = "$_sbpid" ]; then
-            continue
-        fi
+        _pids="$(_listener_pids_of_port "$_p" 2> /dev/null | tr '\n' ' ')"
+        [ -n "${_pids// /}" ] || continue
 
+        # 归属判定（任一成立即认为端口是自己的）：
+        #   1) 命中沙箱 master 本人；
+        #   2) 命中它的子进程 —— nginx worker 的 ppid 就是 master pid，
+        #      而 worker 的 cmdline 只有 "nginx: worker process"，不含安装路径；
+        #   3) cmdline 里带沙箱 prefix（历史 pid、被 wrapper 拉起等兜底）。
+        _own=""
+        for _pid in $_pids; do
+            if [ -n "$_sbpid" ] && [ "$_pid" = "$_sbpid" ]; then
+                _own=1
+                break
+            fi
+            if [ -n "$_sbpid" ] && [ "$(_pid_ppid "$_pid")" = "$_sbpid" ]; then
+                _own=1
+                break
+            fi
+            if [ -r "/proc/$_pid/cmdline" ]; then
+                _cmdline="$(tr '\000' ' ' < "/proc/$_pid/cmdline" 2> /dev/null)"
+                case "$_cmdline" in
+                    *"$SB_NGINX_DIR"*)
+                        _own=1
+                        break
+                        ;;
+                esac
+            fi
+        done
+        [ -n "$_own" ] && continue
+
+        # 确实有外人占着：挑一个代表 pid 报错
+        _pid="$(printf '%s' "$_pids" | awk '{print $1}')"
         _comm=""
-        _cmdline=""
-        if [ -r "/proc/$_pid/comm" ]; then
-            _comm="$(tr -d '\000' < "/proc/$_pid/comm" 2> /dev/null)"
-            _cmdline="$(tr '\000' ' ' < "/proc/$_pid/cmdline" 2> /dev/null)"
-        fi
-        # 沙箱 nginx 的 worker/其它实例（cmdline 里带沙箱 prefix）也放行
-        case "$_cmdline" in
-            *"$SB_NGINX_DIR"*) continue ;;
-        esac
+        [ -r "/proc/$_pid/comm" ] && _comm="$(tr -d '\000' < "/proc/$_pid/comm" 2> /dev/null)"
 
         _hit=1
         red "❌ 端口 ${_p} 已被占用：pid=${_pid} comm=${_comm:-unknown}"
