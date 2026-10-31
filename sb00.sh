@@ -4992,7 +4992,7 @@ report_autostart_status() {
                 _bad="$_bad $_svc"
             fi
         done
-        [ -n "$_ok" ] && debug_print green "✅ 开机自启：${_ok# }"
+        [ -n "$_ok" ] && green "✅ 开机自启：${_ok# }"
         [ -n "$_bad" ] && yellow "⚠ 未开启开机自启：${_bad# }（重启后会掉，可用 sb autostart 或 systemctl enable 补上）"
         return 0
     fi
@@ -5006,7 +5006,7 @@ report_autostart_status() {
                 _bad="$_bad $_name"
             fi
         done
-        [ -n "$_ok" ] && debug_print green "✅ 开机自启：${_ok# }"
+        [ -n "$_ok" ] && green "✅ 开机自启：${_ok# }"
         [ -n "$_bad" ] && yellow "⚠ 未开启开机自启：${_bad# }（重启后会掉，可用 rc-update add 补上）"
     fi
     return 0
