@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.26(2026-10-31)"
+VERSION="3.2.27(2026-10-31)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -1364,10 +1364,14 @@ _sb_nginx_unit_exists() {
 install_nginx_unit() {
     [ -x "$SB_NGINX_BIN" ] || return 1
 
-    if command -v systemctl > /dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    if has_systemd && [ "$EUID" -eq 0 ]; then
         local _unit="/etc/systemd/system/${SB_NGINX_SVC}.service"
         # 已写过同一版模板就跳过，避免每次 ins 都 daemon-reload
         if [ -f "$_unit" ] && grep -q '^# unit-rev: 2$' "$_unit" 2> /dev/null; then
+            # 模板已是最新，但仍要确认它真的 enabled：用户可能手工 systemctl disable 过。
+            # 重装只重建文件、不重新 enable 的话，重启机器 nginx 就不会起来了。
+            systemctl is-enabled "$SB_NGINX_SVC" > /dev/null 2>&1 \
+                || systemctl enable "$SB_NGINX_SVC" > /dev/null 2>&1
             return 0
         fi
         cat > "$_unit" << EOF
@@ -1400,6 +1404,8 @@ WantedBy=multi-user.target
 EOF
         systemctl daemon-reload > /dev/null 2>&1
         systemctl enable "$SB_NGINX_SVC" > /dev/null 2>&1
+        systemctl is-enabled "$SB_NGINX_SVC" > /dev/null 2>&1 \
+            || yellow "⚠ systemctl enable ${SB_NGINX_SVC} 失败，重启后沙箱 Nginx 可能不会自动启动"
         debug_print green "✅ 已启用沙箱 Nginx 服务托管（${SB_NGINX_SVC}.service，随开机自启）"
         return 0
     fi
@@ -1407,6 +1413,9 @@ EOF
     if command -v rc-service > /dev/null 2>&1; then
         local _init="/etc/init.d/${SB_NGINX_SVC}"
         if [ -f "$_init" ] && grep -q 'unit-rev: 2' "$_init" 2> /dev/null; then
+            # 同上：init 脚本在，也要确认它真的挂进了 default 运行级
+            [ -e "/etc/runlevels/default/$SB_NGINX_SVC" ] \
+                || rc-update add "$SB_NGINX_SVC" default > /dev/null 2>&1
             return 0
         fi
         local _sup
@@ -1430,6 +1439,8 @@ ${_sup}
 EOF
         chmod 755 "$_init" 2> /dev/null
         rc-update add "$SB_NGINX_SVC" default > /dev/null 2>&1
+        [ -e "/etc/runlevels/default/$SB_NGINX_SVC" ] \
+            || yellow "⚠ rc-update add ${SB_NGINX_SVC} 失败，重启后沙箱 Nginx 可能不会自动启动"
         debug_print green "✅ 已启用沙箱 Nginx 服务托管（/etc/init.d/${SB_NGINX_SVC}，随开机自启）"
         return 0
     fi
@@ -4095,7 +4106,7 @@ start_nginx_service() {
     }
     [ -f "$SB_NGINX_CONF" ] || write_sb_nginx_conf
     # 补建服务托管（幂等）：菜单里直接「启动 nginx」时也要落到 systemd 上
-    install_nginx_unit > /dev/null 2>&1 || true
+    install_nginx_unit 2> /dev/null || true
 
     if sb_nginx_running; then
         debug_print green "✅ 沙箱 Nginx 已在运行"
@@ -4673,7 +4684,7 @@ ensure_nginx_if_needed() {
     setup_nginx_subscribe || return 1
 
     # ✅ 建服务托管 unit（配置已就位）：随开机自启 + 被杀自动拉起
-    install_nginx_unit > /dev/null 2>&1 || true
+    install_nginx_unit 2> /dev/null || true
 
     # ✅ 只有订阅开启时才清空/准备 sub.txt
     if is_true "$(get_subscribe_flag)"; then
@@ -4966,6 +4977,39 @@ EOF
         fi
     fi
     _SUPPRESS_LOG="$_old_suppress"
+}
+
+# 开机自启自检：把已安装的服务托管单元的 enabled 状态摊开，
+# 免得用户重启后才发现某个服务没起来（历史坑：sb autostart 曾与 ins 建的是两套单元名）。
+report_autostart_status() {
+    local _svc _name _ok="" _bad=""
+    if has_systemd; then
+        for _svc in sb argo "$SB_NGINX_SVC"; do
+            [ -f "/etc/systemd/system/${_svc}.service" ] || continue
+            if systemctl is-enabled "$_svc" > /dev/null 2>&1; then
+                _ok="$_ok $_svc"
+            else
+                _bad="$_bad $_svc"
+            fi
+        done
+        [ -n "$_ok" ] && debug_print green "✅ 开机自启：${_ok# }"
+        [ -n "$_bad" ] && yellow "⚠ 未开启开机自启：${_bad# }（重启后会掉，可用 sb autostart 或 systemctl enable 补上）"
+        return 0
+    fi
+    if command -v rc-service > /dev/null 2>&1; then
+        for _svc in sb argo "$SB_NGINX_SVC"; do
+            case "$_svc" in sb) _name="sing-box" ;; *) _name="$_svc" ;; esac
+            [ -f "/etc/init.d/$_name" ] || continue
+            if [ -e "/etc/runlevels/default/$_name" ]; then
+                _ok="$_ok $_name"
+            else
+                _bad="$_bad $_name"
+            fi
+        done
+        [ -n "$_ok" ] && debug_print green "✅ 开机自启：${_ok# }"
+        [ -n "$_bad" ] && yellow "⚠ 未开启开机自启：${_bad# }（重启后会掉，可用 rc-update add 补上）"
+    fi
+    return 0
 }
 
 ins() {
@@ -5271,6 +5315,9 @@ ins() {
         yellow "     或换端口重装: nginx_pt=18080 bash <(curl -Ls 安装地址) rep"
         echo ""
     fi
+
+    # 开机自启自检（三个服务各自托管，装完就把状态摊开）
+    report_autostart_status
 }
 
 # 落盘兼容辅助：env 值在此次运行优先写新值；否则保留已有文件；否则从旧名文件迁移；否则写默认/删文件(回退默认)
