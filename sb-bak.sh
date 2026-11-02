@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.0.7(2026-09-10)"
+VERSION="3.2.27(2026-10-31)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -27,8 +27,8 @@ if [ -z "${BASH_VERSION}" ]; then
 fi
 
 
-# 必须以 root 运行：本脚本会写 /root/doraemon、/etc/systemd、(openrc) init.d、/etc/iptables、
-# /etc/nginx 等系统目录，非 root 会静默半失败。到执行前尽早拦截。
+# 必须以 root 运行：本脚本会写 /root/doraemon、/etc/systemd、(openrc) init.d、/etc/iptables 等系统目录，
+# 非 root 会静默半失败。到执行前尽早拦截。
 if [ "$(id -u)" -ne 0 ]; then
     echo "❌ 本脚本需要 root 权限运行，请使用 sudo 或切到 root 用户后重试" >&2
     exit 1
@@ -44,6 +44,37 @@ OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志集中于此）
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
+
+# ================== 沙箱 Nginx 配置 ==================
+# ✅ 专用沙箱 nginx：静态二进制 + 独立 prefix，不经包管理器安装，
+#    与宝塔/系统 nginx 完全隔离（不碰 /etc/nginx、不 pkill 按名进程、不操作 nginx 服务单元）。
+NGINX_STATIC_VER="1.26.3"
+SB_NGINX_DIR="$SINGBOX_FOLDER_PATH/nginx"                       # 沙箱 prefix 根
+SB_NGINX_BIN="$SB_NGINX_DIR/sbin/nginx"                          # 静态二进制
+SB_NGINX_CONF="$SB_NGINX_DIR/conf/nginx.conf"                    # 主配置
+SB_NGINX_SUB_CONF="$SB_NGINX_DIR/conf/conf.d/singbox.conf"       # 订阅/ws server 块
+SB_NGINX_PID="$SB_NGINX_DIR/logs/nginx.pid"                      # pid 文件
+SB_NGINX_SVC="sb-nginx"                                          # 沙箱 Nginx 的服务名（systemd/openrc，与系统 nginx 无关）
+# 主下载源（jirutka/nginx-binaries 静态构建），SB_NGINX_URL 可整体覆盖
+SB_NGINX_URL_BASE="https://github.com/jirutka/nginx-binaries/raw/binaries"
+# 备用下载源（jsDelivr CDN，内容哈希与主源一致），SB_NGINX_URL_BACKUP 可整体覆盖
+SB_NGINX_URL_BACKUP="https://cdn.jsdelivr.net/gh/jirutka/nginx-binaries@binaries"
+# 内置 SHA256（供应链校验），按架构锁定；SB_NGINX_SHA256 可整体覆盖
+SB_NGINX_SHA256_X86_64="76ff943ccf066bbec7fc0aec030c0196ac798e27c6cd4e3c38a1178fdbe1e054"
+SB_NGINX_SHA256_AARCH64="7da452c385864390b09dac0fb248407dc7a7602d4ca2df970e8941574a48fd70"
+# ================== 沙箱 Nginx 配置 结束 ==============
+
+# ================== 二进制版本缓存 ==================
+# 安装/更新成功时把版本号落盘缓存；menu_status_block 优先读缓存，避免对运行中的
+# cloudflared/sing-box 反复执行 version 探测（隧道运行时该探测会挂起/超时）。
+# ⚠️ 文件名由 SB_SCRIPT_NAME 推导，不要写死 sb00/sb：
+#    两个脚本（sb00.sh / sb.sh）除 SB_SCRIPT_NAME 外应完全一致，写死会导致搬用时漏改，
+#    且两个脚本放在同一目录下时会互相覆盖版本缓存。
+_SB_NAME_ID="${SB_SCRIPT_NAME%.sh}"
+SB_VER_FILE="$SINGBOX_FOLDER_PATH/${_SB_NAME_ID}_sb_ver"
+CF_VER_FILE="$SINGBOX_FOLDER_PATH/${_SB_NAME_ID}_cf_ver"
+NG_VER_FILE="$SINGBOX_FOLDER_PATH/${_SB_NAME_ID}_ng_ver"
+# ================== 二进制版本缓存 结束 ==============
 
 
 
@@ -132,6 +163,13 @@ readonly IPTABLES_COMMENT_SINGBOX="doraemon_singbox_rule"   # 非socks5协议 + 
 readonly IPTABLES_COMMENT_SOCKS5="socks5_rule"              # 有白名单时的socks5
 
 #
+# 记录「用户是否显式传了这些参数」（必须在赋默认值之前取）：
+# write2SingboxFolders 只在显式传入时才覆盖落盘文件，否则覆盖安装会把已有订阅/端口
+# 静默重置成默认值（subscribe=false / nginx_pt=8080）
+_SB_ENV_NGINX_PT="${nginx_pt:-}"
+_SB_ENV_SUBSCRIBE="${subscribe:-}"
+_SB_ENV_WS_CDN="${ws_cdn:-}"
+
 export nginx_pt=${nginx_pt:-$NGINX_DEFAULT_PORT} # 订阅服务端口（Nginx）
 export argo_pt=${argo_pt:-$ARGO_DEFAULT_PORT}    # Argo 回源入口端口（本地）
 
@@ -192,8 +230,13 @@ gradient() {
 }
 # ================== 颜色函数 ==================
 
+# 布尔判断：true/1/yes/on 都算开启（历史上文档写过 `socks5_wl_flag: true/1=开启`，
+# 只认 "true" 会让传 1 的用户白名单静默失效 → 端口对全网放行）
 is_true() {
-    [ "$(printf '%s' "${1:-}" | tr 'A-Z' 'a-z')" = "true" ]
+    case "$(printf '%s' "${1:-}" | tr 'A-Z' 'a-z' | tr -d ' \t\r\n')" in
+        true | 1 | yes | on) return 0 ;;
+        *) return 1 ;;
+    esac
 }
 
 debug_log() {
@@ -371,6 +414,7 @@ install_deps() {
     # - fuser：用于等待 apt/dpkg 锁（psmisc）
     # - base64/stat/等：coreutils（不同系统差异大时更稳）
     # - xxd：某些本地推导会用到（常见在 vim-common / vim / xxd）
+    # - crontab：日志轮转的定时任务（缺了自动补装 cron/cronie/dcron）
 
     debug_log "【调试】install_deps安装函数开始了……"
 
@@ -382,6 +426,7 @@ install_deps() {
         fuser
         base64
         xxd
+        crontab # 日志轮转的定时任务；缺了按发行版补装 cron/cronie/dcron
     )
 
     # 失败包记录文件
@@ -414,8 +459,12 @@ install_deps() {
     # ==========================================================
     install_pkgs_resilient() {
         local label="$1"
-        local -n _cmd="$2"
-        local -n _pkgs="$3"
+        # 不用 nameref（local -n）：那需要 bash 4.3+，CentOS 7 自带 4.2 会直接报错，
+        # 导致依赖安装静默失败。这里按值复制成局部数组，用法完全一致。
+        local _cmd_name="$2" _pkgs_name="$3"
+        local -a _cmd=() _pkgs=()
+        eval "_cmd=(\"\${${_cmd_name}[@]}\")"
+        eval "_pkgs=(\"\${${_pkgs_name}[@]}\")"
 
         local -a failed=()
         local p
@@ -508,6 +557,7 @@ install_deps() {
             coreutils
             ca-certificates
             xxd vim-common # xxd：Debian 12+ 为独立包，旧版由 vim-common 提供（装不上自动跳过）
+            cron # 日志轮转用；装完不一定自动启动，install_log_rotate 会负责拉起
         )
 
         local -a APT_CMD=(
@@ -535,6 +585,7 @@ install_deps() {
             coreutils
             ca-certificates
             vim-common # 多数发行版提供 xxd
+            cronie # 日志轮转用（RHEL 系的 cron 包名）
         )
 
         if [ "$pm" = "dnf" ]; then
@@ -563,6 +614,9 @@ install_deps() {
             coreutils
             ca-certificates
         )
+
+        # Alpine 的 crontab 通常由 busybox 自带；只有缺了才装 dcron，避免和 busybox 冲突
+        command -v crontab > /dev/null 2>&1 || APK_PKGS+=(dcron)
 
         local -a APK_CMD=(apk add --no-cache)
         install_pkgs_resilient "apk" APK_CMD APK_PKGS
@@ -631,12 +685,88 @@ check_ip_connectivity() {
 
 }
 
+# 生成 sing-box 的 systemd 单元内容（输出到 stdout）
+# sbbout() 与 enable_autostart() 共用一份模板：历史上这两处各写各的，
+# 服务名一度漂移成 singbox-service / sb 两个单元，同时 enable 时抢同一批端口，
+# 后起的那个永远 bind: address already in use → Restart=always 无限重启刷日志。
+gen_sb_unit_systemd() {
+    local _mem_conf="" _mem_kb=""
+    _mem_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)
+    if [ -n "$_mem_kb" ] && [ "$_mem_kb" -lt 1048576 ]; then
+        _mem_conf="Environment=GOMEMLIMIT=$(( _mem_kb * 25 / 100 / 1024 ))MiB
+Environment=GOGC=30
+Environment=GOMAXPROCS=1"
+        if has_memory_cgroup; then
+            _mem_conf="${_mem_conf}
+MemoryHigh=$(( _mem_kb * 40 / 100 / 1024 ))M
+MemoryMax=$(( _mem_kb * 50 / 100 / 1024 ))M"
+        fi
+    fi
+    cat << EOF
+[Unit]
+Description=sb service
+After=network.target
+# 关掉启动频率限制：OOM 反复杀进程时 systemd 默认 5 次/10 秒后就放弃（failed），
+# 之后没人再拉它。设为 0 让它配合 Restart=always 无限重试，内存缓过来自己就回来了。
+StartLimitIntervalSec=0
+[Service]
+Type=simple
+NoNewPrivileges=yes
+${_mem_conf}
+LimitNOFILE=65535
+ExecStartPre=/bin/sh -c '[ -f /etc/iptables/rules.v4 ] && iptables-restore < /etc/iptables/rules.v4 2>/dev/null || true'
+ExecStartPre=/bin/sh -c '[ -f /etc/iptables/rules.v6 ] && ip6tables-restore < /etc/iptables/rules.v6 2>/dev/null || true'
+ExecStart=$SINGBOX_FOLDER_PATH/sing-box run -c $SINGBOX_FOLDER_PATH/sb.json
+StandardOutput=append:$LOGS_DIR/singbox.log
+StandardError=append:$LOGS_DIR/singbox.log
+Restart=always
+RestartSec=5s
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+# 生成 sing-box 的 openrc 脚本内容（输出到 stdout）
+gen_sb_unit_openrc() {
+    local _sup_conf
+    if command -v supervise-daemon > /dev/null 2>&1; then
+        _sup_conf='supervisor="supervise-daemon"
+respawn_delay=5
+respawn_max=0
+respawn_period=60
+output_log="'"$LOGS_DIR"'/supervise-singbox.log"'
+    else
+        _sup_conf='command_background=yes'
+    fi
+    cat << EOF
+#!/sbin/openrc-run
+description="sb service"
+command="$SINGBOX_FOLDER_PATH/sing-box"
+command_args="run -c $SINGBOX_FOLDER_PATH/sb.json"
+pidfile="/run/sing-box.pid"
+${_sup_conf}
+# 小内存机器（<1G，LXC 小鸡常见）：给 Go 运行时一个软上限 + 压低 GC 阈值，
+# 避免流量高峰时堆无限增长把容器撑爆、被内核 OOM 直接杀掉（口径与 systemd 分支一致）
+_mem_kb=\$(awk '/^MemTotal:/{print \$2}' /proc/meminfo 2>/dev/null)
+[ -z "\$GOMEMLIMIT" ] && [ -n "\$_mem_kb" ] && [ "\$_mem_kb" -lt 1048576 ] && export GOMEMLIMIT=\$(( _mem_kb * 25 / 100 ))KiB
+[ -z "\$GOGC" ] && [ -n "\$_mem_kb" ] && [ "\$_mem_kb" -lt 1048576 ] && export GOGC=30
+[ -z "\$GOMAXPROCS" ] && [ -n "\$_mem_kb" ] && [ "\$_mem_kb" -lt 1048576 ] && export GOMAXPROCS=1
+depend() { need net; }
+start_pre() {
+    [ -f /etc/iptables/rules.v4 ] && iptables-restore < /etc/iptables/rules.v4 2>/dev/null || true
+    [ -f /etc/iptables/rules.v6 ] && ip6tables-restore < /etc/iptables/rules.v6 2>/dev/null || true
+}
+EOF
+}
+
 # 开启自启
 enable_autostart() {
     local workdir="$SINGBOX_FOLDER_PATH"
     local bin="$workdir/sing-box"
     local cfg="$workdir/sb.json"
-    local svc="singbox-service"
+    # 服务名必须与 sbbout() 一致：历史上这里叫 singbox-service，而 sbbout 写 sb.service，
+    # 两个单元 ExecStart 完全相同，都 enable 后重启机器会双开抢端口。
+    local legacy_svc="singbox-service"
 
     # 只做“已安装才启用”，避免误触发安装
     if [ ! -x "$bin" ] || [ ! -s "$cfg" ]; then
@@ -646,79 +776,51 @@ enable_autostart() {
 
     # systemd (Debian/Ubuntu 等)
     if command -v systemctl > /dev/null 2>&1 && [ -d /run/systemd/system ]; then
-        cat > /etc/systemd/system/${svc}.service << EOF
-[Unit]
-Description=singbox service
-After=network-online.target
-Wants=network-online.target
+        # 清掉历史遗留的同程序异名单元
+        if [ -f "/etc/systemd/system/${legacy_svc}.service" ]; then
+            systemctl disable --now "${legacy_svc}.service" > /dev/null 2>&1
+            rm -f "/etc/systemd/system/${legacy_svc}.service"
+            systemctl daemon-reload > /dev/null 2>&1
+            yellow "  已清理历史遗留的 ${legacy_svc}.service（与 sb.service 重复，会抢端口）"
+        fi
 
-[Service]
-Type=simple
-User=root
-WorkingDirectory=${workdir}
-ExecCondition=/bin/sh -c 'test -x ${bin} && test -s ${cfg}'
-ExecStart=${bin} run -c ${cfg}
-Restart=always
-RestartSec=2
-LimitNOFILE=1048576
-TimeoutStartSec=30
+        # 已有 sb.service 就保留（sbbout 写的那份带 iptables 恢复/日志重定向/内存上限），只补 enable；
+        # 没有才按同一份模板重建
+        if [ ! -f "/etc/systemd/system/sb.service" ]; then
+            gen_sb_unit_systemd > "/etc/systemd/system/sb.service"
+            systemctl daemon-reload > /dev/null 2>&1
+        fi
 
-[Install]
-WantedBy=multi-user.target
-EOF
-
-        systemctl daemon-reload
-        systemctl enable --now "${svc}.service" > /dev/null 2>&1
-        systemctl restart "${svc}.service" > /dev/null 2>&1
-        echo "✅ 已开启开机自启（systemd）：${svc}"
-        return 0
+        systemctl enable --now sb.service > /dev/null 2>&1
+        if systemctl is-enabled sb.service > /dev/null 2>&1; then
+            systemctl restart sb.service > /dev/null 2>&1
+            echo "✅ 已开启开机自启（systemd）：sb"
+            return 0
+        fi
+        yellow "⚠ systemctl enable sb.service 失败，开机后可能不会自动启动；可用 systemctl status sb 查看"
+        return 1
     fi
 
-    # openrc (Alpine)
+    # openrc (Alpine)：服务名固定 sing-box，与 sbbout() 一致
     if command -v rc-service > /dev/null 2>&1 && command -v rc-update > /dev/null 2>&1; then
-        # ❗ 用 quoted heredoc（<< 'EOF'）写模板，再用 sed 替换占位符 __SB_PATH__。
-        # 避免 bash 在写文件时把 openrc 脚本内部的 ${name}/$command/$pidfile/$command_args/$?
-        # 当成当前 shell 变量展开（旧版 bug：生成文件变成 --exec ""，start/stop 全部失效）。
-        cat > /etc/init.d/${svc} << 'OPENRC_SB00'
-#!/sbin/openrc-run
-name="singbox service"
-description="singbox service"
-command="__SB_PATH__/sing-box"
-command_args="run -c __SB_PATH__/sb.json"
-command_background="yes"
-pidfile="/run/singbox.pid"
-
-depend() {
-  need net
-  after firewall
-}
-
-start_pre() {
-  [ -x __SB_PATH__/sing-box ] || return 1
-  [ -s __SB_PATH__/sb.json ] || return 1
-}
-
-start() {
-  ebegin "Starting ${name}"
-  start-stop-daemon --start --background --make-pidfile --pidfile "$pidfile" \
-    --exec "$command" -- $command_args
-  eend $?
-}
-
-stop() {
-  ebegin "Stopping ${name}"
-  start-stop-daemon --stop --pidfile "$pidfile"
-  eend $?
-}
-OPENRC_SB00
-
-        sed -i "s|__SB_PATH__|${SINGBOX_FOLDER_PATH}|g" "/etc/init.d/${svc}"
-
-        chmod +x /etc/init.d/${svc}
-        rc-update add "${svc}" default > /dev/null 2>&1
-        rc-service "${svc}" restart > /dev/null 2>&1
-        echo "✅ 已开启开机自启（openrc）：${svc}"
-        return 0
+        if [ -f "/etc/init.d/${legacy_svc}" ]; then
+            rc-update del "${legacy_svc}" default > /dev/null 2>&1
+            rc-service "${legacy_svc}" stop > /dev/null 2>&1
+            rm -f "/etc/init.d/${legacy_svc}"
+            yellow "  已清理历史遗留的 ${legacy_svc}（与 sing-box 重复，会抢端口）"
+        fi
+        if [ ! -f "/etc/init.d/sing-box" ]; then
+            gen_sb_unit_openrc > /etc/init.d/sing-box
+            chmod +x /etc/init.d/sing-box
+        fi
+        rc-update add sing-box default > /dev/null 2>&1
+        if [ -e "/etc/runlevels/default/sing-box" ]; then
+            rc-service sing-box restart > /dev/null 2>&1
+            echo "✅ 已开启开机自启（openrc）：sing-box"
+            return 0
+        fi
+        yellow "⚠ rc-update add sing-box 失败，开机后可能不会自动启动"
+        return 1
     fi
 
     echo "❗ 未检测到 systemd 或 openrc，无法设置开机自启"
@@ -727,21 +829,38 @@ OPENRC_SB00
 
 # 关闭自启
 disable_autostart() {
-    local svc="singbox-service"
+    local _any=0 _u=""
 
     if command -v systemctl > /dev/null 2>&1 && [ -d /run/systemd/system ]; then
-        systemctl disable --now "${svc}.service" > /dev/null 2>&1
-        rm -f "/etc/systemd/system/${svc}.service"
-        systemctl daemon-reload > /dev/null 2>&1
-        echo "✅ 已关闭开机自启（systemd）：${svc}"
+        # 两套名字都收：老的 singbox-service 与现在的 sb
+        for _u in sb singbox-service; do
+            [ -f "/etc/systemd/system/${_u}.service" ] || continue
+            systemctl disable --now "${_u}.service" > /dev/null 2>&1
+            rm -f "/etc/systemd/system/${_u}.service"
+            _any=1
+        done
+        [ "$_any" = "1" ] && systemctl daemon-reload > /dev/null 2>&1
+        if [ "$_any" = "1" ]; then
+            echo "✅ 已关闭开机自启（systemd）：sb"
+        else
+            echo "ℹ systemd 下未发现 sing-box 服务单元，无需关闭"
+        fi
         return 0
     fi
 
     if command -v rc-service > /dev/null 2>&1 && command -v rc-update > /dev/null 2>&1; then
-        rc-update del "${svc}" default > /dev/null 2>&1
-        rc-service "${svc}" stop > /dev/null 2>&1
-        rm -f "/etc/init.d/${svc}"
-        echo "✅ 已关闭开机自启（openrc）：${svc}"
+        for _u in sing-box singbox-service; do
+            [ -f "/etc/init.d/${_u}" ] || continue
+            rc-update del "${_u}" default > /dev/null 2>&1
+            rc-service "${_u}" stop > /dev/null 2>&1
+            rm -f "/etc/init.d/${_u}"
+            _any=1
+        done
+        if [ "$_any" = "1" ]; then
+            echo "✅ 已关闭开机自启（openrc）：sing-box"
+        else
+            echo "ℹ openrc 下未发现 sing-box 服务，无需关闭"
+        fi
         return 0
     fi
 
@@ -790,10 +909,14 @@ _verify_and_run() {
     fi
     # 先落盘临时文件再用 bash 执行文件路径，避免把整份脚本塞进 argv 触发
     # "Argument list too long"（ARG_MAX 限制），同时也更可审计
-    _tmp="\$(mktemp "${SB_FOLDER}/.sb-online.XXXXXX" 2>/dev/null || mktemp)"
+    # \${SB_FOLDER} 必须转义：不转义会在生成 wrapper 时被展开成相对路径 "doraemon/…"
+    _tmp="\$(mktemp "\${SB_FOLDER}/.sb-online.XXXXXX" 2>/dev/null || mktemp)"
     printf '%s\n' "\$_body" > "\$_tmp"
     chmod +x "\$_tmp" 2>/dev/null || true
-    exec bash "\$_tmp" "\$@"
+    # 用 trap 清理临时文件：原来的 exec 会把本进程替换掉，临时文件（约 300KB）永远留在磁盘上
+    trap 'rm -f "\$_tmp"' EXIT INT TERM
+    bash "\$_tmp" "\$@"
+    exit \$?
 }
 
 if [ -s "\$SB_FOLDER/sb.sh" ]; then
@@ -1013,113 +1136,384 @@ showmode() {
     blue "  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
-# 安装 Nginx 包
-install_nginx_pkg() {
-    # 已安装就不重复装
-    if command -v nginx > /dev/null 2>&1; then
-        return 0
-    fi
+# ✅ 沙箱 Nginx：下载/校验独立静态二进制（不经包管理器，不碰系统/宝塔 nginx）
+# 架构映射：脚本 cpu 为 amd64/arm64，jirutka 构建文件名为 x86_64/aarch64
+_sb_nginx_arch() {
+    case "${cpu:-}" in
+        amd64) echo "x86_64" ;;
+        arm64) echo "aarch64" ;;
+        *) echo "" ;;
+    esac
+}
 
-    yellow "👉 正在安装 Nginx..."
-
-    # 统一把详细输出写到日志，失败时 tail 出来
-    mkdir -p "$LOGS_DIR" 2> /dev/null
-    local log="$LOGS_DIR/nginx_install.log"
-    : > "$log" 2> /dev/null || true
-
-    # Debian/Ubuntu (apt-get)
-    if command -v apt-get > /dev/null 2>&1; then
-        export DEBIAN_FRONTEND=noninteractive
-
-        # 1) 等待 apt/dpkg 锁（默认最多等 20s，可用 APT_LOCK_WAIT 覆盖）
-        local max_wait="${APT_LOCK_WAIT:-20}"
-        local waited=0
-
-        while fuser /var/lib/dpkg/lock-frontend > /dev/null 2>&1 \
-            || fuser /var/lib/dpkg/lock > /dev/null 2>&1; do
-            waited=$((waited + 1))
-
-            # ✅ 写法B：每秒更新同一行（不刷屏）
-            printf "\r\033[0K\e[1;33m⏳ 等待 apt/dpkg 锁释放... (%s/%ss)\033[0m" "$waited" "$max_wait"
-
-            if [ "$waited" -ge "$max_wait" ]; then
-                echo
-                red "❌ 等待 apt/dpkg 锁超时：${max_wait}s"
-                yellow "❗ 常见原因：apt-daily / unattended-upgrades 在后台更新"
-                yellow "👉 解决：稍后重试，或临时加长：APT_LOCK_WAIT=180"
-                # 给个线索（不杀进程，只展示）
-                ps aux 2> /dev/null | grep -E 'apt|dpkg|unattended|apt-daily' | grep -v grep | head -n 10 || true
-                return 1
-            fi
-
-            sleep 1
-        done
-        echo # 结束等待后换行，避免后续输出接在同一行
-
-        # 2) 尝试修复 dpkg 中断（减少“莫名其妙失败”）
-        dpkg --configure -a >> "$log" 2>&1 || true
-        apt-get -f install -y >> "$log" 2>&1 || true
-
-        # 3) update 加重试+超时（稳定很多）
-        if ! apt-get -o Acquire::Retries=3 \
-            -o Acquire::http::Timeout=15 \
-            -o Acquire::https::Timeout=15 \
-            update >> "$log" 2>&1; then
-            red "❌ apt-get update 失败（可能是 DNS/网络/源问题），详见：$log"
-            tail -n 60 "$log" 2> /dev/null || true
-            return 1
-        fi
-
-        # 4) 安装 nginx（同样加重试+超时）
-        if ! apt-get -o Acquire::Retries=3 \
-            -o Acquire::http::Timeout=15 \
-            -o Acquire::https::Timeout=15 \
-            install -y nginx >> "$log" 2>&1; then
-            red "❌ Nginx 安装失败，详见：$log"
-            tail -n 80 "$log" 2> /dev/null || true
-            return 1
-        fi
-
-    elif command -v apt > /dev/null 2>&1; then
-        # 兜底：尽量用 apt-get，但这里保留 apt
-        export DEBIAN_FRONTEND=noninteractive
-        if ! apt update >> "$log" 2>&1 || ! apt install -y nginx >> "$log" 2>&1; then
-            red "❌ Nginx 安装失败，详见：$log"
-            tail -n 80 "$log" 2> /dev/null || true
-            return 1
-        fi
-
-    elif command -v yum > /dev/null 2>&1; then
-        yum install -y nginx >> "$log" 2>&1 || {
-            red "❌ Nginx 安装失败，详见：$log"
-            tail -n 80 "$log" 2> /dev/null || true
-            return 1
-        }
-
-    elif command -v dnf > /dev/null 2>&1; then
-        dnf install -y nginx >> "$log" 2>&1 || {
-            red "❌ Nginx 安装失败，详见：$log"
-            tail -n 80 "$log" 2> /dev/null || true
-            return 1
-        }
-
-    elif command -v apk > /dev/null 2>&1; then
-        apk add --no-cache nginx >> "$log" 2>&1 || {
-            red "❌ Nginx 安装失败，详见：$log"
-            tail -n 80 "$log" 2> /dev/null || true
-            return 1
-        }
-
+# 沙箱 nginx 运行状态（仅看本脚本 pid 文件，避免误报宝塔/系统 nginx）
+# 判断 pid 是否真的是沙箱 nginx 进程。
+# 只做 kill -0 是不够的：机器重启后 pid 会被别的进程复用，此时 nginx_stop 会以 root
+# 身份给一个无关进程发 TERM/KILL（可能是数据库、sshd 之类）。
+_pid_is_sb_nginx() {
+    local pid="${1:-}" _cmd=""
+    [ -n "$pid" ] || return 1
+    kill -0 "$pid" 2> /dev/null || return 1
+    if [ -r "/proc/$pid/comm" ]; then
+        _cmd="$(cat "/proc/$pid/comm" 2> /dev/null)"
     else
-        red "❌ 无法安装 Nginx：不支持的包管理器"
+        _cmd="$(ps -p "$pid" -o comm= 2> /dev/null)"
+    fi
+    case "$_cmd" in
+        *nginx*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# 按 /proc/<pid>/comm 精确匹配进程名，输出 pid（每行一个）。
+# ⚠️ 为什么不用 pgrep：
+#   - `pgrep -x sing-box` 在 busybox（Alpine）上是「整条命令行精确匹配」，
+#     而 cmdline 是 `/root/doraemon/sing-box run -c ...`，永远匹配不到（实测返回空）；
+#   - `pgrep -f <安装路径>/sing-box` 又会匹配到 OpenRC 的 supervise-daemon
+#     （命令行是 `supervise-daemon --exec /root/doraemon/sing-box ...`），
+#     而守护进程的 pid 更小，`head -1` 一定选到它 —— 面板上就显示成 1M。
+pids_by_comm() {
+    local _want="${1:-}" _d
+    [ -n "$_want" ] || return 0
+    for _d in /proc/[0-9]*; do
+        [ -r "$_d/comm" ] || continue
+        [ "$(cat "$_d/comm" 2> /dev/null)" = "$_want" ] || continue
+        printf '%s\n' "${_d#/proc/}"
+    done
+    return 0
+}
+
+# 同名进程的 VmRSS 总和（KB）；一个都没匹配到就什么都不输出
+rss_kb_by_comm() {
+    local _want="${1:-}" _p _k _sum=0 _hit=""
+    [ -n "$_want" ] || return 0
+    for _p in $(pids_by_comm "$_want"); do
+        _k="$(awk '/VmRSS/{print $2}' "/proc/$_p/status" 2> /dev/null)"
+        [ -n "$_k" ] || continue
+        _sum=$(( _sum + _k ))
+        _hit=1
+    done
+    [ -n "$_hit" ] && printf '%s\n' "$_sum"
+    return 0
+}
+
+sb_nginx_running() {
+    local pid
+    [ -s "$SB_NGINX_PID" ] || return 1
+    pid="$(cat "$SB_NGINX_PID" 2> /dev/null | tr -d ' \r\n')"
+    [ -n "$pid" ] || return 1
+    _pid_is_sb_nginx "$pid"
+}
+
+# 写沙箱主配置（daemon/pid/include 全在 prefix 内，不依赖 mime.types）
+write_sb_nginx_conf() {
+    mkdir -p "$SB_NGINX_DIR/sbin" "$SB_NGINX_DIR/conf/conf.d" "$SB_NGINX_DIR/logs" "$SB_NGINX_DIR/temp" 2> /dev/null
+    cat > "$SB_NGINX_CONF" << 'EOF'
+daemon on;
+pid logs/nginx.pid;
+error_log logs/error.log warn;
+events {
+    # 128MB 小鸡上 1024 是浪费：每个连接都要占 nginx 的 buffer + 内核 socket 内存，
+    # 客户端重连风暴时 512 已经远超实际并发，同时把内存上限压住
+    worker_connections 512;
+}
+http {
+    default_type text/plain;
+    access_log logs/access.log;
+    sendfile on;
+    include conf.d/*.conf;
+}
+EOF
+}
+
+# 沙箱 nginx 语法检查（只测本脚本配置，不碰系统 nginx）
+sb_nginx_test() {
+    [ -x "$SB_NGINX_BIN" ] || return 1
+    [ -f "$SB_NGINX_CONF" ] || return 1
+    "$SB_NGINX_BIN" -p "$SB_NGINX_DIR/" -c conf/nginx.conf -t > /dev/null 2>&1
+}
+
+# 安装沙箱 Nginx（jirutka/nginx-binaries 静态二进制；同版本已存在则跳过下载）
+install_nginx_pkg() {
+    local arch tmp out cur_ver _expect _src _urls
+    arch="$(_sb_nginx_arch)"
+    if [ -z "$arch" ]; then
+        red "❌ 暂不支持的架构（cpu=${cpu:-unknown}），无法安装沙箱 Nginx"
         return 1
     fi
 
-    green "✅ Nginx 安装完成"
+    # 同版本已安装 → 跳过下载
+    if [ -x "$SB_NGINX_BIN" ]; then
+        cur_ver="$("$SB_NGINX_BIN" -v 2>&1 | sed -n 's/.*nginx\/\([0-9][0-9.]*\).*/\1/p')"
+        if [ "$cur_ver" = "$NGINX_STATIC_VER" ]; then
+            green "✅ 沙箱 Nginx 已安装 (v${cur_ver})，跳过下载"
+            printf '%s' "$cur_ver" > "$NG_VER_FILE" 2> /dev/null || true
+            return 0
+        fi
+        yellow "沙箱 Nginx 版本不匹配 (当前: ${cur_ver:-unknown}，期望: ${NGINX_STATIC_VER})，开始下载..."
+    fi
+
+    yellow "👉 正在下载沙箱 Nginx v${NGINX_STATIC_VER} (${arch})..."
+    mkdir -p "$SB_NGINX_DIR/sbin" "$SB_NGINX_DIR/conf/conf.d" "$SB_NGINX_DIR/logs" "$SB_NGINX_DIR/temp" "$LOGS_DIR" 2> /dev/null
+    out="$SB_NGINX_BIN"
+    tmp="$out.tmp.$$"
+    # 下载源顺序：SB_NGINX_URL（整体覆盖）→ 主源 → 备用源
+    _src="nginx-${NGINX_STATIC_VER}-${arch}-linux"
+    if [ -n "${SB_NGINX_URL:-}" ]; then
+        _urls="$SB_NGINX_URL"
+    else
+        _urls="${SB_NGINX_URL_BASE}/${_src} ${SB_NGINX_URL_BACKUP}/${_src}"
+    fi
+
+    # 默认按架构取内置哈希，可 SB_NGINX_SHA256 整体覆盖
+    _expect="${SB_NGINX_SHA256:-}"
+    if [ -z "$_expect" ]; then
+        case "$arch" in
+            x86_64)  _expect="$SB_NGINX_SHA256_X86_64" ;;
+            aarch64) _expect="$SB_NGINX_SHA256_AARCH64" ;;
+        esac
+    fi
+
+    # 逐源下载 + 校验；单源失败自动重试一次（防 CDN 截断坏包），全部失败回退/报错
+    local _url _attempt _ok=false _last_err
+    for _url in $_urls; do
+        for _attempt in 1 2; do
+            rm -f "$tmp" 2> /dev/null
+            yellow "    下载源: $_url (第 ${_attempt} 次)"
+            (curl -fLo "$tmp" -# --connect-timeout 5 --max-time 120 --retry 2 --retry-delay 2 --retry-all-errors "$_url") \
+                || (wget -O "$tmp" --tries=2 --timeout=120 --dns-timeout=5 --read-timeout=60 "$_url")
+
+            if [ ! -s "$tmp" ]; then
+                _last_err="下载文件为空"
+                red "❌ 下载失败（${_url}）：$_last_err"
+                continue
+            fi
+
+            # 拒绝下到 HTML 错误页
+            if head -c 15 "$tmp" 2> /dev/null | grep -qi '<'; then
+                _last_err="返回内容不是二进制"
+                red "❌ 下载失败（${_url}）：$_last_err"
+                continue
+            fi
+
+            # SHA256 供应链校验
+            if [ -n "$_expect" ]; then
+                local _computed
+                _computed="$(file_sha256 "$tmp")"
+                if [ -z "$_computed" ] || [ "$_computed" != "$_expect" ]; then
+                    _last_err="SHA256 校验失败（期望 ${_expect}，实际 ${_computed:-无法计算}）"
+                    red "❌ 下载失败（${_url}）：$_last_err"
+                    continue
+                fi
+                green "✅ 沙箱 Nginx SHA256 校验通过"
+            fi
+
+            _ok=true
+            break
+        done
+        [ "$_ok" = true ] && break
+    done
+
+    if [ "$_ok" != true ]; then
+        rm -f "$tmp" 2> /dev/null
+        # 补救：若磁盘上仍有旧版沙箱 nginx 可用，回退旧版继续（不中断主流程）
+        if [ -x "$SB_NGINX_BIN" ] && "$SB_NGINX_BIN" -h > /dev/null 2>&1; then
+            yellow "⚠️ 沙箱 Nginx 全部下载源失败（${_last_err:-未知原因}），已回退旧版继续使用 ($($SB_NGINX_BIN -v 2>&1 | head -n1))"
+            return 0
+        fi
+        red "❌ 沙箱 Nginx 安装失败：${_last_err:-下载/校验均未通过}，且无可用旧版回退"
+        return 1
+    fi
+
+    chmod +x "$tmp" 2> /dev/null
+    if ! "$tmp" -v > /dev/null 2>&1; then
+        # -v 非零退出属正常（nginx -v 打到 stderr 后退出 0；个别版本退出 1），再确认能执行
+        if ! "$tmp" -h > /dev/null 2>&1 && ! "$tmp" -v 2>&1 | grep -qi nginx; then
+            rm -f "$tmp" 2> /dev/null
+            red "❌ 沙箱 Nginx 二进制无法执行"
+            return 1
+        fi
+    fi
+    mv -f "$tmp" "$out"
+    write_sb_nginx_conf
+
+    green "✅ 沙箱 Nginx 安装完成 ($("$SB_NGINX_BIN" -v 2>&1 | head -n1))"
+    printf '%s' "$NGINX_STATIC_VER" > "$NG_VER_FILE" 2> /dev/null || true
     return 0
 }
 
 # Check if the given port is in the list of HTTPS CDN ports
+# ================== 沙箱 Nginx 服务托管（systemd / openrc）==================
+# 为什么要托管：沙箱 nginx 原来完全脱离服务管理器，只有 cron 看门狗（每 2 分钟）兜底，
+#   → 被 OOM 杀掉最多躺 2 分钟；
+#   → 整机重启后根本不起来（pid 文件不在了，而看门狗按设计「没有 pid 文件 = 用户主动停的」不碰）。
+# 这里给它建独立 unit，服务名固定为 `sb-nginx`，绝不与系统的 `nginx.service` 撞名。
+#
+# 两个实现细节：
+#   1) nginx.conf 里是 `daemon on;`，所以 unit 用 Type=forking + PIDFile 跟踪 master。
+#      不能写 `-g 'daemon off;'` —— 那会和配置文件里的 `daemon on;` 撞
+#      "daemon directive is duplicate"，nginx 直接起不来。
+#   2) 用 Restart=always 但带熔断（RestartSec=10s / StartLimitBurst=5 / 300s）。
+#      nginx 与 sing-box 不同：端口被别人占、配置写错都是**持久性**故障，
+#      无限重启只会把 error.log 刷爆；5 次之后停在 failed 等人工介入更合适。
+#      用户在菜单里手动启动时会 reset-failed，相当于「我改好了，再试一次」。
+_sb_nginx_unit_exists() {
+    [ -f "/etc/systemd/system/${SB_NGINX_SVC}.service" ] || [ -f "/etc/init.d/${SB_NGINX_SVC}" ]
+}
+
+install_nginx_unit() {
+    [ -x "$SB_NGINX_BIN" ] || return 1
+
+    if has_systemd && [ "$EUID" -eq 0 ]; then
+        local _unit="/etc/systemd/system/${SB_NGINX_SVC}.service"
+        # 已写过同一版模板就跳过，避免每次 ins 都 daemon-reload
+        if [ -f "$_unit" ] && grep -q '^# unit-rev: 2$' "$_unit" 2> /dev/null; then
+            # 模板已是最新，但仍要确认它真的 enabled：用户可能手工 systemctl disable 过。
+            # 重装只重建文件、不重新 enable 的话，重启机器 nginx 就不会起来了。
+            systemctl is-enabled "$SB_NGINX_SVC" > /dev/null 2>&1 \
+                || systemctl enable "$SB_NGINX_SVC" > /dev/null 2>&1
+            return 0
+        fi
+        cat > "$_unit" << EOF
+[Unit]
+Description=sb nginx service (sandboxed subscribe/argo gateway)
+After=network.target
+# unit-rev: 2
+# 与 sb.service 不同：nginx 的故障（端口被占/配置写错）多为持久性，
+# 重启 5 次仍失败就停在 failed 等人工介入，不无限刷日志。
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+[Service]
+Type=forking
+PIDFile=$SB_NGINX_PID
+NoNewPrivileges=yes
+LimitNOFILE=65535
+ExecStartPre=/bin/sh -c 'test -x "$SB_NGINX_BIN"'
+ExecStartPre=/bin/sh -c 'test -f "$SB_NGINX_CONF"'
+ExecStart="$SB_NGINX_BIN" -p "$SB_NGINX_DIR/" -c conf/nginx.conf
+ExecReload="$SB_NGINX_BIN" -p "$SB_NGINX_DIR/" -c conf/nginx.conf -s reload
+ExecStop="$SB_NGINX_BIN" -p "$SB_NGINX_DIR/" -c conf/nginx.conf -s quit
+Restart=always
+RestartSec=10s
+TimeoutStartSec=30
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        systemctl daemon-reload > /dev/null 2>&1
+        systemctl enable "$SB_NGINX_SVC" > /dev/null 2>&1
+        systemctl is-enabled "$SB_NGINX_SVC" > /dev/null 2>&1 \
+            || yellow "⚠ systemctl enable ${SB_NGINX_SVC} 失败，重启后沙箱 Nginx 可能不会自动启动"
+        debug_print green "✅ 已启用沙箱 Nginx 服务托管（${SB_NGINX_SVC}.service，随开机自启）"
+        return 0
+    fi
+
+    if command -v rc-service > /dev/null 2>&1; then
+        local _init="/etc/init.d/${SB_NGINX_SVC}"
+        if [ -f "$_init" ] && grep -q 'unit-rev: 2' "$_init" 2> /dev/null; then
+            # 同上：init 脚本在，也要确认它真的挂进了 default 运行级
+            [ -e "/etc/runlevels/default/$SB_NGINX_SVC" ] \
+                || rc-update add "$SB_NGINX_SVC" default > /dev/null 2>&1
+            return 0
+        fi
+        local _sup
+        if command -v supervise-daemon > /dev/null 2>&1; then
+            _sup='supervisor="supervise-daemon"
+respawn_delay=10
+respawn_max=5
+respawn_period=300
+output_log="'"$SB_NGINX_DIR"'/logs/nginx-supervise.log"'
+        else
+            _sup='command_background=yes'
+        fi
+        cat > "$_init" << EOF
+#!/sbin/openrc-run
+# unit-rev: 2
+description="sb nginx service (sandboxed subscribe/argo gateway)"
+command="$SB_NGINX_BIN"
+command_args="-p \"$SB_NGINX_DIR/\" -c conf/nginx.conf"
+pidfile="$SB_NGINX_PID"
+${_sup}
+EOF
+        chmod 755 "$_init" 2> /dev/null
+        rc-update add "$SB_NGINX_SVC" default > /dev/null 2>&1
+        [ -e "/etc/runlevels/default/$SB_NGINX_SVC" ] \
+            || yellow "⚠ rc-update add ${SB_NGINX_SVC} 失败，重启后沙箱 Nginx 可能不会自动启动"
+        debug_print green "✅ 已启用沙箱 Nginx 服务托管（/etc/init.d/${SB_NGINX_SVC}，随开机自启）"
+        return 0
+    fi
+
+    debug_log "【调试】install_nginx_unit：当前环境无 systemd/openrc，跳过服务托管"
+    return 0
+}
+
+# 统一启动入口：有 unit 就走服务管理器（能 reset 熔断计数），没有就直跑二进制（老行为）
+_sb_nginx_start_raw() {
+    if _sb_nginx_unit_exists; then
+        if command -v systemctl > /dev/null 2>&1 && [ -d /run/systemd/system ]; then
+            # 熔断后用户手动触发，视为「我改好了，再试一次」
+            if [ "$(systemctl is-failed "$SB_NGINX_SVC" 2> /dev/null)" = "failed" ]; then
+                systemctl reset-failed "$SB_NGINX_SVC" > /dev/null 2>&1
+            fi
+            systemctl start "$SB_NGINX_SVC" > /dev/null 2>&1
+            return $?
+        fi
+        if command -v rc-service > /dev/null 2>&1; then
+            rc-service "$SB_NGINX_SVC" start > /dev/null 2>&1
+            return $?
+        fi
+    fi
+    "$SB_NGINX_BIN" -p "$SB_NGINX_DIR/" -c conf/nginx.conf
+}
+
+# 统一停止入口：返回 0 表示「已交给服务管理器并停好了」，调用方可直接返回
+_sb_nginx_stop_raw() {
+    # ⚠️ 只有「确实由服务管理器托管、且当前就是 active」时才走 systemctl stop。
+    #    否则（老安装升级上来：unit 刚建好但 nginx 还是脚本手工起的那个进程）
+    #    systemctl stop 既停不掉它，还会执行 ExecStop=`nginx -s quit`，
+    #    拿 pid 文件去误杀一个不受 systemd 管理的进程 —— 状态对不上，容易连环出错。
+    if _sb_nginx_unit_exists; then
+        if command -v systemctl > /dev/null 2>&1 && [ -d /run/systemd/system ]; then
+            case "$(systemctl is-active "$SB_NGINX_SVC" 2> /dev/null)" in
+                active | activating | reloading)
+                    systemctl stop "$SB_NGINX_SVC" > /dev/null 2>&1
+                    return 0
+                    ;;
+            esac
+            return 1
+        fi
+        if command -v rc-service > /dev/null 2>&1; then
+            if rc-service "$SB_NGINX_SVC" status > /dev/null 2>&1; then
+                rc-service "$SB_NGINX_SVC" stop > /dev/null 2>&1
+                return 0
+            fi
+            return 1
+        fi
+    fi
+    return 1
+}
+
+# 卸载时移除服务托管（先停再取消自启，最后删文件）
+remove_nginx_unit() {
+    local _svc="$SB_NGINX_SVC"
+    if [ -f "/etc/systemd/system/${_svc}.service" ]; then
+        systemctl stop "$_svc" > /dev/null 2>&1
+        systemctl disable "$_svc" > /dev/null 2>&1
+        rm -f "/etc/systemd/system/${_svc}.service" 2> /dev/null
+        systemctl daemon-reload > /dev/null 2>&1
+        green "  ✓ 已移除沙箱 Nginx 服务托管（${_svc}.service）"
+    fi
+    if [ -f "/etc/init.d/${_svc}" ]; then
+        rc-service "$_svc" stop > /dev/null 2>&1
+        rc-update del "$_svc" default > /dev/null 2>&1
+        rm -f "/etc/init.d/${_svc}" 2> /dev/null
+        green "  ✓ 已移除沙箱 Nginx 服务托管（/etc/init.d/${_svc}）"
+    fi
+    return 0
+}
+
 is_https_cdn_port() {
     local p="${1:-}"
     local x
@@ -1142,7 +1536,7 @@ normalize_cdn_pt() {
 
     # 非法端口回退
     if ! is_https_cdn_port "$p"; then
-        yellow "❗ cdn_pt=$p 非法，仅支持 ${HTTPS_CDN_PORTS_TEXT}，已回退为 ${fallback}"
+        yellow "❗ cdn_pt=$p 非法，仅支持 ${HTTPS_CDN_PORTS_TEXT}，已回退为 ${fallback}" >&2
         echo "$fallback"
         return 0
     fi
@@ -1262,7 +1656,9 @@ gen_uuid() {
     [ -z "$_g" ] && _g="$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]')"
     if [ -z "$_g" ]; then
         _g="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
-        _g="${_g:0:8}-${_g:8:4}-4${_g:13:3}-${_g:17:4}-${_g:21:12}"
+        # 8-4-4-4-12，version=4 / variant=a；原来的写法漏了第 12、16 位，
+        # 末段只剩 11 个字符 → 生成 35 位的非法 UUID
+        _g="${_g:0:8}-${_g:8:4}-4${_g:13:3}-a${_g:17:3}-${_g:20:12}"
     fi
     printf '%s' "$_g"
 }
@@ -1304,19 +1700,24 @@ init_socks5_credentials() {
 
 # 初始化 socks5 IP白名单配置：从环境变量或文件加载/保存
 init_socks5_whitelist() {
-    # 优先读文件（已安装场景），否则用环境变量
-    if [ -s "$SINGBOX_FOLDER_PATH/socks5_wl_flag" ]; then
+    # ⚠️ 环境变量优先（覆盖安装时显式传值必须能改掉旧配置）；
+    #    以前是「文件先覆盖变量」，导致 `socks5_wl_flag=false sb ins` 永远关不掉白名单
+    if [ -z "${socks5_wl_flag:-}" ] && [ -s "$SINGBOX_FOLDER_PATH/socks5_wl_flag" ]; then
         socks5_wl_flag=$(cat "$SINGBOX_FOLDER_PATH/socks5_wl_flag" | tr -d '\r\n')
     fi
-    if [ -s "$SINGBOX_FOLDER_PATH/socks5_ips" ]; then
+    if [ -z "${socks5_ips:-}" ] && [ -s "$SINGBOX_FOLDER_PATH/socks5_ips" ]; then
         socks5_ips=$(cat "$SINGBOX_FOLDER_PATH/socks5_ips" | tr -d '\r\n')
     fi
 
-    # 环境变量有值时写入文件（覆盖安装场景）
-    if [ -n "${socks5_wl_flag}" ]; then
-        printf '%s\n' "$socks5_wl_flag" > "$SINGBOX_FOLDER_PATH/socks5_wl_flag"
+    # 归一化成 true/false 再落盘：接受 true/1/yes/on 等写法，避免「写了 1 却不生效」
+    if is_true "${socks5_wl_flag:-}"; then
+        socks5_wl_flag=true
+    else
+        socks5_wl_flag=false
     fi
-    if [ -n "${socks5_ips}" ]; then
+    printf '%s\n' "$socks5_wl_flag" > "$SINGBOX_FOLDER_PATH/socks5_wl_flag"
+
+    if [ -n "${socks5_ips:-}" ]; then
         printf '%s\n' "$socks5_ips" > "$SINGBOX_FOLDER_PATH/socks5_ips"
     fi
 }
@@ -1555,13 +1956,35 @@ is_valid_domain() {
     printf '%s' "$d" | grep -qE '^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$'
 }
 
-# 校验 Argo token（cloudflared token 是 base64url + 点分隔，不含空格/引号/换行）
+# 校验 Argo token —— 黑名单模式：只拒绝真正会破坏落地处的字符，其余一律放行。
+# 放行：A-Za-z0-9 全部可见符号（含 base64 的 '+' '/' 与尾部 '=' 填充）：
+#        = + / @ : , . ; # ! * ? & | < > ( ) [ ] { } ~ ^ _ - 等
+# 拒绝清单及原因：
+#   空白 / 控制字符（CR LF TAB 等）→ systemd ExecStart 按空白分词；写 unit 与 init 脚本时行被断开
+#   "   '                          → 破坏引号包裹（unit ExecStart / init 的 command_args / --token "$t"）
+#   `   $   \                      → shell 与 init 脚本里会被当作命令替换、变量展开、转义
+#   %                              → systemd unit 的指符展开（%i/%n…），% 后接未知字母会让 unit 报错
+# 真实 token（base64(base64url(JSON)) + 点分隔 + 尾部 '=' 填充）不会出现上述字符。
 is_valid_argo_token() {
     local t="${1:-}"
     [ -n "$t" ] || return 1
-    # 拒绝嵌入 CR/LF（同 is_valid_domain，防跨行绕过）
-    [ "$t" = "$(printf '%s' "$t" | tr -d '\r\n')" ] || return 1
-    printf '%s' "$t" | grep -qE '^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$'
+
+    # 空白与控制字符（CR/LF/TAB 及其它不可见字符），防跨行或分词绕过
+    case "$t" in
+        *[[:space:][:cntrl:]]*) return 1 ;;
+    esac
+
+    # 会破坏引号包裹、触发替换或 unit 指符展开的元字符
+    case "$t" in
+        *'"'*) return 1 ;;
+        *"'"*) return 1 ;;
+        *'`'*) return 1 ;;
+        *'$'*) return 1 ;;
+        *'\'*) return 1 ;;
+        *'%'*) return 1 ;;
+    esac
+
+    return 0
 }
 
 # 用法：
@@ -1640,8 +2063,9 @@ EOF
     else
         # token 模式
         if ! is_valid_argo_token "$auth"; then
-            red "❌ Argo token 格式非法：只能包含字母/数字/'-'/'_'/'.'，且不允许空格、引号、换行"
-            red "   请确认你粘贴的是完整的 cloudflared token（形如 ey...-xxx.xxx）"
+            red "❌ Argo token 含有不能写进服务配置的字符：空白（含换行）、双引号、单引号、反引号、美元符、反斜杠、百分号"
+            red "   其余字符全部放行（含 = + / @ : , ; # ! * ? & | < > ( ) [ ] { } ~ ^ 等）"
+            red "   请确认你粘贴的是完整的 cloudflared token（形如 ey...-xxx.xxx，末端带 '=' 也正常）"
             return 1
         fi
         ARGO_MODE="token"
@@ -1828,6 +2252,27 @@ file_sha256() {
     fi
 }
 
+# 下载前磁盘预检：sing-box 解压后约 60MB、cloudflared 约 45MB，再叠加日志和包缓存，
+# 768MB 的机器很容易见底；写满后 sing-box 落盘失败直接崩，表现出来又是一片连接重置。
+# 参数：需要的空闲 MB（默认 120）
+check_disk_space() {
+    local need_mb="${1:-120}" avail_mb="" _probe=""
+    if [ -d "$SINGBOX_FOLDER_PATH" ]; then
+        _probe="$SINGBOX_FOLDER_PATH"
+    else
+        _probe="/"
+    fi
+    avail_mb=$(df -Pm "$_probe" 2>/dev/null | awk 'NR==2 {print $4}')
+    [ -n "$avail_mb" ] || return 0
+    if [ "$avail_mb" -lt "$need_mb" ]; then
+        red "❌ 磁盘剩余 ${avail_mb}MB，低于本次安装所需 ${need_mb}MB（${_probe}）"
+        yellow "  先清理再重试，例如：du -sh $SINGBOX_FOLDER_PATH/* /tmp/* 2>/dev/null | sort -h | tail"
+        return 1
+    fi
+    debug_log "【调试】磁盘预检通过：剩余 ${avail_mb}MB（阈值 ${need_mb}MB）"
+    return 0
+}
+
 # download Sing-box
 # 检测已安装版本，需要更新时下载并安装 sing-box 二进制
 update_singbox() {
@@ -1839,6 +2284,7 @@ update_singbox() {
         current_ver=$("$SINGBOX_FOLDER_PATH/sing-box" version 2> /dev/null | head -1 | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')
         if [ "$current_ver" = "$sb_ver" ]; then
             green "✅ Sing-box 已安装最新版 (v${sb_ver})，跳过下载"
+            printf '%s' "$current_ver" > "$SB_VER_FILE" 2> /dev/null || true
             return 0
         fi
         yellow "Sing-box 版本不匹配 (当前: ${current_ver:-unknown}，期望: ${sb_ver})，开始下载新版..."
@@ -1858,6 +2304,8 @@ update_singbox() {
     local url="https://github.com/jyucoeng/singbox-tools/releases/download/v${sb_ver}/${archive}"
     # local url="https://github.com/SagerNet/sing-box/releases/download/v${sb_ver}/${archive}"
     local tmp_archive="/tmp/${archive}"
+
+    check_disk_space 120 || exit 1
 
     (curl -Lo "$tmp_archive" -# --connect-timeout 5 --max-time 120 --retry 2 --retry-delay 2 --retry-all-errors "$url") \
         || (wget -O "$tmp_archive" --tries=2 --timeout=120 --dns-timeout=5 --read-timeout=60 "$url")
@@ -1913,6 +2361,7 @@ update_singbox() {
     fi
     debug_log "【调试】update_singbox：Sing-box 版本为 $sbcore"
     green "✅  已安装 Sing-box 正式版内核：${sbcore}"
+    printf '%s' "$sbcore" > "$SB_VER_FILE" 2> /dev/null || true
 }
 # Generate UUID and save to file
 insuuid() {
@@ -1978,7 +2427,7 @@ get_short_id() {
                 local old_sid
                 old_sid="$(cat "$sid_file" 2> /dev/null | tr -d ' \r\n')"
                 if [ -n "$old_sid" ] && [ "${old_sid,,}" != "$sid" ]; then
-                    yellow "❗ 检测到 short_id 文件与 reality_private 推导值不同，已按 reality_private 覆盖以保证稳定"
+                    yellow "❗ 检测到 short_id 文件与 reality_private 推导值不同，已按 reality_private 覆盖以保证稳定" >&2
                 fi
             fi
             echo "$sid" > "$sid_file"
@@ -1999,7 +2448,7 @@ get_short_id() {
             echo "$sid"
             return 0
         else
-            yellow "❗ short_id 文件内容无效（必须是8位hex），将重新生成"
+            yellow "❗ short_id 文件内容无效（必须是8位hex），将重新生成" >&2
             rm -f "$sid_file" 2> /dev/null
         fi
     fi
@@ -2016,7 +2465,7 @@ get_short_id() {
 
     sid="${sid,,}"
     echo "$sid" > "$sid_file"
-    green "随机生成 short_id, 值: $sid"
+    green "随机生成 short_id, 值: $sid" >&2
     echo "$sid"
     return 0
 }
@@ -2452,6 +2901,7 @@ installsb() {
         current_ver=$("$SINGBOX_FOLDER_PATH/sing-box" version 2> /dev/null | head -1 | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p')
         if [ "$current_ver" = "$sb_ver" ]; then
             green "✅ Sing-box 已安装 (v${current_ver})，跳过下载"
+            printf '%s' "$current_ver" > "$SB_VER_FILE" 2> /dev/null || true
         else
             update_singbox
         fi
@@ -2474,8 +2924,10 @@ installsb() {
     # 让后续 rand_port 随机端口避开，防止多个协议随机/显式端口互相冲突
     sb_take_known_ports
 
-    # Initialize JSON with log config (matching index.js generateSingBoxConfig style)
-    jq -n --arg logfile "$LOGS_DIR/singbox.log" '{log: {disabled: false, level: "info", timestamp: true, output: $logfile}, inbounds: []}' > "$sbj"
+    # ⚠️ 日志级别默认 warn：info 会给每条连接写 2 行（inbound/outbound）、每次 DNS 解析
+    #    再写 N 行，小内存机器上既费 CPU 又费 768MB 的盘。排查连接问题时临时切回 info：
+    #    jq '.log.level="info"' /root/doraemon/sb.json > /tmp/sb.json && mv /tmp/sb.json /root/doraemon/sb.json && sb res
+    jq -n --arg logfile "$LOGS_DIR/singbox.log" '{log: {disabled: false, level: "warn", timestamp: true, output: $logfile}, inbounds: []}' > "$sbj"
 
     # 添加tuic协议
     if [ -n "$tup" ]; then
@@ -2568,6 +3020,10 @@ installsb() {
 
     # 添加vless-ws协议（Argo 本地使用）
     if [ -n "$vlp" ]; then
+        # ✅ 先回读已落盘端口（其它协议都有这一步，vless 漏了 → 每次覆盖安装都重新随机，端口一直变）
+        if [ -z "$port_vl_ws" ] && [ -s "$SINGBOX_FOLDER_PATH/port_vl_ws" ]; then
+            port_vl_ws="$(cat "$SINGBOX_FOLDER_PATH/port_vl_ws" 2> /dev/null | tr -d '\r\n')"
+        fi
         if [ -z "$port_vl_ws" ] && [ ! -e "$SINGBOX_FOLDER_PATH/port_vl_ws" ] && [ ! -e "$SINGBOX_FOLDER_PATH/port_vm_ws" ]; then
             port_vl_ws=$(rand_port)
             echo "$port_vl_ws" > "$SINGBOX_FOLDER_PATH/port_vl_ws"
@@ -2745,7 +3201,7 @@ installsb() {
             local _wl_ips=""
             [ -s "$SINGBOX_FOLDER_PATH/socks5_ips" ] && _wl_ips=$(cat "$SINGBOX_FOLDER_PATH/socks5_ips" | tr -d '\r\n')
             if [ -n "$_wl_ips" ]; then
-                yellow "Socks5白名单：已开启(防火墙规则)（允许：$_wl_ips）"
+                yellow "Socks5白名单：已开启(防火墙规则)（允许：${_wl_ips}）"
             else
                 yellow "Socks5白名单：已开启（IP列表为空，等同于关闭）"
             fi
@@ -2774,6 +3230,317 @@ installsb() {
 #    sbbout() 里仍保留对旧 .warp_config 文件的读取逻辑，仅用于兼容历史安装，
 #    该文件现在不会再被生成，因此这段分支实际不生效。
 
+# 当前环境是否有可用的 memory cgroup 控制器。
+# LXC/OpenVZ 容器里偶尔没有（cgroup v1 未挂 memory 子系统，或 v2 没委派），
+# 这种情况下给 systemd 单元写 MemoryHigh/MemoryMax 会被拒（轻则告警、重则单元起不来），
+# 所以只在控制器确实存在时才加这两行；GOMEMLIMIT 是 Go 自己的软上限，任何环境都生效。
+has_memory_cgroup() {
+    if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+        grep -qw memory /sys/fs/cgroup/cgroup.controllers 2> /dev/null
+    else
+        [ -d /sys/fs/cgroup/memory ]
+    fi
+}
+
+# ================== 小内存机器瘦身 ==================
+# 128MB 的 LXC 小鸡上，systemd + sshd + cron 已经占掉一半内存，再叠加
+# sing-box（多协议入站）+ cloudflared（Argo）+ 沙箱 nginx 就是超配。
+# 这里只做「不减协议、不动 Argo」的两件事：
+#   1) 限制 journald 的占用（默认按磁盘比例留，768MB 盘上能吃掉几十 MB，且常驻内存）
+#   2) 停掉 apt 每日自动更新定时器（apt/dpkg/unattended-upgrades 峰值能吃 50MB+，
+#      很多 128MB 机器就是凌晨这个窗口被 OOM 杀的）
+# 只对 MemTotal < 256MB 生效，大机器完全不动；全部可逆（enable --now 即可恢复）。
+low_mem_tune() {
+    local _mem_kb="" _t=""
+    _mem_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)
+    [ -n "$_mem_kb" ] || return 0
+    if [ "$_mem_kb" -ge 262144 ]; then
+        debug_log "【调试】low_mem_tune：MemTotal=$(( _mem_kb / 1024 ))MB ≥ 256MB，跳过瘦身"
+        return 0
+    fi
+
+    # Alpine/openrc 上没有 journald，也没有 apt 定时器，这两件事都不存在，直接跳过
+    if ! command -v systemctl > /dev/null 2>&1 || [ ! -d /run/systemd/system ]; then
+        debug_log "【调试】low_mem_tune：非 systemd 环境（Alpine/openrc），无需 journald/apt 瘦身"
+        return 0
+    fi
+
+    green "🧠 检测到小内存机器（$(( _mem_kb / 1024 ))MB），执行轻量瘦身（不减少协议、不影响 Argo）"
+
+    # journald：限制持久化与运行时占用（768MB 盘上尤其重要）
+    if [ -d /etc/systemd/journald.conf.d ] || mkdir -p /etc/systemd/journald.conf.d 2> /dev/null; then
+        cat > /etc/systemd/journald.conf.d/99-sb-lowmem.conf << 'EOF'
+[Journal]
+SystemMaxUse=16M
+RuntimeMaxUse=8M
+EOF
+        systemctl restart systemd-journald > /dev/null 2>&1 || true
+        green "  ✓ journald 上限已收紧（SystemMaxUse=16M）"
+    fi
+
+    # apt 每日更新：小机器上跑一次 dpkg 就可能把 sing-box 顶进 OOM
+    for _t in apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service; do
+        if systemctl list-unit-files --no-legend "$_t" 2> /dev/null | grep -q "^${_t}"; then
+            if systemctl disable --now "$_t" > /dev/null 2>&1; then
+                green "  ✓ 已停用 ${_t}（需要时 systemctl enable --now $_t 恢复）"
+            fi
+        fi
+    done
+    return 0
+}
+
+# ================== 日志轮转 ==================
+# sing-box / cloudflared 的日志都是追加写入且没有上限：info 级别下 100M 级的 LXC 小鸡
+# 一天能写 20M 左右，几百 M 的根分区跑久了会被写满，进而拖垮 nginx / cloudflared。
+# 沙箱 nginx 的 access.log 同理：每次订阅拉取、每条 CDN 回源 ws 连接、以及公网扫描
+# 都会追加一行，长期不轮转也能堆到上百 M。
+# 这里生成一个独立的轮转脚本，用每小时一次的 cron 调用：
+#   - 单文件超过 LOG_ROTATE_SIZE_KB（默认 10 MB）就轮转一次，只保留 1 份历史（.1）
+#   - 用「复制 + 清空」而不是 mv：sing-box 与 nginx 都以 O_APPEND 打开日志文件，mv 之后
+#     进程仍持有旧 inode，新日志会继续写进已改名的文件（看起来像日志丢失）；清空同一个
+#     inode 才能让后续写入落回原文件名（nginx 因此也不需要额外的 USR1 reopen）。
+LOG_ROTATE_SIZE_KB="${LOG_ROTATE_SIZE_KB:-10240}"
+LOG_ROTATE_SCRIPT="$SINGBOX_FOLDER_PATH/singbox-log-rotate.sh"
+# 服务看门狗：cron 每 2 分钟跑一次，把「异常退出后没被拉起来」的服务补起来
+WATCHDOG_SCRIPT="$SINGBOX_FOLDER_PATH/singbox-watchdog.sh"
+# 应用 / 守护进程日志（logs/）
+LOG_ROTATE_FILES="singbox.log argo.log supervise-singbox.log supervise-argo.log stop_reason.log"
+# 沙箱 nginx 日志（nginx/logs/）
+SB_NGINX_LOGS_DIR="$SB_NGINX_DIR/logs"
+LOG_ROTATE_NGINX_FILES="access.log error.log"
+
+# 生成轮转脚本（幂等，每次安装覆盖）
+gen_log_rotate_script() {
+    mkdir -p "$LOGS_DIR" 2> /dev/null
+    cat > "$LOG_ROTATE_SCRIPT" << EOF
+#!/bin/sh
+# 由 $SB_SCRIPT_NAME 自动生成：日志轮转（copy-truncate，只保留 1 份历史），请勿手改
+LIMIT_KB=$LOG_ROTATE_SIZE_KB
+
+rotate_dir() {
+    dir="\$1"; shift
+    for f in "\$@"; do
+        p="\$dir/\$f"
+        [ -f "\$p" ] || continue
+        size_kb=\$(( \$(wc -c < "\$p" 2>/dev/null || echo 0) / 1024 ))
+        [ "\$size_kb" -ge "\$LIMIT_KB" ] || continue
+        cp -p "\$p" "\$p.1" 2>/dev/null || continue
+        : > "\$p" 2>/dev/null || true
+    done
+}
+
+# sing-box / cloudflared / 守护进程日志
+rotate_dir "$LOGS_DIR" $LOG_ROTATE_FILES
+# 沙箱 nginx 日志
+rotate_dir "$SB_NGINX_LOGS_DIR" $LOG_ROTATE_NGINX_FILES
+EOF
+    chmod +x "$LOG_ROTATE_SCRIPT" 2> /dev/null || true
+}
+
+# cron 守护进程是否在跑（Debian 叫 cron，RHEL/Alpine 叫 crond）
+cron_running() {
+    # ⚠️ 不能用 pgrep -x：busybox（Alpine）的 -x 是「整条命令行精确匹配」，
+    #    crond 的 cmdline 是 `/usr/sbin/crond -c /etc/crontabs -f`，永远匹配不到
+    #    （实测：服务明明在跑，却提示「cron 守护进程没在运行」）。
+    if [ -n "$(pids_by_comm cron)" ] || [ -n "$(pids_by_comm crond)" ]; then
+        return 0
+    fi
+    # 兜底：/proc 不可用时按 ps 输出匹配
+    ps -ef 2> /dev/null | grep -qE '[c]ron(d)?( |$)' && return 0
+    ps 2> /dev/null | grep -qE '[c]ron(d)?( |$)' && return 0
+    return 1
+}
+
+# 确保 cron 守护进程在跑：依赖阶段已补装 cron 包，但容器里装完通常不会自动启动。
+# 起不来就返回 1，调用方退回“手动安排”的提示，不影响主流程。
+ensure_cron_daemon() {
+    command -v crontab > /dev/null 2>&1 || return 1
+    if cron_running; then
+        return 0
+    fi
+
+    # systemd（Debian/Ubuntu/RHEL 等）
+    if command -v systemctl > /dev/null 2>&1 && [ -d /run/systemd/system ]; then
+        systemctl enable --now cron > /dev/null 2>&1 \
+            || systemctl enable --now crond > /dev/null 2>&1 || true
+    fi
+
+    # openrc（Alpine：busybox 的 crond，或单独装的 dcron）
+    if ! cron_running \
+        && command -v rc-update > /dev/null 2>&1 \
+        && command -v rc-service > /dev/null 2>&1; then
+        rc-update add crond default > /dev/null 2>&1 || true
+        rc-service crond start > /dev/null 2>&1 \
+            || {
+                rc-update add dcron default > /dev/null 2>&1 || true
+                rc-service dcron start > /dev/null 2>&1 || true
+            }
+    fi
+
+    # sysvinit / 没有 systemd 的 Debian 容器
+    if ! cron_running && command -v service > /dev/null 2>&1; then
+        service cron start > /dev/null 2>&1 \
+            || service crond start > /dev/null 2>&1 || true
+        if command -v update-rc.d > /dev/null 2>&1; then
+            update-rc.d cron defaults > /dev/null 2>&1 || true
+        fi
+    fi
+
+    # 没有任何 init 的容器：直接拉起守护进程（Debian 的 cron 会自己 daemonize）
+    if ! cron_running; then
+        if command -v cron > /dev/null 2>&1; then
+            cron > /dev/null 2>&1 || true
+        elif command -v crond > /dev/null 2>&1; then
+            crond -b > /dev/null 2>&1 || true
+        fi
+    fi
+
+    sleep 1
+    cron_running
+}
+
+# 安装每小时轮转的 cron（已存在则替换，避免重复堆积）
+install_log_rotate() {
+    gen_log_rotate_script
+
+    # 依赖阶段已经补装 cron 包；这里把守护进程拉起来（容器里装完通常不会自动启动）
+    ensure_cron_daemon > /dev/null 2>&1 || true
+
+    if ! command -v crontab > /dev/null 2>&1; then
+        yellow "⚠ 未检测到 crontab（自动安装也失败），已生成轮转脚本 ${LOG_ROTATE_SCRIPT}，需自行安排定时执行"
+        return 0
+    fi
+    local ct_tmp
+    ct_tmp="$(mktemp /tmp/crontab.XXXXXX 2> /dev/null)" || ct_tmp="/tmp/crontab.tmp.$$"
+    crontab -l > "$ct_tmp" 2> /dev/null || : > "$ct_tmp"
+    sed -i '/singbox-log-rotate/d' "$ct_tmp" 2> /dev/null
+    echo "17 * * * * $LOG_ROTATE_SCRIPT >/dev/null 2>&1" >> "$ct_tmp"
+    if crontab "$ct_tmp" > /dev/null 2>&1; then
+        debug_print green "✅ 已开启日志轮转（每小时检查，单文件超过 $((LOG_ROTATE_SIZE_KB / 1024))MB 时轮转）"
+        if ! cron_running; then
+            yellow "⚠ crontab 已写入，但 cron 守护进程没在运行；重启后请检查 cron 是否自启"
+        fi
+    else
+        yellow "⚠ 写入 crontab 失败，日志轮转未生效（可手动执行 ${LOG_ROTATE_SCRIPT}）"
+    fi
+    rm -f "$ct_tmp"
+}
+
+# ================== 服务看门狗 ==================
+# 起因：128MB 机器上 OOM 杀掉进程是可以接受的，但「杀了之后自己回不来」不行。
+# systemd 的 Restart=always 在两种情况下会放弃：
+#   1) 撞到默认的 StartLimitBurst=5 / StartLimitIntervalSec=10s（短时间内反复重启）；
+#   2) 单元因为别的原因进入 failed，之后没有任何东西再去动它。
+# 另外沙箱 nginx 完全不在 systemd 里，被杀了就永远躺那儿，只有用户重跑脚本才会起来。
+#
+# 所以这里放一个极轻量的看门狗（cron 每 2 分钟，纯 POSIX sh，busybox ash 也能跑）：
+#   - systemd 用 systemctl，Alpine/OpenRC 用 rc-service（注意 OpenRC 下 sb 叫 sing-box）
+#   - 只处理「异常退出」：systemd 的 failed、openrc 的 crashed、nginx 的 pid 文件还在但进程没了
+#   - 用户主动 systemctl stop / rc-service stop / 菜单里停 nginx 的，一律不动
+#   - 顺带 StartLimitIntervalSec=0 已经写进 sb/argo 的 unit，正常情况下 systemd 自己会无限重试，
+#     看门狗只是最后一道保险
+gen_watchdog_script() {
+    mkdir -p "$LOGS_DIR" 2> /dev/null
+    cat > "$WATCHDOG_SCRIPT" << EOF
+#!/bin/sh
+# 由 $SB_SCRIPT_NAME 自动生成：服务看门狗（cron 每 2 分钟一次），请勿手改
+LOG="$LOGS_DIR/watchdog.log"
+NGINX_DIR="$SB_NGINX_DIR"
+NGINX_BIN="$SB_NGINX_BIN"
+NGINX_PID="$SB_NGINX_PID"
+
+# 看门狗自己的日志超过 128KB 直接清空（它只记「什么时候拉起了谁」）
+if [ -f "\$LOG" ]; then
+    _sz=\$(wc -c < "\$LOG" 2>/dev/null || echo 0)
+    [ "\$_sz" -gt 131072 ] && : > "\$LOG"
+fi
+
+say() { echo "\$(date '+%F %T') \$*" >> "\$LOG" 2>/dev/null; }
+
+# systemd：只有 failed 才动手。inactive 是「手动停的」，不碰
+ensure_systemd() {
+    _u="\$1"
+    systemctl is-enabled --quiet "\$_u" 2>/dev/null || return 0
+    [ "\$(systemctl is-failed "\$_u" 2>/dev/null)" = "failed" ] || return 0
+    systemctl reset-failed "\$_u" >/dev/null 2>&1
+    systemctl start "\$_u" >/dev/null 2>&1
+    say "systemd: \$_u 处于 failed，已 reset-failed 并重新启动"
+}
+
+# openrc（Alpine）：只有 crashed 才动手。stopped 是「手动停的」，不碰
+#   注意服务名和 systemd 不一样：sb 在 openrc 下叫 sing-box（/etc/init.d/sing-box）
+#   「是否开机自启」用 runlevel 里的软链判断，等价于 systemd 的 is-enabled
+ensure_openrc() {
+    _u="\$1"
+    [ -e "/etc/runlevels/default/\$_u" ] || return 0
+    rc-service "\$_u" status 2>&1 | grep -q "crashed" || return 0
+    rc-service "\$_u" start >/dev/null 2>&1
+    say "openrc: \$_u 处于 crashed，已重新启动"
+}
+
+if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+    ensure_systemd sb
+    ensure_systemd argo
+elif command -v rc-service >/dev/null 2>&1; then
+    # Alpine/openrc：sb 的服务名是 sing-box
+    ensure_openrc sing-box
+    ensure_openrc argo
+fi
+
+# 沙箱 nginx：若已交由 systemd/openrc 托管，重启交给服务管理器，看门狗不插手
+#   （两边都拉会撞端口，第二个 bind 失败，只是脏日志）
+_ngx_managed=0
+[ -f "/etc/systemd/system/$SB_NGINX_SVC.service" ] && _ngx_managed=1
+[ -f "/etc/init.d/$SB_NGINX_SVC" ] && _ngx_managed=1
+
+# 未托管时（老安装 / 无 systemd 环境）：靠 pid 文件判断
+#   没有 pid 文件 = 用户主动停的（nginx_stop 会删），不碰
+#   有 pid 文件但进程没了 = 被 OOM 杀了，重启
+if [ "\$_ngx_managed" = "0" ] && [ -x "\$NGINX_BIN" ] && [ -f "\$NGINX_PID" ]; then
+    _pid=\$(cat "\$NGINX_PID" 2>/dev/null | tr -d ' \r\n')
+    _alive=0
+    if [ -n "\$_pid" ] && kill -0 "\$_pid" 2>/dev/null; then
+        _alive=1
+        # pid 可能被系统复用给别的进程，确认一下确实是 nginx
+        if [ -r "/proc/\$_pid/comm" ] && ! grep -qi nginx "/proc/\$_pid/comm" 2>/dev/null; then
+            _alive=0
+        fi
+    fi
+    if [ "\$_alive" = "0" ]; then
+        rm -f "\$NGINX_PID" 2>/dev/null
+        "\$NGINX_BIN" -p "\$NGINX_DIR/" -c conf/nginx.conf >/dev/null 2>&1
+        say "nginx: pid 文件存在但进程已消失，已重新启动"
+    fi
+fi
+
+exit 0
+EOF
+    chmod 700 "$WATCHDOG_SCRIPT" 2> /dev/null || true
+}
+
+install_service_watchdog() {
+    gen_watchdog_script
+
+    if ! command -v crontab > /dev/null 2>&1; then
+        yellow "⚠ 未检测到 crontab，已生成看门狗脚本 ${WATCHDOG_SCRIPT}，需自行安排定时执行"
+        return 0
+    fi
+    local ct_tmp
+    ct_tmp="$(mktemp /tmp/crontab.XXXXXX 2> /dev/null)" || ct_tmp="/tmp/crontab.tmp.$$"
+    crontab -l > "$ct_tmp" 2> /dev/null || : > "$ct_tmp"
+    sed -i '/singbox-watchdog/d' "$ct_tmp" 2> /dev/null
+    echo "*/2 * * * * $WATCHDOG_SCRIPT >/dev/null 2>&1" >> "$ct_tmp"
+    if crontab "$ct_tmp" > /dev/null 2>&1; then
+        debug_print green "✅ 已开启服务看门狗（每 2 分钟检查 sb / argo / 沙箱 nginx）"
+        if ! cron_running; then
+            yellow "⚠ 看门狗已写入 crontab，但 cron 守护进程没在运行；重启后请检查 cron 是否自启"
+        fi
+    else
+        yellow "⚠ 写入 crontab 失败，看门狗未生效（可手动执行 ${WATCHDOG_SCRIPT}）"
+    fi
+    rm -f "$ct_tmp"
+}
+
 #  Generate Sing-box configuration file
 sbbout() {
     if [ -e "$SINGBOX_FOLDER_PATH/sb.json" ]; then
@@ -2788,18 +3555,28 @@ sbbout() {
             need_youtube=$(cat "$SINGBOX_FOLDER_PATH/.warp_config")
         fi
 
+        # ✅ 只补 direct/block，保留已有的自定义出站：
+        #    旧版是 `.outbounds = [direct, block]` 整体覆盖，改个协议/订阅开关就会把
+        #    用户手写的链式/中转出站静默清空 → 流量改走 direct，可能直接连回自己的域名。
+        # ❗ 不再挂 `{action:"sniff"}`：sing-box 的 sniff 默认超时 300ms（官方文档
+        #    rule_action#timeout），纯直连节点没有域名规则时，每条连接都要白等 300ms，
+        #    日志里表现为 inbound→outbound 固定 350~430ms。resolve 保留，用于按 sbyx
+        #    决定 IPv4/IPv6 解析策略。
         jq --arg sbyx "$sbyx" --argjson warp "$warp_enabled" --argjson need_youtube "$need_youtube" '
-            .outbounds = [{type: "direct", tag: "direct"}, {type: "block", tag: "block"}]
+            .outbounds = ([{type: "direct", tag: "direct"}, {type: "block", tag: "block"}]
+                          + [(.outbounds // [])[] | select(.tag != "direct" and .tag != "block")])
             | .route.final = "direct"
-            | if $warp then
-                if $need_youtube then
-                    .route.rules = [{rule_set: ["netflix", "openai", "youtube"], outbound: "wireguard-out"}] + [{action: "sniff"}, {action: "resolve", strategy: $sbyx}]
-                else
-                    .route.rules = [{rule_set: ["netflix", "openai"], outbound: "wireguard-out"}] + [{action: "sniff"}, {action: "resolve", strategy: $sbyx}]
-                end
-              else
-                .route.rules = [{action: "sniff"}, {action: "resolve", strategy: $sbyx}]
-              end
+            | .route.rules = (
+                [(.route.rules // [])[] | select((.action // "") != "sniff" and (.action // "") != "resolve")]
+                + (if $warp and (.outbounds | map(.tag) | index("wireguard-out")) then
+                      (if $need_youtube
+                       then [{rule_set: ["netflix", "openai", "youtube"], outbound: "wireguard-out"}]
+                       else [{rule_set: ["netflix", "openai"], outbound: "wireguard-out"}]
+                       end)
+                   else []
+                   end)
+                + [{action: "resolve", strategy: $sbyx}]
+              )
         ' "$sbj" > "$tmpj" && sbj_save "$tmpj"
         rm -f "$tmpj" 2> /dev/null || true
         # sb.json 内含全部协议口令，收紧权限（jq 写 tmp+mv 会重建文件，需重新 chmod）
@@ -2810,55 +3587,47 @@ sbbout() {
 
         if has_systemd && [ "$EUID" -eq 0 ]; then
             debug_log "【调试】sbbout：使用 systemd 管理/启动 sb 服务"
-            cat > /etc/systemd/system/sb.service << EOF
-[Unit]
-Description=sb service
-After=network.target
-[Service]
-Type=simple
-NoNewPrivileges=yes
-ExecStartPre=/bin/sh -c '[ -f /etc/iptables/rules.v4 ] && iptables-restore < /etc/iptables/rules.v4 2>/dev/null || true'
-ExecStartPre=/bin/sh -c '[ -f /etc/iptables/rules.v6 ] && ip6tables-restore < /etc/iptables/rules.v6 2>/dev/null || true'
-ExecStart=$SINGBOX_FOLDER_PATH/sing-box run -c $SINGBOX_FOLDER_PATH/sb.json
-StandardOutput=append:$LOGS_DIR/singbox.log
-StandardError=append:$LOGS_DIR/singbox.log
-Restart=on-failure
-RestartSec=5s
-[Install]
-WantedBy=multi-user.target
-EOF
+            # 小内存机器（<1G，LXC 小鸡常见）给 Go 运行时软上限 + cgroup 硬上限。
+            # 旧版只有 openrc 分支写了 GOMEMLIMIT，systemd 分支完全没限制：堆一路涨到
+            # 整机 OOM，内核随机挑进程杀（通常是 sing-box 或 cloudflared），
+            # 表现出来就是 nginx 侧一片 "recv() failed (104)" + 客户端反复重连。
+            # 用 MemTotal 百分比而不是写死，2G/4G 的机器不会被误伤。
+            gen_sb_unit_systemd > /etc/systemd/system/sb.service
             systemctl daemon-reload
-            systemctl enable sb
-            systemctl start sb
+            systemctl enable sb > /dev/null 2>&1
+            systemctl is-enabled sb > /dev/null 2>&1 \
+                || yellow "⚠ systemctl enable sb 失败，重启后 sing-box 可能不会自动启动"
+            # ⚠️ 必须用 restart 而不是 start：覆盖安装时 sb 服务已在运行，
+            #    `systemctl start` 对处于 active 的单元是空操作，新写入的 sb.json 不会生效，
+            #    旧进程会继续占着旧端口，而 nginx/订阅已按新端口生成 → 节点全 502
+            systemctl restart sb
             echo ""
             debug_print green "✅ sb 服务已启动,并开启开机自启服务（systemd）"
         elif command -v rc-service > /dev/null 2>&1 && [ "$EUID" -eq 0 ]; then
             debug_log "【调试】sbbout：使用 openrc 管理/启动 sb 服务"
-            cat > /etc/init.d/sing-box << EOF
-#!/sbin/openrc-run
-description="sb service"
-command="$SINGBOX_FOLDER_PATH/sing-box"
-command_args="run -c $SINGBOX_FOLDER_PATH/sb.json"
-command_background=yes
-pidfile="/run/sing-box.pid"
-depend() { need net; }
-start_pre() {
-    [ -f /etc/iptables/rules.v4 ] && iptables-restore < /etc/iptables/rules.v4 2>/dev/null || true
-    [ -f /etc/iptables/rules.v6 ] && ip6tables-restore < /etc/iptables/rules.v6 2>/dev/null || true
-}
-EOF
+            # ❗ openrc 的 command_background 只负责“后台启动”，进程崩溃/被 OOM 杀掉后不会自动拉起
+            #    （systemd 分支有 Restart=always，openrc 分支以前没有对应能力，所以一停就永久停）。
+            #    优先改用 supervise-daemon 托管：进程退出即按 respawn_* 自动重启，并把 stdout/stderr
+            #    落盘到 supervise-singbox.log，方便下次出问题时看到 Go 的 panic 栈。
+            #    老版本 openrc 没有 supervise-daemon 时回退到原来的 command_background 行为。
+            gen_sb_unit_openrc > /etc/init.d/sing-box
             chmod +x /etc/init.d/sing-box
+            # 同上：openrc 对已启动的服务执行 start 也是空操作，覆盖安装必须 restart
             if [ "${DEBUG_FLAG:-0}" = "1" ]; then
                 rc-update add sing-box default
-                rc-service sing-box start
+                rc-service sing-box restart
             else
                 rc-update add sing-box default > /dev/null 2>&1
-                rc-service sing-box start > /dev/null 2>&1
+                rc-service sing-box restart > /dev/null 2>&1
             fi
             echo ""
             debug_print green "✅ sb 服务已启动,并开启开机自启服务（openrc）"
         else
             debug_log "【调试】sbbout：使用 nohup 模式运行 sb 服务"
+            # 无 init 系统时没有 restart 语义：先停旧进程再拉起，否则新配置同样不生效，
+            # 且旧进程会占着端口让新进程起不来
+            pkill -15 -f "$SINGBOX_FOLDER_PATH/sing-box" 2> /dev/null
+            sleep 1
             nohup "$SINGBOX_FOLDER_PATH/sing-box" run -c "$SINGBOX_FOLDER_PATH/sb.json" > /dev/null 2>&1 &
             echo ""
             debug_print green "✅  sb 服务已启动, 使用 nohup 模式运行"
@@ -2875,30 +3644,129 @@ EOF
 }
 
 # ================== Nginx 订阅服务 ==================
-# Nginx 配置文件路径
+# Nginx 配置文件路径（沙箱 conf.d，绝不写 /etc/nginx）
 nginx_conf_path() {
-    # Alpine
-    if [ -d /etc/nginx/http.d ]; then
-        echo "/etc/nginx/http.d/singbox.conf"
+    echo "$SB_NGINX_SUB_CONF"
+}
+
+# 生效的 Nginx 订阅端口
+# 注意：脚本启动时 nginx_pt 已被赋默认值 8080，因此不能用 ${nginx_pt:-...} 判断"用户是否指定"。
+# 规则：显式传入且不等于默认值 → 用传入值；否则沿用落盘 nginx_port；都没有才用默认值。
+# （否则任何菜单里触发的 nginx 重生成都会把订阅端口悄悄改回 8080）
+_eff_nginx_pt() {
+    local _f=""
+    _f="$(cat "$SINGBOX_FOLDER_PATH/nginx_port" 2> /dev/null | tr -d '\r\n')"
+    if [ -n "${nginx_pt:-}" ] && [ "${nginx_pt}" != "$NGINX_DEFAULT_PORT" ]; then
+        printf '%s' "$nginx_pt"
+    elif [ -n "$_f" ]; then
+        printf '%s' "$_f"
     else
-        echo "/etc/nginx/conf.d/singbox.conf"
+        printf '%s' "${nginx_pt:-$NGINX_DEFAULT_PORT}"
+    fi
+}
+
+# 生效的 Argo 本地回源端口（规则同 _eff_nginx_pt，默认 8001）
+_eff_argo_pt() {
+    local _f=""
+    _f="$(cat "$SINGBOX_FOLDER_PATH/argoport" 2> /dev/null | tr -d '\r\n')"
+    if [ -n "${argo_pt:-}" ] && [ "${argo_pt}" != "$ARGO_DEFAULT_PORT" ]; then
+        printf '%s' "$argo_pt"
+    elif [ -n "$_f" ]; then
+        printf '%s' "$_f"
+    else
+        printf '%s' "${argo_pt:-$ARGO_DEFAULT_PORT}"
+    fi
+}
+
+# ================== 系统/宝塔 Nginx 遗留监听自愈 ==================
+# 历史背景：2.0.x 老版本会 apt/yum/apk 装系统 nginx，把订阅站点写进
+# /etc/nginx/{conf.d,http.d}/singbox.conf 并 systemctl enable。
+# 升级到沙箱版后脚本会删掉那些配置文件 —— 但运行中的系统 nginx 内存里仍持有旧
+# server 块，31007/8001 的监听不会自己消失，沙箱 nginx 依旧 bind 失败。
+# 更坑的是旧配置里的订阅 location 还在生效，用户会看到「订阅 200」的假成功，
+# 一旦重启机器（nginx enabled 自启并重新读配置）立刻变 404。
+
+# 定位系统/宝塔 Nginx 二进制（沙箱 Nginx 不在候选里，绝不误认）
+_system_nginx_bin() {
+    local f
+    for f in /usr/sbin/nginx /usr/local/sbin/nginx /usr/local/nginx/sbin/nginx /www/server/nginx/sbin/nginx; do
+        [ -x "$f" ] && {
+            printf '%s' "$f"
+            return 0
+        }
+    done
+    return 1
+}
+
+_system_nginx_running() {
+    if command -v pgrep > /dev/null 2>&1; then
+        pgrep -f 'nginx: master process' > /dev/null 2>&1 && return 0
+    fi
+    ps -A 2> /dev/null | grep -q 'nginx: master process' && return 0
+    return 1
+}
+
+# 平滑 reload 系统/宝塔 Nginx，让「删掉遗留配置」真正生效（端口才会释放）。
+# 安全前提：进程在跑 + nginx -t 通过。reload 不断现有连接、不改用户站点配置。
+# 返回 0 = 已发起 reload；1 = 条件不满足（不动它，交回调用方报诊断）。
+_reload_system_nginx_if_safe() {
+    local bin
+    bin="$(_system_nginx_bin)" || return 1
+    _system_nginx_running || return 1
+    # -t 不过就绝不 reload：宁可不修端口，也不能把用户站点搞挂
+    if ! "$bin" -t > /dev/null 2>&1; then
+        yellow "  ⚠ 系统 Nginx 配置校验未通过，跳过 reload（您的站点未受影响）"
+        return 1
+    fi
+    if command -v systemctl > /dev/null 2>&1 && systemctl is-active nginx > /dev/null 2>&1; then
+        systemctl reload nginx > /dev/null 2>&1 && return 0
+    fi
+    if command -v rc-service > /dev/null 2>&1; then
+        rc-service nginx reload > /dev/null 2>&1 && return 0
+    fi
+    "$bin" -s reload > /dev/null 2>&1 && return 0
+    return 1
+}
+
+# 清理旧版误写到系统 nginx 的遗留配置（只删本脚本的文件，不动宝塔/系统其余配置）
+cleanup_legacy_system_nginx_conf() {
+    local f _removed=0
+    for f in /etc/nginx/conf.d/singbox.conf /etc/nginx/http.d/singbox.conf; do
+        if [ -f "$f" ]; then
+            if rm -f "$f" 2> /dev/null; then
+                green "  ✓ 已清理旧版遗留配置：$f"
+                _removed=1
+            fi
+        fi
+    done
+    # 只删文件不够：运行中的系统 nginx 仍持有旧 server 块，端口继续被它占着。
+    # 这里补一次平滑 reload，让删除真正落地（旧版遗留的 31007/8001 监听随之释放）。
+    if [ "$_removed" = "1" ]; then
+        if _reload_system_nginx_if_safe; then
+            green "  ✓ 已平滑重载系统 Nginx，旧版遗留监听已释放"
+        fi
     fi
 }
 
 setup_nginx_subscribe() {
-    local port="${nginx_pt:-$NGINX_DEFAULT_PORT}"
-    local argo_port="${argo_pt:-$ARGO_DEFAULT_PORT}"
-    echo "$port" > "$SINGBOX_FOLDER_PATH/nginx_port"
+    local port argo_port
+    port="$(_eff_nginx_pt)"
+    argo_port="$(_eff_argo_pt)"
 
-    # ✅端口相同会导致 nginx listen 冲突
+    # ✅端口相同会导致 nginx listen 冲突（先校验再落盘，否则冲突时脏端口被持久化）
     if [ "$port" = "$argo_port" ]; then
         red "❌ nginx_pt($port) 和 argo_pt($argo_port) 不能相同，否则 Nginx 监听冲突"
         return 1
     fi
+    echo "$port" > "$SINGBOX_FOLDER_PATH/nginx_port"
 
     local webroot="/var/www/singbox"
     mkdir -p "$webroot"
     chmod 755 /var /var/www /var/www/singbox 2> /dev/null
+
+    # 沙箱目录 + 主配置 + 清理旧版系统 nginx 遗留
+    write_sb_nginx_conf
+    cleanup_legacy_system_nginx_conf
 
     local vm_port vl_port tr_port uuid
     local cdn_vm_port cdn_vl_port cdn_tr_port
@@ -2920,6 +3788,8 @@ setup_nginx_subscribe() {
     local conf
     conf="$(nginx_conf_path)"
     mkdir -p "$(dirname "$conf")" > /dev/null 2>&1
+    # 部分流程直接调 setup（如改订阅开关），兜底确保二进制存在
+    [ -x "$SB_NGINX_BIN" ] || install_nginx_pkg || return 1
 
     # ✅ IPv6 双栈监听（与 ippz 语义对齐）：
     #    ippz=4 → 强制 IPv4，不监听 [::]；
@@ -2963,6 +3833,17 @@ EOF
         [ -f "$webroot/sub.txt" ] || : > "$webroot/sub.txt"
     fi
 
+    # WS 长连接公共参数：
+    # nginx 默认 proxy_read_timeout / proxy_send_timeout 都是 60s，且隧道模式下
+    # 只有「上游读/写」会挂定时器（nginx 源码 ngx_http_upstream_process_upgraded），
+    # 也就是 sing-box 60 秒没吐数据就会被 nginx 断开 → 客户端表现为「用着用着就掉线」。
+    # VMess/VLESS/Trojan over WS 本身不发心跳，所以必须显式拉长，否则必踩 60s。
+    local _ws_extra="        proxy_buffering off;
+        proxy_socket_keepalive on;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        access_log off;"
+
     cat >> "$conf" << EOF
 
     # --------- ws 反代（固定 Argo 同域名下可代理节点） ---------
@@ -2976,6 +3857,7 @@ EOF
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
+${_ws_extra}
     }
 
 EOF
@@ -2989,6 +3871,7 @@ EOF
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
+${_ws_extra}
     }
 
 EOF
@@ -3002,6 +3885,7 @@ EOF
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
+${_ws_extra}
     }
 
 EOF
@@ -3016,6 +3900,7 @@ EOF
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
+${_ws_extra}
     }
 
 EOF
@@ -3028,6 +3913,7 @@ EOF
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
+${_ws_extra}
     }
 
 EOF
@@ -3040,6 +3926,7 @@ EOF
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
+${_ws_extra}
     }
 
 EOF
@@ -3052,45 +3939,218 @@ EOF
 }
 EOF
 
-    nginx -t > /dev/null 2>&1 || {
-        red "❌ Nginx 配置检查失败，请运行 nginx -t 查看原因"
-        nginx -t
+    if ! sb_nginx_test; then
+        red "❌ Nginx 配置检查失败，请运行以下命令查看原因："
+        yellow "  $SB_NGINX_BIN -p $SB_NGINX_DIR/ -c conf/nginx.conf -t"
+        "$SB_NGINX_BIN" -p "$SB_NGINX_DIR/" -c conf/nginx.conf -t 2>&1 | sed 's/^/  /' || true
         return 1
-    }
+    fi
 
 }
 
-# 启动 Nginx 服务
-start_nginx_service() {
-    debug_log "【调试】start_nginx_service：开始启动 Nginx 服务"
-    # systemd
-    if has_systemd; then
-        debug_log "【调试】start_nginx_service：使用 systemd 管理 Nginx 服务"
+# 启动沙箱 Nginx（按 pid 文件操作，绝不碰系统/宝塔 nginx 进程或服务单元）
+# ================== 端口占用诊断（只读，绝不动外部进程） ==================
+# 端口 → 监听进程 pid（可能多个：nginx 的 master 与 worker 会同列，一行一个）。
+# ss -tlnp 优先；无 ss（busybox 精简版）时走 /proc/net/tcp 的 LISTEN inode 兜底。
+# 只在安装/启动沙箱 Nginx 时调用，频率极低。
+_listener_pids_of_port() {
+    local port="${1:-}" line inode="" _hex _d _fd _hit=""
+    case "$port" in '' | *[!0-9]*) return 1 ;; esac
 
-        systemctl enable nginx > /dev/null 2>&1
-        systemctl restart nginx > /dev/null 2>&1 || systemctl start nginx > /dev/null 2>&1
-        echo ""
-        debug_print green "✅ Nginx 服务已启动,并开启开机自启服务（systemd）"
-        return 0
+    if command -v ss > /dev/null 2>&1; then
+        # ⚠️ 必须带 -p：`ss -tln` 不输出 users:(...) 段，拿不到 pid 就会静默退化到
+        #    /proc 兜底（能出结果但每次全扫 /proc/*/fd，进程多的机器上明显变慢）
+        line="$(ss -tlnp 2> /dev/null | awk -v p=":${port}\$" '$4 ~ p {print; exit}')"
+        if [ -n "$line" ]; then
+            _hit="$(printf '%s' "$line" | grep -o 'pid=[0-9][0-9]*' | cut -d= -f2 | sort -u)"
+            if [ -n "$_hit" ]; then
+                printf '%s\n' "$_hit"
+                return 0
+            fi
+        fi
     fi
 
-    # openrc
-    if command -v rc-service > /dev/null 2>&1; then
-        debug_log "【调试】start_nginx_service：使用 openrc 管理 Nginx 服务"
-        rc-update add nginx default > /dev/null 2>&1
-        rc-service nginx restart > /dev/null 2>&1 || rc-service nginx start > /dev/null 2>&1
-        echo ""
-        debug_print green "✅ Nginx 服务已启动,并开启开机自启服务（openrc）"
-        return 0
-    fi
+    # /proc/net/tcp{,6}：LISTEN=0A，第 2 列 local_address（ADDR:PORT 十六进制），第 10 列 inode
+    _hex="$(printf '%04X' "$port" 2> /dev/null)" || return 1
+    [ -n "$_hex" ] || return 1
+    inode="$(awk -v h="$_hex" 'FNR > 1 && $4 == "0A" { split($2, a, ":"); if (toupper(a[2]) == h) { print $10; exit } }' \
+        /proc/net/tcp /proc/net/tcp6 2> /dev/null | head -n1)"
+    [ -n "$inode" ] || return 1
 
-    debug_log "【调试】start_nginx_service：使用 nohup 模式运行 Nginx 服务"
-    # no init
-    pkill -15 nginx > /dev/null 2>&1
-    nohup nginx > /dev/null 2>&1 &
-    echo ""
-    debug_print green "✅ Nginx 服务已启动, 使用 nohup 模式运行"
+    # worker 继承 master 的 listen fd，所以可能命中多个 pid，全部输出
+    for _d in /proc/[0-9]*; do
+        for _fd in "$_d"/fd/*; do
+            [ -L "$_fd" ] || continue
+            case "$(readlink "$_fd" 2> /dev/null)" in
+                "socket:[${inode}]")
+                    printf '%s\n' "${_d#/proc/}"
+                    _hit=1
+                    break
+                    ;;
+            esac
+        done
+    done
+    [ -n "$_hit" ]
+}
+
+# 进程的父 pid。/proc/<pid>/stat 的 comm 字段可能含空格和括号，
+# 所以从最后一个 ") " 之后切，再取第 2 列（state 之后的 ppid）。
+_pid_ppid() {
+    local pid="${1:-}" _rest
+    case "$pid" in '' | *[!0-9]*) return 1 ;; esac
+    [ -r "/proc/$pid/stat" ] || return 1
+    _rest="$(sed 's/.*) //' "/proc/$pid/stat" 2> /dev/null)" || return 1
+    [ -n "$_rest" ] || return 1
+    printf '%s' "$_rest" | awk '{print $2}'
+}
+
+# 安装/启动沙箱 Nginx 前的端口占用预检：明确区分「沙箱 Nginx」与「系统/宝塔 Nginx」。
+# 本脚本绝不停用/禁用外部 Nginx —— 只把病因和可选解法摆到用户面前。
+# 背景：2.0.x 老版本会 apt/yum/apk 装系统 nginx 并 systemctl enable，
+#       升级到沙箱版后系统 nginx 仍开机自启、继续占着 80/8080，沙箱 nginx 必然 bind 失败。
+nginx_port_owner_diagnose() {
+    local _p _pid _pids _comm _cmdline _sbpid="" _ports="" _seen=" " _own _hit=0
+    # argo_pt 与 nginx_pt 相同时只诊断一次，避免同一端口刷两遍
+    for _p in "$(_eff_nginx_pt)" "$(_eff_argo_pt)"; do
+        [ -n "$_p" ] || continue
+        case "$_seen" in *" $_p "*) continue ;; esac
+        _seen="${_seen}${_p} "
+        _ports="${_ports}${_p} "
+    done
+
+    [ -s "$SB_NGINX_PID" ] && _sbpid="$(cat "$SB_NGINX_PID" 2> /dev/null | tr -d ' \r\n')"
+
+    for _p in $_ports; do
+        _pids="$(_listener_pids_of_port "$_p" 2> /dev/null | tr '\n' ' ')"
+        [ -n "${_pids// /}" ] || continue
+
+        # 归属判定（任一成立即认为端口是自己的）：
+        #   1) 命中沙箱 master 本人；
+        #   2) 命中它的子进程 —— nginx worker 的 ppid 就是 master pid，
+        #      而 worker 的 cmdline 只有 "nginx: worker process"，不含安装路径；
+        #   3) cmdline 里带沙箱 prefix（历史 pid、被 wrapper 拉起等兜底）。
+        _own=""
+        for _pid in $_pids; do
+            if [ -n "$_sbpid" ] && [ "$_pid" = "$_sbpid" ]; then
+                _own=1
+                break
+            fi
+            if [ -n "$_sbpid" ] && [ "$(_pid_ppid "$_pid")" = "$_sbpid" ]; then
+                _own=1
+                break
+            fi
+            if [ -r "/proc/$_pid/cmdline" ]; then
+                _cmdline="$(tr '\000' ' ' < "/proc/$_pid/cmdline" 2> /dev/null)"
+                case "$_cmdline" in
+                    *"$SB_NGINX_DIR"*)
+                        _own=1
+                        break
+                        ;;
+                esac
+            fi
+        done
+        [ -n "$_own" ] && continue
+
+        # 确实有外人占着：挑一个代表 pid 报错
+        _pid="$(printf '%s' "$_pids" | awk '{print $1}')"
+        _comm=""
+        [ -r "/proc/$_pid/comm" ] && _comm="$(tr -d '\000' < "/proc/$_pid/comm" 2> /dev/null)"
+
+        # 自愈优先：占用者若是系统/宝塔 Nginx，多半是「旧版遗留配置被删掉但没 reload」，
+        # 端口还挂在它内存里的旧 server 块上。先平滑 reload 一次；端口真释放了就静默放行，
+        # 沙箱 Nginx 照常启动，用户什么都不用做。
+        case "$_comm" in
+            *nginx*)
+                if _reload_system_nginx_if_safe; then
+                    sleep 1
+                    if [ -z "$(_listener_pids_of_port "$_p" 2> /dev/null | tr -d ' \n')" ]; then
+                        green "✅ 已平滑重载系统 Nginx，端口 ${_p} 已释放"
+                        continue
+                    fi
+                fi
+                ;;
+        esac
+
+        _hit=1
+        red "❌ 端口 ${_p} 已被占用：pid=${_pid} comm=${_comm:-unknown}"
+        case "$_comm" in
+            *nginx*)
+                yellow "   占用者是【系统 / 宝塔 Nginx】，不是本脚本的沙箱 Nginx。"
+                yellow "   本脚本的 Nginx 完全独立（${SB_NGINX_DIR}），不会去停外部 Nginx，"
+                yellow "   所以两者抢同一端口时，沙箱 Nginx 必然起不来，订阅/Argo/CDN 入口全是 404。"
+                yellow ""
+                yellow "   ── 三选一 ──"
+                yellow "   1) 停掉系统 Nginx 并取消开机自启（仅当本机没有别的站点依赖它）:"
+                yellow "        systemctl disable --now nginx                    # systemd 发行版"
+                yellow "        rc-update del nginx && rc-service nginx stop     # Alpine / OpenRC"
+                yellow "   2) 让本脚本换端口重装（推荐，两套 Nginx 互不影响）:"
+                yellow "        nginx_pt=18080 bash <(curl -Ls 安装地址) rep"
+                yellow "   3) 保留现有安装只改端口:  菜单 → 修改端口 → 订阅 Nginx 端口"
+                ;;
+            *)
+                yellow "   占用者不是 Nginx，与「以前装过系统 Nginx」无关；需要释放该进程或换端口。"
+                yellow "   查看占用:  ss -tlnp | grep :${_p}      或      lsof -i :${_p}"
+                yellow "   换端口重装:  nginx_pt=18080 bash <(curl -Ls 安装地址) rep"
+                ;;
+        esac
+        echo ""
+    done
     return 0
+}
+
+start_nginx_service() {
+    debug_log "【调试】start_nginx_service：启动沙箱 Nginx"
+    [ -x "$SB_NGINX_BIN" ] || {
+        red "❌ 沙箱 Nginx 未安装"
+        return 1
+    }
+    [ -f "$SB_NGINX_CONF" ] || write_sb_nginx_conf
+    # 补建服务托管（幂等）：菜单里直接「启动 nginx」时也要落到 systemd 上
+    install_nginx_unit 2> /dev/null || true
+
+    if sb_nginx_running; then
+        debug_print green "✅ 沙箱 Nginx 已在运行"
+        return 0
+    fi
+    rm -f "$SB_NGINX_PID" 2> /dev/null
+
+    # 启动前先查端口占用：把「系统/宝塔 Nginx 抢端口」这件事直接说清楚，
+    # 而不是等 bind 失败后只丢一句 error.log 让用户自己猜。
+    nginx_port_owner_diagnose || true
+
+    if ! _sb_nginx_start_raw; then
+        red "❌ 沙箱 Nginx 启动失败（详见 $SB_NGINX_DIR/logs/error.log）"
+        # 定位 bind 失败端口：常见于外部（宝塔/系统）nginx 已占用 nginx_pt/argo_pt
+        # 本脚本绝不操作外部 nginx，只能提示用户释放端口或改用其他端口
+        {
+            local _eaddr
+            _eaddr="$(grep -oE 'bind\(\) to [^ ]+ failed \(98: Address in use\)' "$SB_NGINX_DIR/logs/error.log" 2> /dev/null | head -n1)"
+            if [ -n "$_eaddr" ]; then
+                local _eport
+                _eport="$(printf '%s' "$_eaddr" | sed -n 's/.*:\([0-9][0-9]*\) failed.*/\1/p')"
+                yellow "  👉 端口被占用：${_eaddr}"
+                yellow "     可能被您的宝塔/系统 Nginx 或其他程序占用，本脚本不会动它们。"
+                yellow "     ── 手动释放该端口（在服务器上依次执行）──"
+                if command -v ss > /dev/null 2>&1 && [ -n "$_eport" ]; then
+                    yellow "     1) 查看占用者:  ss -tlnp | grep :${_eport}   （记下其中的 pid=xxx）"
+                    yellow "     2) 确认后结束进程: kill <pid>   （若占用者是 nginx，请自查是不是您依赖的站点服务再停）"
+                else
+                    yellow "     1) 查看占用者:  lsof -i :${_eport:-端口}   （记下其中的 PID）"
+                    yellow "     2) 确认后结束进程: kill <PID>"
+                fi
+                yellow "     或改用其他端口重装，例如: nginx_pt=18080 bash <(curl -Ls 安装地址) rep"
+            fi
+        } 2> /dev/null
+        return 1
+    fi
+    sleep 1
+    if sb_nginx_running; then
+        echo ""
+        debug_print green "✅ 沙箱 Nginx 服务已启动"
+        return 0
+    fi
+    red "❌ 沙箱 Nginx 启动后立即退出（详见 $SB_NGINX_DIR/logs/error.log）"
+    return 1
 }
 
 nginx_start() {
@@ -3098,68 +4158,71 @@ nginx_start() {
 }
 
 nginx_stop() {
-    debug_log "【调试】nginx_stop：开始停止 Nginx 服务"
-    # systemd
-    if has_systemd; then
-        debug_log "【调试】nginx_stop：使用 systemd 管理 Nginx 服务"
-        systemctl stop nginx > /dev/null 2>&1
+    debug_log "【调试】nginx_stop：停止沙箱 Nginx"
+    # 已托管时必须走服务管理器：直接对 master 发信号会被 systemd 的 Restart=always 立刻拉回来
+    if _sb_nginx_stop_raw; then
+        sleep 1
+        rm -f "$SB_NGINX_PID" 2> /dev/null
+        debug_log "【调试】nginx_stop：沙箱 Nginx 服务已停止（${SB_NGINX_SVC}）"
         return 0
     fi
-
-    # openrc
-    if command -v rc-service > /dev/null 2>&1; then
-        debug_log "【调试】nginx_stop：使用 openrc 管理 Nginx 服务"
-        rc-service nginx stop > /dev/null 2>&1
-        return 0
+    local pid
+    if [ -s "$SB_NGINX_PID" ]; then
+        pid="$(cat "$SB_NGINX_PID" 2> /dev/null | tr -d ' \r\n')"
+        # 只对「确实是 nginx」的 pid 动手；pid 被复用（重启后很常见）时直接清掉 pid 文件
+        if [ -n "$pid" ] && kill -0 "$pid" 2> /dev/null && ! _pid_is_sb_nginx "$pid"; then
+            yellow "  ↳ 沙箱 Nginx 的 pid 文件已失效（${pid} 已被其他进程占用），忽略"
+            pid=""
+        fi
+        if [ -n "$pid" ] && kill -0 "$pid" 2> /dev/null; then
+            if [ -x "$SB_NGINX_BIN" ] && [ -f "$SB_NGINX_CONF" ]; then
+                "$SB_NGINX_BIN" -p "$SB_NGINX_DIR/" -c conf/nginx.conf -s quit > /dev/null 2>&1 || true
+                # quit 优雅退出等待
+                local _w=0
+                while kill -0 "$pid" 2> /dev/null && [ "$_w" -lt 5 ]; do
+                    sleep 1
+                    _w=$((_w + 1))
+                done
+            fi
+            # 仍未退出则只对该 pid 发 TERM（绝不按名 pkill）
+            if kill -0 "$pid" 2> /dev/null; then
+                kill -TERM "$pid" 2> /dev/null || true
+                sleep 1
+            fi
+            # 最后兜底：仍存活才 KILL 该 pid
+            if kill -0 "$pid" 2> /dev/null; then
+                kill -KILL "$pid" 2> /dev/null || true
+            fi
+        fi
     fi
-
-    # no init：直接杀进程
-    pkill -15 -x nginx > /dev/null 2>&1
-    debug_log "【调试】nginx_stop： Nginx 服务已停止"
+    rm -f "$SB_NGINX_PID" 2> /dev/null
+    debug_log "【调试】nginx_stop：沙箱 Nginx 服务已停止"
     return 0
 }
 
-# 重启 Nginx 服务
+# 重启沙箱 Nginx（配置热 reload 优先，失败则 stop+start）
 nginx_restart() {
-    debug_log "【调试】nginx_restart：开始重启 Nginx 服务"
-    # systemd
-    if has_systemd; then
-        debug_log "【调试】nginx_restart：使用 systemd 管理 Nginx 服务"
-        systemctl restart nginx > /dev/null 2>&1 || systemctl start nginx > /dev/null 2>&1
-        echo
-        green "✅ Nginx 服务已重启"
-        return 0
+    debug_log "【调试】nginx_restart：重启沙箱 Nginx"
+    if sb_nginx_running && [ -x "$SB_NGINX_BIN" ] && [ -f "$SB_NGINX_CONF" ]; then
+        if "$SB_NGINX_BIN" -p "$SB_NGINX_DIR/" -c conf/nginx.conf -t > /dev/null 2>&1 \
+            && "$SB_NGINX_BIN" -p "$SB_NGINX_DIR/" -c conf/nginx.conf -s reload > /dev/null 2>&1; then
+            echo
+            green "✅ 沙箱 Nginx 服务已重载"
+            return 0
+        fi
     fi
-
-    # openrc
-    if command -v rc-service > /dev/null 2>&1; then
-        debug_log "【调试】nginx_restart：使用 openrc 管理 Nginx 服务"
-        rc-service nginx restart > /dev/null 2>&1 || rc-service nginx start > /dev/null 2>&1
-        echo
-        green "✅ Nginx 服务已重启"
-        return 0
-    fi
-
-    debug_log "【调试】nginx_restart：使用 nohup 模式运行 Nginx 服务"
-    # no init：优先 reload，不行就 stop+start
-    if command -v nginx > /dev/null 2>&1; then
-        debug_log "【调试】nginx_restart：使用 nohup 模式运行 Nginx 服务，尝试 reload"
-        nginx -s reload > /dev/null 2>&1 && return 0
-    fi
-
-    debug_log "【调试】nginx_restart：使用 nohup 模式运行 Nginx 服务，尝试 stop+start"
     nginx_stop
     nginx_start
 }
 
-# 检查 Nginx 状态
+# 检查沙箱 Nginx 状态
 nginx_status() {
-    if pgrep -x nginx > /dev/null 2>&1; then
-        echo "Nginx：$(green "运行中")"
-    elif rc-service nginx status > /dev/null 2>&1; then
-        echo "Nginx：$(green "运行中 (OpenRC)")"
+    if sb_nginx_running; then
+        echo "Nginx：$(green "运行中（沙箱）")"
+    elif [ -x "$SB_NGINX_BIN" ]; then
+        echo "Nginx：$(red "已停止（沙箱）")"
     else
-        echo "Nginx：$(red "未运行")"
+        echo "Nginx：$(yellow "未安装（沙箱）")"
     fi
 }
 
@@ -3188,6 +4251,7 @@ ensure_cloudflared() {
         latest_ver=$(curl -sI --max-time 10 "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$cpu" 2>/dev/null | grep -i 'location:' | grep -oE '[0-9]{4}\.[0-9]+\.[0-9]+')
         if [ -n "$local_ver" ] && [ -n "$latest_ver" ] && [ "$local_ver" = "$latest_ver" ]; then
             green "✅ Cloudflared 已安装最新版 (v${local_ver})，跳过下载"
+            printf '%s' "$local_ver" > "$CF_VER_FILE" 2> /dev/null || true
             return 0
         fi
         if [ -n "$latest_ver" ]; then
@@ -3210,16 +4274,38 @@ ensure_cloudflared() {
 
     debug_log "【调试】ensure_cloudflared：下载 cloudflared 二进制文件，保存路径 $out"
 
-    (curl -Lo "$out" -# --connect-timeout 5 --max-time 120 \
+    # ⚠️ 先下到临时文件，校验通过再 mv 覆盖：
+    #    直接 -o "$out" 会就地截断正在运行的二进制（升级场景），
+    #    而且 curl 没有 -f，404/502 的 HTML 错误页也会被当成「下载成功」写进去。
+    local _cf_tmp="$out.new.$$"
+    rm -f "$_cf_tmp" 2> /dev/null
+
+    check_disk_space 80 || return 1
+
+    (curl -fLo "$_cf_tmp" -# --connect-timeout 5 --max-time 120 \
         --retry 2 --retry-delay 2 --retry-all-errors "$url") \
-        || (wget -O "$out" --tries=2 --timeout=60 --dns-timeout=5 --read-timeout=60 "$url")
+        || (wget -O "$_cf_tmp" --tries=2 --timeout=60 --dns-timeout=5 --read-timeout=60 "$url")
 
     debug_log "【调试】ensure_cloudflared：检查 cloudflared 二进制文件是否下载成功"
-    if [ ! -s "$out" ]; then
+    if [ ! -s "$_cf_tmp" ]; then
         debug_log "【调试】ensure_cloudflared：下载失败：文件为空"
-        red "❌ 下载失败：文件为空 $out"
+        rm -f "$_cf_tmp" 2> /dev/null
+        red "❌ 下载失败：文件为空（已保留原二进制）"
         return 1
     fi
+    # 简单有效性校验：错误页/空壳不会是 ELF 可执行文件
+    if command -v file > /dev/null 2>&1; then
+        case "$(file -b "$_cf_tmp" 2> /dev/null)" in
+            *ELF* | *executable* | *"Mach-O"*) : ;;
+            *)
+                rm -f "$_cf_tmp" 2> /dev/null
+                red "❌ 下载内容不是可执行文件（可能是错误页），已保留原二进制"
+                return 1
+                ;;
+        esac
+    fi
+    chmod +x "$_cf_tmp" 2> /dev/null
+    out="$_cf_tmp"
 
     # 可选校验和（供应链加固）：设置 CLOUDFLARED_SHA256=<SHA256> 时强制校验下载文件
     if [ -n "${CLOUDFLARED_SHA256:-}" ]; then
@@ -3251,6 +4337,13 @@ ensure_cloudflared() {
     fi
 
     debug_log "【调试】ensure_cloudflared：cloudflared 二进制文件权限设置成功"
+    # 落盘版本缓存（menu_status_block 只读此文件，不再对运行中的隧道执行 version 探测）
+    local _cfv="$( "$out" --version 2> /dev/null | grep -oE '[0-9]{4}\.[0-9]+\.[0-9]+' | head -1 )"
+    [ -n "$_cfv" ] && printf '%s' "$_cfv" > "$CF_VER_FILE" 2> /dev/null || true
+
+    # 全部校验通过后才原子替换正式路径（此时才动线上二进制）
+    mv -f "$out" "$SINGBOX_FOLDER_PATH/cloudflared" || { rm -f "$out" 2> /dev/null; red "❌ 安装 cloudflared 失败（无法覆盖 $SINGBOX_FOLDER_PATH/cloudflared）"; return 1; }
+    chmod +x "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null || true
     return 0
 }
 
@@ -3271,6 +4364,30 @@ install_argo_service_systemd() {
         return 1
     fi
 
+    # cloudflared 也是 Go 程序，同样是内存大户（Argo 隧道 + 默认 4 条 QUIC 边缘连接）。
+    # 小内存机器上和 sb 一样给软/硬上限，并把边缘连接数降到 1 条：
+    #   - 4 条 QUIC 连接每条都有自己的收发缓冲和 goroutine，128MB 上纯浪费；
+    #   - --ha-connections 1 只影响边缘冗余，不影响能不能连上（断了会自动重连）。
+    # 这里刻意不设 OOMScoreAdjust：
+    #   - 它只在「整机 / 容器级 OOM」时参与挑受害者；argo 撞到自己 MemoryMax 时是
+    #     cgroup 内部 OOM，组里只有它一个进程，设不设都是它自己死；
+    #   - 真正决定 argo 会不会被杀的，是下面的 GOMEMLIMIT 和 MemoryMax；
+    #   - 想恢复「整机吃紧先牺牲 argo」的话，在下面字符串里追加一行
+    #     OOMScoreAdjust=500 即可（一行的事，随时可加）。
+    local _argo_mem_conf="" _argo_ha="" _mem_kb=""
+    _mem_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)
+    if [ -n "$_mem_kb" ] && [ "$_mem_kb" -lt 1048576 ]; then
+        _argo_mem_conf="Environment=GOMEMLIMIT=$(( _mem_kb * 25 / 100 / 1024 ))MiB
+Environment=GOGC=40
+Environment=GOMAXPROCS=1"
+        if has_memory_cgroup; then
+            _argo_mem_conf="${_argo_mem_conf}
+MemoryHigh=$(( _mem_kb * 30 / 100 / 1024 ))M
+MemoryMax=$(( _mem_kb * 40 / 100 / 1024 ))M"
+        fi
+        _argo_ha=" --ha-connections 1"
+    fi
+
     if [ "$mode" = "json" ]; then
         debug_log "【调试】使用 json 模式安装 argo 服务(systemd)"
 
@@ -3278,12 +4395,16 @@ install_argo_service_systemd() {
 [Unit]
 Description=argo service
 After=network.target
+# 同 sb.service：OOM 后无限重试，不撞启动频率限制
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 NoNewPrivileges=yes
-ExecStart=$SINGBOX_FOLDER_PATH/cloudflared tunnel --edge-ip-version auto --config $SINGBOX_FOLDER_PATH/tunnel.yml run
-Restart=on-failure
+${_argo_mem_conf}
+LimitNOFILE=65535
+ExecStart=$SINGBOX_FOLDER_PATH/cloudflared tunnel --edge-ip-version auto${_argo_ha} --config $SINGBOX_FOLDER_PATH/tunnel.yml run
+Restart=always
 RestartSec=5s
 
 [Install]
@@ -3296,12 +4417,16 @@ EOF
 [Unit]
 Description=argo service
 After=network.target
+# 同 sb.service：OOM 后无限重试，不撞启动频率限制
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 NoNewPrivileges=yes
-ExecStart=$SINGBOX_FOLDER_PATH/cloudflared tunnel --no-autoupdate --edge-ip-version auto run --token ${token}
-Restart=on-failure
+${_argo_mem_conf}
+LimitNOFILE=65535
+ExecStart=$SINGBOX_FOLDER_PATH/cloudflared tunnel --no-autoupdate --edge-ip-version auto${_argo_ha} run --token "${token}"
+Restart=always
 RestartSec=5s
 
 [Install]
@@ -3313,8 +4438,12 @@ EOF
     chmod 600 /etc/systemd/system/argo.service 2>/dev/null || true
 
     systemctl daemon-reload
-    systemctl enable argo
-    systemctl start argo
+    systemctl enable argo > /dev/null 2>&1
+    systemctl is-enabled argo > /dev/null 2>&1 \
+        || yellow "⚠ systemctl enable argo 失败，重启后 Argo 隧道可能不会自动拉起"
+    # 覆盖安装必须 restart：start 对已 active 的单元是空操作，
+    # 换了 tunnel token / tunnel.yml 后旧进程会继续按旧配置跑（与 sb.service 同理）
+    systemctl restart argo
     echo ""
     debug_print green "✅ Argo 服务已启动并成功设置开机自启动（systemd）"
 }
@@ -3337,23 +4466,42 @@ install_argo_service_openrc() {
     fi
 
     local command_path="$SINGBOX_FOLDER_PATH/cloudflared"
-    local args=""
+    local args="" _argo_ha=""
+    local _mem_kb=""
+    _mem_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)
+    # 小内存机器把 Argo 边缘连接数从默认 4 条降到 1 条（与 systemd 分支保持一致）
+    [ -n "$_mem_kb" ] && [ "$_mem_kb" -lt 1048576 ] && _argo_ha=" --ha-connections 1"
 
     if [ "$mode" = "json" ]; then
         debug_log "【调试】使用 json 模式安装 argo 服务(openrc)"
-        args="tunnel --edge-ip-version auto --config $SINGBOX_FOLDER_PATH/tunnel.yml run"
+        args="tunnel --edge-ip-version auto${_argo_ha} --config $SINGBOX_FOLDER_PATH/tunnel.yml run"
     else
         debug_log "【调试】使用 token 模式安装 argo 服务(openrc)"
-        args="tunnel --no-autoupdate --edge-ip-version auto run --token ${token}"
+        args="tunnel --no-autoupdate --edge-ip-version auto${_argo_ha} run --token ${token}"
     fi
 
+    # 与 sb 服务同理：用 supervise-daemon 托管，cloudflared 掉线/被杀后自动重启
+    local _argo_sup_conf
+    if command -v supervise-daemon > /dev/null 2>&1; then
+        _argo_sup_conf='supervisor="supervise-daemon"
+respawn_delay=5
+respawn_max=0
+respawn_period=60
+output_log="'"$LOGS_DIR"'/supervise-argo.log"'
+    else
+        _argo_sup_conf='command_background=yes'
+    fi
     cat > /etc/init.d/argo << EOF
 #!/sbin/openrc-run
 description="argo service"
 command="${command_path}"
 command_args="${args}"
-command_background=yes
 pidfile="/run/argo.pid"
+${_argo_sup_conf}
+# 小内存机器：给 cloudflared 的 Go 运行时软上限（与 systemd 分支口径一致）
+_mem_kb=\$(awk '/^MemTotal:/{print \$2}' /proc/meminfo 2>/dev/null)
+[ -z "\$GOMEMLIMIT" ] && [ -n "\$_mem_kb" ] && [ "\$_mem_kb" -lt 1048576 ] && export GOMEMLIMIT=\$(( _mem_kb * 25 / 100 / 1024 ))MiB
+[ -z "\$GOMAXPROCS" ] && [ -n "\$_mem_kb" ] && [ "\$_mem_kb" -lt 1048576 ] && export GOMAXPROCS=1
 depend() { need net; }
 EOF
 
@@ -3362,11 +4510,13 @@ EOF
     chmod +x /etc/init.d/argo
     if [ "${DEBUG_FLAG:-0}" = "1" ]; then
         rc-update add argo default
-        rc-service argo start
+        rc-service argo restart
     else
         rc-update add argo default > /dev/null 2>&1
-        rc-service argo start > /dev/null 2>&1
+        rc-service argo restart > /dev/null 2>&1
     fi
+    [ -e /etc/runlevels/default/argo ] \
+        || yellow "⚠ rc-update add argo 失败，重启后 Argo 隧道可能不会自动拉起"
     debug_print green "✅ Argo 服务已成功安装并启动（openrc）"
 }
 
@@ -3375,19 +4525,28 @@ start_argo_no_daemon() {
     local mode="$1"
     local token="$2"
     local port="$3"
+    local _argo_ha="" _mem_kb=""
     mkdir -p "$LOGS_DIR" 2> /dev/null
+
+    # 与 systemd/openrc 分支同口径：小内存机器降边缘连接数 + 压 Go 堆上限
+    _mem_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)
+    if [ -n "$_mem_kb" ] && [ "$_mem_kb" -lt 1048576 ]; then
+        _argo_ha=" --ha-connections 1"
+        [ -z "${GOMEMLIMIT:-}" ] && export GOMEMLIMIT="$(( _mem_kb * 25 / 100 / 1024 ))MiB"
+        [ -z "${GOMAXPROCS:-}" ] && export GOMAXPROCS=1
+    fi
 
     if [ "$mode" = "json" ]; then
         debug_log "【调试】使用 json 模式，nohup 启动 argo"
         nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel \
-            --edge-ip-version auto \
+            --edge-ip-version auto${_argo_ha} \
             --config "$SINGBOX_FOLDER_PATH/tunnel.yml" run \
             > "$LOGS_DIR/argo.log" 2>&1 &
     elif [ -n "$token" ]; then
         debug_log "【调试】使用 token 模式，nohup 启动 argo"
         nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel \
             --no-autoupdate \
-            --edge-ip-version auto run \
+            --edge-ip-version auto${_argo_ha} run \
             --token "$token" \
             > "$LOGS_DIR/argo.log" 2>&1 &
     else
@@ -3504,7 +4663,8 @@ ensure_nginx_if_needed() {
         need_nginx=true
     fi
 
-    if [ -n "$ws_cdn" ]; then
+    # 注意：ws_cdn 可能只落盘在文件里（菜单改完、环境变量没传），这里要用 ws_cdn_val 兜底读文件
+    if [ -n "$(ws_cdn_val ws_cdn)" ]; then
         need_nginx=true
     fi
 
@@ -3514,22 +4674,33 @@ ensure_nginx_if_needed() {
         return 0
     fi
 
-    # ✅ 需要 nginx：先按需安装
+    # ✅ 需要 nginx：安装沙箱二进制（同版本已存在会跳过下载）
     install_nginx_pkg || {
-        red "❌ Nginx 安装失败"
+        red "❌ 沙箱 Nginx 安装失败"
         return 1
     }
 
     # ✅ 需要 nginx：生成配置（你原来的逻辑）
     setup_nginx_subscribe || return 1
 
+    # ✅ 建服务托管 unit（配置已就位）：随开机自启 + 被杀自动拉起
+    install_nginx_unit 2> /dev/null || true
+
     # ✅ 只有订阅开启时才清空/准备 sub.txt
     if is_true "$(get_subscribe_flag)"; then
         : > /var/www/singbox/sub.txt
     fi
 
-    # ✅ 启动 nginx
-    start_nginx_service
+    # ✅ 启动 / 重载 nginx
+    #    setup_nginx_subscribe 刚整份重写了 conf.d；若 nginx 已在运行，只调 start_nginx_service
+    #    会因「已在运行」直接 return 0（配置不生效）→ 必须走 restart 重载。
+    #    同时把失败码透传给调用方（ins 里是 `ensure_nginx_if_needed || exit 1`），
+    #    否则启动失败被吞掉，最后仍然打印「安装完成」，用户拿到 404 的订阅地址。
+    if sb_nginx_running; then
+        nginx_restart || return 1
+    else
+        start_nginx_service || return 1
+    fi
     return 0
 }
 
@@ -3633,6 +4804,36 @@ EOF
         debug_log "【调试】pick_server_ip_for_install：最终抓取的公网IP,server_ip=$server_ip"
     fi
 
+    # 7-1) 出口 IPv4 若是三大 CDN（Cloudflare / Fastly / Akamai）的地址，说明 v4 出口被
+    #      WARP / 云厂商 NAT 之类代理了：拿它当节点地址，客户端连到的是 CDN 边缘节点而不是
+    #      本机，节点必然不通。此时若有可用 v6 就改用 v6。
+    #      - 显式 ippz=4：尊重用户选择，保留 v4，只告警
+    #      - 自动：v4 命中 CDN 且有 v6 → 改用 v6；无 v6 → 保留 v4 并告警
+    #      - 查询失败（ip-api 不可达）不影响装机，按原逻辑继续
+    local _cdn_vendor=""
+    if [ -n "$server_ip" ] && is_valid_ip_simple "$server_ip" && ! printf '%s' "$server_ip" | grep -q ':'; then
+        _cdn_vendor="$(_ip_cdn_vendor "$server_ip")" || _cdn_vendor=""
+        if [ -n "$_cdn_vendor" ]; then
+            debug_log "【调试】pick_server_ip_for_install：出口 IPv4 ${server_ip} 属于 ${_cdn_vendor}（CDN 厂商）"
+            if [ "$ipzz_local" = "4" ]; then
+                yellow "⚠️ 出口 IPv4 ${server_ip} 属于 ${_cdn_vendor}（CDN 厂商），但已指定 ippz=4，仍按 IPv4 写入"
+                debug_log "【调试】pick_server_ip_for_install：ippz=4 显式指定，保留 IPv4 ${server_ip}"
+            elif [ -n "$v6_local" ] && is_valid_ip_simple "$v6_local"; then
+                yellow "⚠️ 出口 IPv4 ${server_ip} 属于 ${_cdn_vendor}（CDN 厂商），已改用 IPv6 ${v6_local}"
+                debug_log "【调试】pick_server_ip_for_install：v4 属于 CDN，改用 v6=${v6_local}"
+                server_ip="$(strip_ip_brackets_all "$v6_local")"
+            else
+                yellow "⚠️ 出口 IPv4 ${server_ip} 属于 ${_cdn_vendor}（CDN 厂商），但本机没有可用 IPv6，仍沿用 IPv4"
+                debug_log "【调试】pick_server_ip_for_install：v4 属于 CDN 且无可用 v6，保留 IPv4 ${server_ip}"
+            fi
+        else
+            white "  ▸ 出口 IPv4 ${server_ip} 未命中三大 CDN（Cloudflare/Fastly/Akamai），按原逻辑使用"
+            debug_log "【调试】pick_server_ip_for_install：出口 IPv4 ${server_ip} 不属于三大 CDN，按原逻辑使用"
+        fi
+    else
+        debug_log "【调试】pick_server_ip_for_install：server_ip='${server_ip}' 非 IPv4，跳过 CDN 归属判断"
+    fi
+
     debug_log "【调试】pick_server_ip_for_install：开始对比out_ip与server_ip，out_ip=${out_ip}，server_ip=${server_ip}"
 
     # 8) 处理 out_ip：去括号后再比较；若 out_ip 合法且与 server_ip 不同，则 out_ip 覆盖server_ip的值（原逻辑不变）
@@ -3643,6 +4844,12 @@ EOF
         if [ -z "$server_ip" ] || ! is_valid_ip_simple "$server_ip" || [ "$out_norm" != "$(strip_ip_brackets_all "$server_ip")" ]; then
             debug_log "【调试】pick_server_ip_for_install：out_ip合法且与server_ip不同，out_norm=${out_norm}，server_ip=${server_ip}"
             server_ip="$out_norm"
+            # out_ip 是用户显式指定的，直接采用；但若是 CDN 地址要提示（否则节点连的是边缘节点）
+            _cdn_vendor="$(_ip_cdn_vendor "$out_norm")" || _cdn_vendor=""
+            if [ -n "$_cdn_vendor" ]; then
+                yellow "⚠️ out_ip ${out_norm} 属于 ${_cdn_vendor}（CDN 厂商）：客户端会连到 CDN 边缘节点，请确认这是你要的地址"
+                debug_log "【调试】pick_server_ip_for_install：out_ip ${out_norm} 属于 ${_cdn_vendor}"
+            fi
         fi
     fi
 
@@ -3772,6 +4979,39 @@ EOF
     _SUPPRESS_LOG="$_old_suppress"
 }
 
+# 开机自启自检：把已安装的服务托管单元的 enabled 状态摊开，
+# 免得用户重启后才发现某个服务没起来（历史坑：sb autostart 曾与 ins 建的是两套单元名）。
+report_autostart_status() {
+    local _svc _name _ok="" _bad=""
+    if has_systemd; then
+        for _svc in sb argo "$SB_NGINX_SVC"; do
+            [ -f "/etc/systemd/system/${_svc}.service" ] || continue
+            if systemctl is-enabled "$_svc" > /dev/null 2>&1; then
+                _ok="$_ok $_svc"
+            else
+                _bad="$_bad $_svc"
+            fi
+        done
+        [ -n "$_ok" ] && green "✅ 开机自启：${_ok# }"
+        [ -n "$_bad" ] && yellow "⚠ 未开启开机自启：${_bad# }（重启后会掉，可用 sb autostart 或 systemctl enable 补上）"
+        return 0
+    fi
+    if command -v rc-service > /dev/null 2>&1; then
+        for _svc in sb argo "$SB_NGINX_SVC"; do
+            case "$_svc" in sb) _name="sing-box" ;; *) _name="$_svc" ;; esac
+            [ -f "/etc/init.d/$_name" ] || continue
+            if [ -e "/etc/runlevels/default/$_name" ]; then
+                _ok="$_ok $_name"
+            else
+                _bad="$_bad $_name"
+            fi
+        done
+        [ -n "$_ok" ] && green "✅ 开机自启：${_ok# }"
+        [ -n "$_bad" ] && yellow "⚠ 未开启开机自启：${_bad# }（重启后会掉，可用 rc-update add 补上）"
+    fi
+    return 0
+}
+
 ins() {
     debug_log "【调试】进入 ins() 安装流程"
     debug_log "【调试】关键参数：argo=${argo:-<空>}，ws_cdn=${ws_cdn:-<空>}，vmag=${vmag:-<空>}，subscribe=$(get_subscribe_flag 2> /dev/null || echo ${subscribe:-false})，nginx_pt=${nginx_pt:-<空>}，argo_pt=${argo_pt:-<空>}"
@@ -3792,8 +5032,11 @@ ins() {
     [ -n "$anyp" ] && _dlist="$_dlist,anytls"
     _dlist="${_dlist#,}"
     [ -n "$_dlist" ] && { _d_c="${_dlist//[!,]/}"; _d_n=$((${#_d_c}+1)); if [ "$_d_n" -eq 1 ]; then _d_sfx="(单选，${_d_n}个)"; else _d_sfx="(已多选，${_d_n}个)"; fi; }
-    local _sub_txt="不开启"
-    [ "${subscribe:-false}" = "true" ] && _sub_txt="开启 (nginx_pt=${nginx_pt})"
+    # 用「生效值」而不是环境变量：覆盖安装时没传 subscribe，实际状态要读文件，
+    # 否则横幅会显示「不开启」而实际订阅是开着的
+    local _sub_txt="不开启" _sub_eff
+    _sub_eff="$(get_subscribe_flag)"
+    is_true "$_sub_eff" && _sub_txt="开启 (nginx_pt=$(_eff_nginx_pt))"
     # 出口 IP：优先 out_ip，否则现场检测 v4/v6（偏好逻辑与 write_server_ip 一致）
     local _ipres _ipv4 _ipv6 _exit_ip="" _exit_label="" _exit_region=""
     _ipres="$(check_ip_connectivity "$v46url" 2>/dev/null)"
@@ -3926,11 +5169,32 @@ ins() {
     sbbout
     refresh_firewall_rules
 
+    # 日志轮转：sing-box / cloudflared 日志无上限，小硬盘机器跑久了会被写满
+    install_log_rotate
+
+    # 小内存机器（<256MB）瘦身：journald 限额 + 停 apt 每日更新定时器
+    low_mem_tune
+
+    # 服务看门狗：OOM/崩溃后把 sb、argo、沙箱 nginx 补拉起来（每 2 分钟）
+    install_service_watchdog
+
     # 把ip写入server_ip
     write_server_ip
 
     # 2. Nginx（按需：subscribe=true 或启用 argo 才需要）
-    ensure_nginx_if_needed || exit 1
+    # ⚠️ 这里原本是 `|| exit 1`。但上一行 sbbout 已经把 sing-box 起起来了：
+    #    在 Nginx/订阅 这一步 exit 1，用户看到的是「安装失败」，实际节点是通的，
+    #    只是订阅 404 —— 极难自查，还会把「系统 Nginx 占端口」误判成「脚本装不上」。
+    #    改为记录失败 + 告警继续，收尾时统一说明（见 ins 末尾）。
+    NGINX_SETUP_FAILED=0
+    if ! ensure_nginx_if_needed; then
+        NGINX_SETUP_FAILED=1
+        echo ""
+        yellow "⚠️ 订阅服务（沙箱 Nginx）未就绪，原因见上方诊断。"
+        yellow "   sing-box 节点已启动，直连节点仍可正常使用；仅 订阅 / Argo / WS-CDN 入口不可用。"
+        yellow "   修复后无需重装，在菜单里「更新订阅」即可重新生成。"
+        echo ""
+    fi
     debug_log "【调试】ensure_nginx_if_needed 已执行完成（如需 Nginx 则已确保安装/启动）"
     debug_log "【调试】即将判断是否进入 Argo 分支：need_argo=$(need_argo && echo yes || echo no)，vmag=${vmag:-<空>}"
 
@@ -3951,8 +5215,9 @@ ins() {
         debug_log "【调试】cloudflared 已准备就绪（已通过 ensure_cloudflared_if_needed 检查）"
 
         # 2.2 计算 Argo 本地端口
-        argoport="${argo_pt:-$ARGO_DEFAULT_PORT}"
-        debug_log "【调试】Argo 本地回源端口 argoport=${argoport}（来自 argo_pt 或默认 ARGO_DEFAULT_PORT）"
+        # 与 setup_nginx_subscribe 用同一个解析规则，避免 nginx 反代端口与 argoport 文件不一致
+        argoport="$(_eff_argo_pt)"
+        debug_log "【调试】Argo 本地回源端口 argoport=${argoport}（显式 argo_pt > 落盘 argoport > 默认 ARGO_DEFAULT_PORT）"
         echo "$argoport" > "$SINGBOX_FOLDER_PATH/argoport"
 
         # 落盘 Argo 协议列表 + 每协议独立标记（旧 vlvm 兼容：仅保留单一主协议以便旧逻辑读取）
@@ -4015,7 +5280,7 @@ ins() {
             echo "$ARGO_DOMAIN" > "$SINGBOX_FOLDER_PATH/argo_domain"
             chmod 600 "$SINGBOX_FOLDER_PATH/argo_domain" 2>/dev/null || true
             # token 模式下才会有 sbargotoken
-            [ "$ARGO_MODE" = "token" ] && { echo "$ARGO_AUTH" > "$SINGBOX_FOLDER_PATH/sbargotoken"; chmod 600 "$SINGBOX_FOLDER_PATH/sbargotoken" 2>/dev/null || true; }
+            [ "$ARGO_MODE" = "token" ] && { printf '%s\n' "$ARGO_AUTH" > "$SINGBOX_FOLDER_PATH/sbargotoken"; chmod 600 "$SINGBOX_FOLDER_PATH/sbargotoken" 2>/dev/null || true; }
         else
             # 临时 Argo（trycloudflare）
             argo_tunnel_type="临时"
@@ -4039,6 +5304,20 @@ ins() {
     # 创建 sb 快捷命令
     ensure_sb_shortcut
     debug_log "【调试】ensure_sb_shortcut 已执行完成（sb 快捷命令）"
+
+    # 订阅/Argo 入口失败时的收尾说明（失败已不再中断安装，见上方 ensure_nginx_if_needed 处）
+    if [ "${NGINX_SETUP_FAILED:-0}" = "1" ]; then
+        echo ""
+        red "⚠️ 本次安装：sing-box 已就绪，但订阅服务（沙箱 Nginx）未就绪。"
+        yellow "   查看原因: $SB_NGINX_DIR/logs/error.log"
+        yellow "   最常见原因: 系统/宝塔 Nginx 占用了 $(_eff_nginx_pt) 或 $(_eff_argo_pt) 端口"
+        yellow "   修复: systemctl disable --now nginx"
+        yellow "     或换端口重装: nginx_pt=18080 bash <(curl -Ls 安装地址) rep"
+        echo ""
+    fi
+
+    # 开机自启自检（三个服务各自托管，装完就把状态摊开）
+    report_autostart_status
 }
 
 # 落盘兼容辅助：env 值在此次运行优先写新值；否则保留已有文件；否则从旧名文件迁移；否则写默认/删文件(回退默认)
@@ -4088,15 +5367,27 @@ write2SingboxFolders() {
     unset _ap _ak _av
 
     # ✅ 只写新变量
-    echo "${nginx_pt}" > "$SINGBOX_FOLDER_PATH/nginx_port"
+    # 订阅端口：只在显式传入时覆盖，否则保留落盘值（没有才写默认值）
+    if [ -n "${_SB_ENV_NGINX_PT:-}" ]; then
+        echo "$nginx_pt" > "$SINGBOX_FOLDER_PATH/nginx_port"
+    elif [ ! -s "$SINGBOX_FOLDER_PATH/nginx_port" ]; then
+        echo "$NGINX_DEFAULT_PORT" > "$SINGBOX_FOLDER_PATH/nginx_port"
+    fi
 
     echo "${vl_sni_pt}" > "$SINGBOX_FOLDER_PATH/vl_sni_pt"
 
-    # ✅ 订阅开关落盘（默认 false）
-    echo "${subscribe}" > "$SINGBOX_FOLDER_PATH/subscribe"
+    # ✅ 订阅开关落盘：同样只在显式传入时覆盖，避免 `sb ins` 静默把订阅关掉
+    if [ -n "${_SB_ENV_SUBSCRIBE:-}" ]; then
+        echo "$subscribe" > "$SINGBOX_FOLDER_PATH/subscribe"
+    elif [ ! -s "$SINGBOX_FOLDER_PATH/subscribe" ]; then
+        echo "false" > "$SINGBOX_FOLDER_PATH/subscribe"
+    fi
 
     # ✅ ws+ws+tls+cdn 直连参数落盘（开关 + 共享默认 + 每协议专属；env 空保留旧文件/从旧名迁移）
-    echo "${ws_cdn}" > "$SINGBOX_FOLDER_PATH/ws_cdn"
+    # ws_cdn：只在显式传入时覆盖（菜单改动走 _set_ws_cdn_proto 直接写文件）
+    if [ -n "${_SB_ENV_WS_CDN:-}" ]; then
+        echo "$ws_cdn" > "$SINGBOX_FOLDER_PATH/ws_cdn"
+    fi
     fs_write_or_keep "$SINGBOX_FOLDER_PATH/ws_cdn_cf_host" "${ws_cdn_cf_host:-}" "$SINGBOX_FOLDER_PATH/ws_cdn_host" ""
     fs_write_or_keep "$SINGBOX_FOLDER_PATH/ws_cdn_sni"     "${ws_cdn_sni:-}"     "$SINGBOX_FOLDER_PATH/ws_cdn_sni" ""
     fs_write_or_keep "$SINGBOX_FOLDER_PATH/ws_cdn_cf_pt"   "${ws_cdn_cf_pt:-}"   "$SINGBOX_FOLDER_PATH/ws_cdn_pt"   ""
@@ -4174,7 +5465,7 @@ update_subscription_file() {
 # 输出订阅链接
 # 域名优先级（自动判定，不接受 sub_domain 手动强制）：
 #   固定 Argo > 共享 ws_cdn_cf_host > 任意 Argo(含临时 trycloudflare) > http://IP:nginx_port
-# Argo 隧道实际可用性：cloudflared 已存在（PATH 或自定义目录 $SINGBOX_FOLDER_PATH）且 进程在运行
+# Argo 隧道实际可用性：cloudflared 已存在（PATH 或自定义目录 ${SINGBOX_FOLDER_PATH}）且 进程在运行
 # （否则 AGN 域名只是"配置了 Argo"，隧道没连上，走它做订阅会 530）
 argo_tunnel_alive() {
     if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ]; then
@@ -4249,7 +5540,7 @@ show_sub_url() {
 
     # ❗ 安全提示：无 Argo/CDN 时订阅只能走明文 HTTP，会暴露订阅 URL（内含所有节点口令）
     #    只应在可信网络使用；如需公网安全订阅请启用固定/临时 Argo 或配置共享 ws_cdn_cf_host
-    yellow "⚠️ 订阅走明文 HTTP，且订阅 URL 内含全部节点口令，请勿在不可信网络分享/抓包"
+    yellow "⚠️ 订阅走明文 HTTP，且订阅 URL 内含全部节点口令，请勿在不可信网络分享/抓包" >&2
     echo "http://${server_ip}:${port}/sub/${sub_uuid}"
 }
 
@@ -4530,8 +5821,14 @@ regenerate_links_and_sub() {
         _hdr d "直连协议信息"
         port_hy2=$(cat "$SINGBOX_FOLDER_PATH/port_hy2")
         hy_sni=$(cat "$SINGBOX_FOLDER_PATH/hy_sni")
-        SHA256_hy2=$(openssl x509 -in "$SINGBOX_FOLDER_PATH/cert.pem" -outform DER 2>/dev/null | sha256sum | awk '{print $1}')
-        hy2_link="hysteria2://$uuid@$addr:$port_hy2/?sni=${hy_sni}&insecure=1&pinSHA256=${SHA256_hy2}&alpn=h3&obfs=none#$(node_frag "${sxname}hy2-${hostname}")"
+        SHA256_hy2=""
+        [ -s "$SINGBOX_FOLDER_PATH/cert.pem" ] && \
+            SHA256_hy2=$(openssl x509 -in "$SINGBOX_FOLDER_PATH/cert.pem" -outform DER 2>/dev/null | sha256sum | awk '{print $1}')
+        # 证书缺失时 sha256sum 会给出「空输入」的固定哈希（e3b0c442…），客户端按它校验必然连不上，
+        # 这种情况宁可不带 pinSHA256
+        _hy2_pin=""
+        [ -n "$SHA256_hy2" ] && _hy2_pin="&pinSHA256=${SHA256_hy2}"
+        hy2_link="hysteria2://$uuid@$addr:$port_hy2/?sni=${hy_sni}&insecure=1${_hy2_pin}&alpn=h3&obfs=none#$(node_frag "${sxname}hy2-${hostname}")"
         yellow "🎯【 Hysteria2 】(直连协议)"
         green "$hy2_link"
         append_jh "$hy2_link"
@@ -4722,21 +6019,29 @@ refresh_sb_and_sub() {
     sbrestart
 }
 
+# 卸载沙箱 Nginx：mode=del 仅停进程保留二进制；mode=delall 删除整个沙箱目录。
+# 绝不 pkill 按名进程、绝不 stop/disable 系统或宝塔的 nginx 服务。
 cleanup_nginx() {
+    local mode="${1:-del}"
 
-    # 清理 nginx
-    pkill -15 nginx > /dev/null 2>&1
-    rm -f "$(nginx_conf_path)" 2> /dev/null
+    # 先移除服务托管，再停进程（否则 systemd 会把刚停的 nginx 又拉起来）
+    remove_nginx_unit
 
-    # 禁用 nginx 自启（避免卸载后 nginx 仍然起来）
-    if has_systemd; then
-        timeout 5 systemctl stop nginx > /dev/null 2>&1 || true
-        systemctl disable nginx > /dev/null 2>&1
-    elif command -v rc-service > /dev/null 2>&1; then
-        timeout 5 rc-service nginx stop > /dev/null 2>&1 || true
-        rc-update del nginx default > /dev/null 2>&1
+    # 停沙箱进程（按 pid 文件）
+    nginx_stop
+
+    # 清理沙箱配置/日志
+    rm -f "$SB_NGINX_SUB_CONF" "$SB_NGINX_PID" 2> /dev/null
+
+    # 清理旧版误写到系统 nginx 的遗留配置（只删本脚本文件）
+    cleanup_legacy_system_nginx_conf
+
+    if [ "$mode" = "delall" ]; then
+        rm -rf "$SB_NGINX_DIR" 2> /dev/null
+        green "  ✓ 沙箱 Nginx 已清理（二进制与配置均已删除）"
+    else
+        green "  ✓ 沙箱 Nginx 已停止（二进制保留在 ${SB_NGINX_DIR}）"
     fi
-    green "  ✓ Nginx 已清理（配置已删除，自启已禁用）"
 }
 
 # Remove singbox folder
@@ -4766,7 +6071,10 @@ cleandel() {
     local ct_tmp
     ct_tmp="$(mktemp /tmp/crontab.XXXXXX 2> /dev/null)" || ct_tmp="/tmp/crontab.tmp.$$"
     crontab -l > "$ct_tmp" 2> /dev/null || : > "$ct_tmp"
-    sed -i '/.*singbox.*/d' "$ct_tmp"
+    # 只删本脚本自己写的任务；原来的 /.*singbox.*/d 会把用户任何含 singbox 的
+    # 无关定时任务一起删掉
+    sed -i '/singbox-log-rotate/d' "$ct_tmp"
+    sed -i '/singbox-watchdog/d' "$ct_tmp"
     sed -i '/.*agsb.*/d' "$ct_tmp"
     crontab "$ct_tmp" > /dev/null 2>&1
     rm -f "$ct_tmp"
@@ -4799,16 +6107,19 @@ cleandel() {
     elif command -v rc-service > /dev/null 2>&1; then
         white "  ▸ 停止 OpenRC 服务..."
         for svc in sing-box argo singbox agsb-singbox; do
-            timeout 5 rc-service "$svc" stop > /dev/null 2>&1 || true
-            rc-update del "$svc" default > /dev/null 2>&1
+            # 只处理真实存在的服务；stop/删开机自启都套 timeout，避免疑似卡死等待
+            if [ -x "/etc/init.d/$svc" ]; then
+                timeout 5 rc-service "$svc" stop > /dev/null 2>&1 || true
+                timeout 5 rc-update del "$svc" default > /dev/null 2>&1 || true
+            fi
         done
         rm -f /etc/init.d/{sing-box,argo,singbox,agsb-singbox}
         green "  ✓ OpenRC 服务已停止并清理"
     fi
 
-    # 清理 nginx
+    # 清理 nginx（mode 透传：del 保留沙箱二进制，delall 全删）
     white "  ▸ 清理 Nginx..."
-    cleanup_nginx
+    cleanup_nginx "$mode"
 
     # 清理本脚本添加的 iptables/ip6tables 规则
     white "  ▸ 清理防火墙规则..."
@@ -4824,11 +6135,11 @@ cleandel() {
                 debug_print yellow "正在删除（全部）：$folder"
                 rm -rf "$folder" 2> /dev/null && green "✅ 已删除：$folder" || red "❌ 删除失败：$folder"
             else
-                debug_print yellow "正在清理配置（保留 sing-box/cloudflared 二进制）：$folder"
+                debug_print yellow "正在清理配置（保留 sing-box/cloudflared/沙箱 nginx 二进制）：$folder"
                 for item in "$folder"/*; do
                     [ -e "$item" ] || continue
                     case "$(basename "$item")" in
-                        sing-box|cloudflared|logs) continue ;;
+                        sing-box|cloudflared|logs|nginx) continue ;;
                         *) rm -rf "$item" 2>/dev/null ;;
                     esac
                 done
@@ -4859,19 +6170,70 @@ migrate_logs_dir() {
 
 # Restart sing-box
 sbrestart() {
+    # ⚠️ 重启前先校验配置：写坏的 sb.json 会让服务起不来，而 systemd 的 Restart=always /
+    #    openrc 的 respawn_max=0 会把它拉成崩溃循环（CPU 打满、节点全断，日志刷屏）。
+    #    校验不过就不重启 —— 保留当前正在跑的进程，至少服务不中断。
+    #    确有特殊情况可用 SB_SKIP_CHECK=1 跳过。
+    local _sbj="$SINGBOX_FOLDER_PATH/sb.json" _missing=""
+    if [ "${SB_SKIP_CHECK:-0}" != "1" ] && [ -s "$_sbj" ]; then
+        # 1) schema 校验
+        if [ -x "$SINGBOX_FOLDER_PATH/sing-box" ] && ! "$SINGBOX_FOLDER_PATH/sing-box" check -c "$_sbj" > /dev/null 2>&1; then
+            red "❌ sb.json 校验未通过，已阻止重启（避免服务起不来 / 崩溃循环）"
+            red "   排查：$SINGBOX_FOLDER_PATH/sing-box check -c $_sbj"
+            red "   确认无误后可用 SB_SKIP_CHECK=1 强制重启"
+            return 1
+        fi
+        # 2) 引用完整性校验：sing-box check 只验 schema，不验引用
+        #    （route.final 指向不存在的出站时 check 返回 0，运行时才 FATAL
+        #      "default outbound not found" —— 然后被 supervise 拉成崩溃循环）
+        if command -v jq > /dev/null 2>&1; then
+            _missing="$(jq -r '
+                (.outbounds // [] | map(.tag)) as $tags
+                | [
+                    (.route.final // empty | select(. as $f | ($tags | index($f)) == null) | "route.final=" + .),
+                    ((.route.rules // [])[] | select(.outbound != null) | .outbound
+                     | select(. as $o | ($tags | index($o)) == null) | "rule.outbound=" + .)
+                  ] | unique | join(", ")
+            ' "$_sbj" 2> /dev/null)"
+            if [ -n "$_missing" ]; then
+                red "❌ sb.json 存在悬空出站引用：${_missing}"
+                red "   已阻止重启（sing-box check 发现不了这类问题，运行时会直接 FATAL）"
+                red "   确认无误后可用 SB_SKIP_CHECK=1 强制重启"
+                return 1
+            fi
+        fi
+    fi
+
     if has_systemd; then
         # systemd 管理：直接 restart，不要手动 pkill
         # 手动 pkill 会导致进程脱离 cgroup 管理，systemd stop 时找不到进程 → 状态标记 failed → start 被拒绝
-        systemctl restart sb
+        systemctl restart sb || { red "❌ sing-box 重启失败（systemd），请查看：journalctl -u sb -n 50 --no-pager"; return 1; }
     elif command -v rc-service > /dev/null 2>&1; then
-        rc-service sing-box restart
+        rc-service sing-box restart || { red "❌ sing-box 重启失败（openrc），请查看：$LOGS_DIR/singbox.log"; return 1; }
     else
         pkill -15 -f "$SINGBOX_FOLDER_PATH/sing-box" 2> /dev/null
-        nohup "$SINGBOX_FOLDER_PATH/sing-box" run -c "$SINGBOX_FOLDER_PATH/sb.json" > /dev/null 2>&1 &
+        nohup "$SINGBOX_FOLDER_PATH/sing-box" run -c "$_sbj" > /dev/null 2>&1 &
     fi
+    return 0
 }
 
 # Restart argo
+# 重建 argo 服务单元。
+# token 模式下 token 是写死在 unit / init.d 的 ExecStart 里的，改完凭据只 argorestart
+# 等于没改（重启还是拿旧 token）；token→JSON 时 unit 还指向已删除的 tunnel.yml。
+rebuild_argo_service() {
+    local _auth="${1:-${ARGO_AUTH:-}}"
+    local _mode="${ARGO_MODE:-none}"
+    [ "$_mode" = "none" ] && return 0
+    if has_systemd; then
+        install_argo_service_systemd "$_mode" "$_auth"
+    elif command -v rc-service > /dev/null 2>&1; then
+        install_argo_service_openrc "$_mode" "$_auth"
+    else
+        return 0
+    fi
+}
+
 argorestart() {
     # ===============================
     # systemd 管理：直接 restart，不要手动 pkill（同 sbrestart 原理）
@@ -4958,6 +6320,8 @@ echo() {
             [ -t 1 ] && _log_write "$*"
             ;;
     esac
+    return 0 # __sbEcho__: 非 TTY（后台/nohup）时上面 `[ -t 1 ] && ...` 会整体返回 1，
+    # __sbEcho__: 导致整个安装流程以退出码 1 收尾。这里强制归 0，保证退出码语义正确。
 }
 
 # 清空旧日志并写入头部
@@ -5016,7 +6380,11 @@ install_step() {
     os_name=$(awk -F= '/^NAME/{print $2}' /etc/os-release)
 
     debug_log "【调试】开始安装各种乱七八糟的依赖"
-    install_deps
+    # 依赖装不上（缺 jq/openssl/iptables 等）后面全是连锁失败，必须中止而不是继续装完再报成功
+    install_deps || {
+        red "❌ 依赖安装失败，已中止安装（缺少 jq/openssl/iptables 等关键命令）"
+        return 1
+    }
 
     debug_log "【调试】安装各种乱七八糟的依赖完成"
 
@@ -5135,7 +6503,8 @@ check_port_conflicts_or_exit() {
                        pgrep -f "$OLD_SINGBOX_FOLDER/sing-box" 2>/dev/null
                        pgrep -f "$SINGBOX_FOLDER_PATH/cloudflared" 2>/dev/null
                        pgrep -f "$OLD_SINGBOX_FOLDER/cloudflared" 2>/dev/null
-                       pgrep -x nginx 2>/dev/null; } | sort -u )"
+                       # 只认沙箱 nginx 的 pid（不按名匹配，避免把宝塔/系统 nginx 算作本脚本栈）
+                       if [ -s "$SB_NGINX_PID" ]; then cat "$SB_NGINX_PID" 2>/dev/null; fi; } | sort -u )"
 
         # 本机是否正在运行本脚本栈（用于判断“无属主监听”是否为旧实例）
         local stack_running=false
@@ -5152,9 +6521,17 @@ check_port_conflicts_or_exit() {
         _p_listener_kind() {
             local line="$1" pid comm cmdline
             [ -z "$line" ] && { echo UNKNOWN; return; }
-            # 通道1：ss -p 已解析出的进程名
-            if printf '%s' "$line" | grep -qE 'sing-box|cloudflared|nginx'; then
+            # 通道1：ss -p 已解析出的进程名（sing-box/cloudflared 仍可按名命中）
+            if printf '%s' "$line" | grep -qE 'sing-box|cloudflared'; then
                 echo OWN; return
+            fi
+            # 沙箱 nginx：按 pid 文件归属判定（nginx 按 comm 会误命中宝塔/系统 nginx）
+            if [ -s "$SB_NGINX_PID" ]; then
+                local sbn_pid
+                sbn_pid="$(cat "$SB_NGINX_PID" 2> /dev/null | tr -d ' \r\n')"
+                if [ -n "$sbn_pid" ] && printf '%s' "$line" | grep -q "pid=$sbn_pid,"; then
+                    echo OWN; return
+                fi
             fi
             # 从 ss 行提取 pid（iproute2 格式 users:(("name",pid=N,fd=M))）
             pid="$(printf '%s' "$line" | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -n1)"
@@ -5168,11 +6545,11 @@ check_port_conflicts_or_exit() {
                 comm="$(tr -d '\000' < "/proc/$pid/comm" 2>/dev/null)"
                 cmdline="$(tr '\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null)"
                 case "$comm" in
-                    sing-box|singbox|cloudflared|nginx)
+                    sing-box|singbox|cloudflared)
                         echo OWN; return ;;
                 esac
                 case "$cmdline" in
-                    *sing-box*|*cloudflared*|*nginx*)
+                    *sing-box*|*cloudflared*)
                         echo OWN; return ;;
                 esac
             fi
@@ -5198,6 +6575,25 @@ check_port_conflicts_or_exit() {
 
             if $_foreign; then
                 yellow "⚠️ 端口 ${p_check}（${used[$p_check]}）当前已被其他进程监听，安装后可能无法绑定"
+                # 给出占用者 pid 与 kill 提示（仅提示用户自行执行，本脚本绝不代杀外部进程）
+                {
+                    local _fpid _fcomm
+                    local _fpids _k
+                    _fpids="$(printf '%s\n' "$_all_lines" | grep -o 'pid=[0-9][0-9]*' | cut -d= -f2)"
+                    _fpid="$(printf '%s\n' "$_fpids" | head -n1)"
+                    # nginx 的 worker 常与 master 同列且排在前面；提示 kill 时必须给 master（ppid=1）
+                    for _k in $_fpids; do
+                        if [ "$(_pid_ppid "$_k" 2> /dev/null)" = "1" ]; then
+                            _fpid="$_k"
+                            break
+                        fi
+                    done
+                    _fcomm="$(printf '%s\n' "$_all_lines" | grep -o 'users:(("[^"]*"' | head -n1 | sed 's/^.*((//; s/"//g')"
+                    if [ -n "$_fpid" ]; then
+                        yellow "     占用者进程: ${_fcomm:-未知} (pid=${_fpid})"
+                        yellow "     确认非必要服务后，可手动释放端口: kill ${_fpid}"
+                    fi
+                } 2> /dev/null
             elif $_unknown; then
                 # 无属主信息（ss 无法解析进程）：
                 # 命中“旧 sb.json 端口 + 本栈在跑” → 判定为旧实例占用，rep 清理后即释放，不提示
@@ -5299,6 +6695,23 @@ menu_status_block() {
     argo_needed=false
     need_argo && argo_needed=true
 
+    # 内存辅助：VmRSS(KB) → MB；pid 不存在返回空
+    _mem_mb() {
+        local p="$1" _rss
+        [ -n "$p" ] || return 0
+        _rss="$(awk '/VmRSS/{print $2}' "/proc/$p/status" 2>/dev/null)"
+        [ -n "$_rss" ] && echo "$(( (_rss + 1023) / 1024 ))M"
+    }
+    # 内存求和：给定 pid 列表（含子进程）的 VmRSS 总和
+    _mem_sum() {
+        local _p _sum=0 _rss
+        for _p in "$@"; do
+            _rss="$(awk '/VmRSS/{print $2}' "/proc/$_p/status" 2>/dev/null)"
+            [ -n "$_rss" ] && _sum=$((_sum + _rss))
+        done
+        [ "$_sum" -gt 0 ] && echo "$(( ( _sum + 1023) / 1024 ))M"
+    }
+
     # 并发收集三个二进制版本（sing-box / cloudflared / nginx），避免串行查询拖慢菜单
     # TTY 下提示写在同一行，状态就绪后立即擦除；非 TTY（重定向/日志）保留普通换行提示
     if [ -t 1 ]; then
@@ -5306,38 +6719,114 @@ menu_status_block() {
     else
         yellow "  ↳ 获取服务状态中..."
     fi
-    local _tmpd _f _p1 _p2 _p3
-    _tmpd="$(mktemp -d 2>/dev/null || printf '%s' "$SINGBOX_FOLDER_PATH")"
+    local _tmpd _f _p1 _p2 _p3 _cfb _mpid
+    # ⚠️ mktemp 失败时绝不能回退到安装目录：函数末尾会 rm -rf "$_tmpd"，
+    #    一旦回退就等于把整个 sing-box 安装目录删掉（sb.json / 密钥 / 二进制全没了）
+    _tmpd="$(mktemp -d 2> /dev/null)" || _tmpd=""
+    if [ -z "$_tmpd" ] || [ ! -d "$_tmpd" ]; then
+        yellow "  ↳ 无法创建临时目录（/tmp 不可写？），已跳过状态采集"
+        return 0
+    fi
     {
         if [ -x "$SINGBOX_FOLDER_PATH/sing-box" ]; then
-            "$SINGBOX_FOLDER_PATH/sing-box" version 2>/dev/null | head -1 | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/sbv"
+            # 优先读安装时落盘的版本缓存，避免对运行中的 sing-box 反复探测
+            if [ -s "$SB_VER_FILE" ]; then
+                cat "$SB_VER_FILE" > "$_tmpd/sbv"
+            else
+                timeout 3 "$SINGBOX_FOLDER_PATH/sing-box" version 2>/dev/null | head -1 | sed -n 's/.*\([0-9]\+\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/sbv"
+            fi
+            # 按进程名精确匹配（sing-box / cloudflared 的 comm 是稳定的），
+            # 不能用 pgrep -f <路径>：OpenRC 的 supervise-daemon 命令行里也带这个路径
+            pids_by_comm sing-box 2> /dev/null | head -1 > "$_tmpd/sbp"
+            rss_kb_by_comm sing-box > "$_tmpd/sbm"
         fi
     } & _p1=$!
     {
-        if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ]; then
-            "$SINGBOX_FOLDER_PATH/cloudflared" version 2>/dev/null | sed -n 's/.*version \([0-9]\{4\}\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/cfv"
-        elif command -v cloudflared >/dev/null 2>&1; then
-            cloudflared version 2>/dev/null | sed -n 's/.*version \([0-9]\{4\}\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/cfv"
+        if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ] || command -v cloudflared >/dev/null 2>&1; then
+            _cfb="$SINGBOX_FOLDER_PATH/cloudflared"
+            [ -x "$_cfb" ] || _cfb="$(command -v cloudflared 2>/dev/null)"
+            if [ -s "$CF_VER_FILE" ]; then
+                cat "$CF_VER_FILE" > "$_tmpd/cfv"
+            else
+                timeout 3 "$_cfb" version 2>/dev/null | sed -n 's/.*version \([0-9]\{4\}\.[0-9]\+\.[0-9]\+\).*/\1/p' > "$_tmpd/cfv" || true
+            fi
+            pids_by_comm cloudflared 2> /dev/null | head -1 > "$_tmpd/cfp"
+            rss_kb_by_comm cloudflared > "$_tmpd/cfm"
         fi
     } & _p2=$!
     {
-        if command -v nginx >/dev/null 2>&1; then
-            nginx -v 2>&1 | sed -n 's/.*nginx\/\([0-9.]*\).*/\1/p' > "$_tmpd/ngv"
+        if [ -x "$SB_NGINX_BIN" ]; then
+            if [ -s "$NG_VER_FILE" ]; then
+                cat "$NG_VER_FILE" > "$_tmpd/ngv"
+            else
+                timeout 3 "$SB_NGINX_BIN" -v 2>&1 | sed -n 's/.*nginx\/\([0-9.]*\).*/\1/p' > "$_tmpd/ngv"
+            fi
+            if [ -s "$SB_NGINX_PID" ]; then
+                _mpid="$(cat "$SB_NGINX_PID" 2> /dev/null | tr -d ' \r\n')"
+                # 沙箱 nginx 内存 = master + 所有 worker（只按 pid 文件归属，绝不按名匹配）
+                if [ -n "$_mpid" ]; then
+                    printf '%s\n' "$_mpid" > "$_tmpd/ngp"
+                    { awk '/VmRSS/{print $2}' "/proc/$_mpid/status" 2>/dev/null; } > "$_tmpd/ngm"
+                fi
+            fi
         fi
     } & _p3=$!
     # ⚠️ 必须只等上面三个版本查询子进程：bash 裸 wait 会等"当前 shell 所有后台子进程"，
-    # 而 ins/rep 流程里 cloudflared 隧道是同一 shell 的 nohup 后台子进程（永不退出），
-    # 裸 wait 会像本函数之前的版本一样永久卡死（症状：卡在"获取服务状态中..."）。
-    wait "$_p1" "$_p2" "$_p3" 2>/dev/null
+    # 而 ins/rep 流程里 cloudflared 隧道是同一 shell 的 nohup 后台子进程（永不退出）。
+    # 所以用"轮询 + 总超时"而非裸 wait：每个探测内部已带 timeout 3，
+    # 这里最大再等 6 秒即放行，任何探测挂死都不会卡死菜单/状态显示。
+    local _w=0
+    while [ "$_w" -lt 6 ]; do
+        if ! kill -0 "$_p1" 2>/dev/null && ! kill -0 "$_p2" 2>/dev/null && ! kill -0 "$_p3" 2>/dev/null; then
+            break
+        fi
+        sleep 1
+        _w=$((_w + 1))
+    done
+    # 兜底：仍有子进程存活则显式终止探测进程，避免后续 wait 再次阻塞（它们内部已带 timeout，这里是保险）
+    kill -0 "$_p1" 2>/dev/null && kill "$_p1" 2>/dev/null
+    kill -0 "$_p2" 2>/dev/null && kill "$_p2" 2>/dev/null
+    kill -0 "$_p3" 2>/dev/null && kill "$_p3" 2>/dev/null
+    wait "$_p1" "$_p2" "$_p3" 2>/dev/null || true
     # 状态已就绪，擦除上面的"正在检查..."提示行（仅 TTY）
     [ -t 1 ] && printf -- '\r\033[2K'
-    v_sb="$(cat "$_tmpd/sbv" 2>/dev/null)"; [ -n "$v_sb" ] && v_sb="V$v_sb"
-    v_cf="$(cat "$_tmpd/cfv" 2>/dev/null)"; [ -n "$v_cf" ] && v_cf="V$v_cf"
-    v_nginx="$(cat "$_tmpd/ngv" 2>/dev/null)"; [ -n "$v_nginx" ] && v_nginx="V$v_nginx"
-    rm -rf "$_tmpd" 2>/dev/null || true
+    v_sb="$(cat "$_tmpd/sbv" 2>/dev/null | tr -d ' \r\n')"; [ -n "$v_sb" ] && v_sb="V$v_sb"
+    v_cf="$(cat "$_tmpd/cfv" 2>/dev/null | tr -d ' \r\n')"; [ -n "$v_cf" ] && v_cf="V$v_cf"
+    v_nginx="$(cat "$_tmpd/ngv" 2>/dev/null | tr -d ' \r\n')"; [ -n "$v_nginx" ] && v_nginx="V$v_nginx"
+
+    # 内存统计（KB→MB，向上取整；未运行则空）
+    local m_sb m_cf m_nginx _rss_kb
+    _rss_kb="$(cat "$_tmpd/sbm" 2>/dev/null | tr -d ' \r\n')"
+    [ -n "$_rss_kb" ] && m_sb="$(( (_rss_kb + 1023) / 1024 ))M"
+    _rss_kb="$(cat "$_tmpd/cfm" 2>/dev/null | tr -d ' \r\n')"
+    [ -n "$_rss_kb" ] && m_cf="$(( (_rss_kb + 1023) / 1024 ))M"
+    # 沙箱 nginx：master + 直接子进程（worker）VmRSS 求和
+    {
+        local _ngm
+        _ngm="$(cat "$_tmpd/ngm" 2>/dev/null | tr -d ' \r\n')"
+        if [ -n "$_ngm" ]; then
+            local _wk _sum="$(( (_ngm + 1023) / 1024 ))"
+            for _wk in $(pgrep -P "$(cat "$_tmpd/ngp" 2>/dev/null)" 2>/dev/null); do
+                _rss="$(awk '/VmRSS/{print $2}' "/proc/$_wk/status" 2>/dev/null)"
+                [ -n "$_rss" ] && _sum=$((_sum + ((_rss + 1023) / 1024)))
+            done
+            [ "$_sum" -gt 0 ] && m_nginx="${_sum}M"
+        fi
+    } 2>/dev/null
+
+    # 运行判定用的 pid 快照（临时目录马上要删，先记下来）
+    local _sb_alive="" _cf_alive=""
+    [ -s "$_tmpd/sbp" ] && _sb_alive=1
+    [ -s "$_tmpd/cfp" ] && _cf_alive=1
+
+    # 只删自己建的临时目录；任何情况下都不碰安装目录（防 mktemp 异常导致误删）
+    case "$_tmpd" in
+        "" | "$SINGBOX_FOLDER_PATH" | "$SINGBOX_FOLDER_PATH"/*) : ;;
+        *) rm -rf "$_tmpd" 2> /dev/null || true ;;
+    esac
 
     # sing-box 运行判定
-    if pgrep -f "$SINGBOX_FOLDER_PATH/sing-box" > /dev/null 2>&1; then
+    if [ -n "$_sb_alive" ]; then
         st_sb="$(green "● 运行中")"
     elif [ -n "$v_sb" ]; then
         st_sb="$(red "■ 已停止")"
@@ -5349,7 +6838,7 @@ menu_status_block() {
     # cloudflared 运行判定
     local cf_running=false
     if [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ] || command -v cloudflared > /dev/null 2>&1; then
-        if pgrep -f "$SINGBOX_FOLDER_PATH/cloudflared" > /dev/null 2>&1; then
+        if [ -n "$_cf_alive" ]; then
             st_cf="$(green "● 运行中")"; cf_running=true
         else
             st_cf="$(red "■ 已停止")"
@@ -5359,10 +6848,10 @@ menu_status_block() {
         st_cf="$(yellow "○ 未安装")"
     fi
 
-    # nginx 运行判定
-    if pgrep -x nginx > /dev/null 2>&1; then
+    # nginx 运行判定（沙箱 pid 文件，绝不按名 pgrep 以免误报宝塔/系统 nginx）
+    if sb_nginx_running; then
         st_nginx="$(green "● 运行中")"
-    elif command -v nginx > /dev/null 2>&1; then
+    elif [ -x "$SB_NGINX_BIN" ]; then
         st_nginx="$(red "■ 已停止")"
     else
         st_nginx="$(yellow "○ 未安装")"
@@ -5378,8 +6867,8 @@ menu_status_block() {
     [ -s "$SINGBOX_FOLDER_PATH/nginx_port" ] && nginx_port="$(cat "$SINGBOX_FOLDER_PATH/nginx_port" 2> /dev/null)"
     _SUPPRESS_LOG="$_old_suppress"
 
-    green "  Sing-box    : $st_sb   $v_sb"
-    green "  Cloudflared : $st_cf   $v_cf"
+    green "  Sing-box    : $st_sb   $v_sb${m_sb:+  (内存: $m_sb)}"
+    green "  Cloudflared : $st_cf   $v_cf${m_cf:+  (内存: $m_cf)}"
     # Argo 状态行（色值与 Nginx 一致：紫○未启用 / 黄○未安装 / 绿●运行中 / 红■已停止，均带端口）
     local argo_port
     argo_port="${argo_pt:-$ARGO_DEFAULT_PORT}"
@@ -5398,12 +6887,12 @@ menu_status_block() {
     fi
     if ! $argo_needed && ! is_true "$sub_flag"; then
         green "  Nginx       : $(purple "○ 未启用（订阅未开启，无需）")"
-    elif ! command -v nginx > /dev/null 2>&1; then
+    elif [ ! -x "$SB_NGINX_BIN" ]; then
         green "  Nginx       : ${st_nginx}（${sub_desc}，端口：${nginx_port}）"
-    elif ps aux | grep -v grep | grep -q nginx; then
-        green "  Nginx       : ${st_nginx}${v_nginx:+ $v_nginx}（${sub_desc}，端口：${nginx_port}）"
+    elif sb_nginx_running; then
+        green "  Nginx       : ${st_nginx}${v_nginx:+ $v_nginx}（${sub_desc}，端口：${nginx_port}）${m_nginx:+（内存: ${m_nginx}）}"
     else
-        green "  Nginx       : ${st_nginx}（${sub_desc}，端口：${nginx_port}）"
+        green "  Nginx       : ${st_nginx}（${sub_desc}，端口：${nginx_port}）${m_nginx:+（内存: ${m_nginx}）}"
     fi
 }
 
@@ -5500,6 +6989,10 @@ query_ip_region() {
 menu_collect_install() {
     local _ans _ch _sel _has_all _has_vmess _has_trojan
     export _INTERACTIVE_MODE=1  # 标记：走交互式菜单安装（供 ins() 区分，无交互时「安装参数」日志才打印）
+
+    # 清掉上一次运行残留的协议勾选：这些变量是 export 的，同一次会话里取消安装再进菜单时，
+    # 上一轮选的 hy2/tuic/anytls/socks5 会带着（menu_reload_proto_flags 只判断变量是否存在）
+    unset vlrt hypt tupt anypt socks5pt 2> /dev/null
 
     echo ""
     purple "===== 日志调试 ====="
@@ -5742,7 +7235,47 @@ menu_collect_install() {
     purple "===== Socks5 协议 (可要可不要) ====="
     reading "是否安装 Socks5? [y/N] (回车默认=不要): " _ans
     case "$_ans" in
-        y|Y) _ch="$_ch h"; green "  ↳ Socks5: 安装" ;;
+        y|Y)
+            _ch="$_ch h"; green "  ↳ Socks5: 安装"
+            reading "  Socks5 用户名 (回车=自动生成): " _ans
+            if [ -n "$_ans" ]; then
+                if printf '%s' "$_ans" | grep -qE '[[:space:]]'; then
+                    yellow "  ⚠️ 用户名不能含空格，已改为自动生成"
+                else
+                    export socks5_username="$_ans"
+                    green "  ↳ Socks5 用户名: ${_ans}"
+                fi
+            else
+                green "  ↳ Socks5 用户名: 自动生成"
+            fi
+            reading_secret "  Socks5 密码 (回车=自动生成): " _ans
+            if [ -n "$_ans" ]; then
+                if printf '%s' "$_ans" | grep -qE '[[:space:]]'; then
+                    yellow "  ⚠️ 密码不能含空格，已改为自动生成"
+                else
+                    export socks5_password="$_ans"
+                    green "  ↳ Socks5 密码: 已设置（不回显）"
+                fi
+            else
+                green "  ↳ Socks5 密码: 自动生成"
+            fi
+            reading "  Socks5 IP白名单? [y/N] (回车=不开启，所有IP均可访问): " _ans
+            case "$_ans" in
+                y|Y)
+                    yellow "  多个 IP 用逗号分隔，支持 CIDR，如：1.2.3.4,5.6.7.0/24"
+                    reading "  允许访问 Socks5 的 IP: " _ans
+                    _ans="$(printf '%s' "$_ans" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+                    if [ -n "$_ans" ]; then
+                        export socks5_wl_flag=true
+                        export socks5_ips="$_ans"
+                        green "  ↳ Socks5 白名单: 开启 (${socks5_ips})"
+                    else
+                        yellow "  ↳ 未填写 IP，白名单不开启（所有IP均可访问）"
+                    fi
+                    ;;
+                *) green "  ↳ Socks5 白名单: 不开启（所有IP均可访问）" ;;
+            esac
+            ;;
         *) : ; green "  ↳ Socks5: 不安装 (默认)" ;;
     esac
 
@@ -5771,12 +7304,13 @@ menu_collect_install() {
         green "  ↳ 端口: 逐个自定义 (默认)"
         # Argo 三协议本地回源端口不接受外部指定，一律随机；仅直连协议才询问端口
         [ -n "$vmag" ] && green "  ↳ Argo (vmess/trojan/vless) 本地回源端口：自动随机（不接受外部指定）"
-        for _sel in vlr hyp tup anyp; do
+        for _sel in vlr hyp tup anyp soc; do
             case "$_sel" in
                 vlr)  [ -n "$vlr" ]  && export vlrt="$(menu_ask_port "VLESS-Reality")" ;;
                 hyp)  [ -n "$hyp" ]  && export hypt="$(menu_ask_port "Hysteria2")" ;;
                 tup)  [ -n "$tup" ]  && export tupt="$(menu_ask_port "TUIC")" ;;
                 anyp) [ -n "$anyp" ] && export anypt="$(menu_ask_port "AnyTLS")" ;;
+                soc)  [ -n "$socksp" ] && export socks5pt="$(menu_ask_port "Socks5")" ;;
             esac
         done
         [ -n "$vmag" ] && export argo_pt="$(menu_ask_port "Argo" 8001)"
@@ -5788,6 +7322,7 @@ menu_collect_install() {
         [ -n "$hyp" ] && { hypt="$(rand_port)"; export hypt; green "  ↳ Hysteria2 端口: ${hypt} (随机)"; }
         [ -n "$tup" ] && { tupt="$(rand_port)"; export tupt; green "  ↳ TUIC 端口: ${tupt} (随机)"; }
         [ -n "$anyp" ] && { anypt="$(rand_port)"; export anypt; green "  ↳ AnyTLS 端口: ${anypt} (随机)"; }
+        [ -n "$socksp" ] && { socks5pt="$(rand_port)"; export socks5pt; green "  ↳ Socks5 端口: ${socks5pt} (随机)"; }
         [ -n "$vmag" ] && { argo_pt="${argo_pt:-8001}"; export argo_pt; green "  ↳ Argo 端口: ${argo_pt} (默认)"; }
     fi
 
@@ -5798,7 +7333,7 @@ menu_collect_install() {
     purple "===== 直连协议伪装SNI 设置 ====="
     green "  1) 全部使用默认值(偷懒就用默认)"
     green "     默认值：Hysteria2 伪装域名=www.apple.com, VLESS 伪装域名=www.apple.com,"
-    green "             VLESS 伪装端口=443, TUIC 伪装域名=www.apple.com"
+    green "             VLESS 伪装端口=443, TUIC 伪装域名=www.apple.com, AnyTLS 伪装域名=www.apple.com"
     green "  2) 逐个展开单独设置（可自定义，推荐）"
     reading "输入选择 (回车默认=1): " _ans
     if [ "$_ans" = "2" ]; then
@@ -5815,10 +7350,14 @@ menu_collect_install() {
         reading "  TUIC 伪装域名 (默认=www.apple.com): " _ans
         [ -n "$_ans" ] && export tu_sni="$_ans"
         green "  ↳ TUIC 伪装域名: ${tu_sni:-www.apple.com}"
+        reading "  AnyTLS 伪装域名 (默认=www.apple.com): " _ans
+        [ -n "$_ans" ] && export any_sni="$_ans"
+        green "  ↳ AnyTLS 伪装域名: ${any_sni:-www.apple.com}"
     else
         green "  ↳ SNI: 全部使用默认值"
         green "  ↳ Hysteria2 伪装域名=${hy_sni:-www.apple.com}, VLESS 伪装域名=${vl_sni:-www.apple.com},"
-        green "  ↳ VLESS 伪装端口=${vl_sni_pt:-443}, TUIC 伪装域名=${tu_sni:-www.apple.com}"
+        green "  ↳ VLESS 伪装端口=${vl_sni_pt:-443}, TUIC 伪装域名=${tu_sni:-www.apple.com},"
+        green "  ↳ AnyTLS 伪装域名=${any_sni:-www.apple.com}"
     fi
 
     # Argo 隧道配置（argo 已在“选择 Argo 隧道协议”处设置，这里直接使用）
@@ -6035,6 +7574,16 @@ menu_collect_install() {
 
     else
         green "  ↳ 订阅: 不开启 (默认)"
+    fi
+
+    # 订阅没开、但启用了 Argo / WS-CDN 回源时，回源同样要经过 nginx：
+    # 不能再静默用 8080（否则装完发现 nginx 监听在 8080，还得去开一次订阅才能改）
+    if [ "${subscribe:-}" != "true" ] && { [ -n "$ws_cdn" ] || need_argo; }; then
+        echo ""
+        purple "===== 回源 Nginx 端口 ====="
+        yellow "  未开启订阅，但 Argo / WS-CDN 回源仍需 nginx 反代"
+        export nginx_pt="$(menu_ask_port "回源 Nginx" "$NGINX_DEFAULT_PORT")"
+        green "  ↳ Nginx 回源端口: ${nginx_pt}"
     fi
 
     # VLESS 才询问 reality_private
@@ -6270,8 +7819,9 @@ update_inbound_port() {
 
 # 刷新 nginx 配置并重启（trojan/vmess/argo 端口变更时需要）
 regen_nginx_and_restart() {
-    export nginx_pt="${nginx_pt:-$(read_port_file nginx_port)}"
-    export argo_pt="${argo_pt:-$(read_port_file argoport)}"
+    # 端口以落盘文件为准，避免菜单操作把订阅端口/Argo 端口改回默认值
+    export nginx_pt="$(_eff_nginx_pt)"
+    export argo_pt="$(_eff_argo_pt)"
     setup_nginx_subscribe > /dev/null 2>&1 && nginx_restart
 }
 
@@ -6298,15 +7848,20 @@ edit_ports_menu() {
         yellow "       当前: $(read_port_file port_any)"
         green "  8) Argo 端口"
         yellow "       当前: $(read_port_file argoport)"
+        green "  9) Socks5 端口"
+        yellow "       当前: $(read_port_file port_socks5)"
         purple "  0) 返回上级菜单"
         echo ""
         yellow "注：仅显示已安装的协议，未安装的协议修改会被忽略。"
         reading "请输入选择: " _sel
         case "$_sel" in
             0) return ;;
-            1|2|3|4|5|6|7|8) ;;
+            1|2|3|4|5|6|7|8|9) ;;
             *) yellow "无效选项"; menu_pause; continue ;;
         esac
+        # 每轮重置标记（用空串而非 0：下面用 [ -n ] 判断，赋 0 会被当成"已设置"）
+        _need_nginx=""
+        _need_argo=""
         case "$_sel" in
             1) _desc="Trojan-WS (Argo)"; _file=port_tr; _tag=trojan-ws-sb; _need_nginx=1 ;;
             2) _desc="Vmess-WS (Argo)"; _file=port_vm_ws; _tag=vmess-sb; _need_nginx=1 ;;
@@ -6316,6 +7871,7 @@ edit_ports_menu() {
             6) _desc="TUIC"; _file=port_tu; _tag=tuic-sb ;;
             7) _desc="AnyTLS"; _file=port_any; _tag=anytls-sb ;;
             8) _desc="Argo"; _file=argoport; _tag=""; _need_argo=1 ;;
+            9) _desc="Socks5"; _file=port_socks5; _tag=socks5-sb ;;
         esac
 
         if [ ! -s "$SINGBOX_FOLDER_PATH/$_file" ]; then
@@ -6350,14 +7906,48 @@ edit_ports_menu() {
     done
 }
 
-# 订阅设置子菜单（修改订阅端口 / 取消订阅）
+# 开启节点订阅（原本只能在安装时选择，装完后没有入口）
+# 流程：询问 Nginx 端口 → 写 subscribe 落盘 → 安装/配置并启动沙箱 Nginx → 刷新防火墙 → 生成订阅文件
+_enable_subscription() {
+    local _np _ap
+    _np="$(menu_ask_port "订阅 (Nginx)" "$NGINX_DEFAULT_PORT")"
+    [ -n "$_np" ] || return 1
+    # nginx_pt 与 argo_pt 不能相同，否则监听冲突
+    _ap="$(read_port_file argoport)"
+    if [ -n "$_ap" ] && [ "$_np" = "$_ap" ]; then
+        red "❌ 订阅端口不能与 Argo 端口 (${_ap}) 相同，请重新选择"
+        return 1
+    fi
+    echo "$_np" > "$SINGBOX_FOLDER_PATH/nginx_port"
+    echo "true" > "$SINGBOX_FOLDER_PATH/subscribe"
+    export nginx_pt="$_np"
+    export subscribe="true"
+    # 需要时安装沙箱 Nginx、生成配置并启动（subscribe=true 分支会准备 sub.txt）
+    if ! ensure_nginx_if_needed; then
+        red "❌ 开启订阅失败：Nginx 安装/配置失败，已回滚为未开启"
+        echo "false" > "$SINGBOX_FOLDER_PATH/subscribe"
+        export subscribe="false"
+        return 1
+    fi
+    nginx_restart > /dev/null 2>&1 || true
+    refresh_firewall_rules
+    # regenerate_links_and_sub 末尾会调用 update_subscription_file，保证 sub.txt 与当前节点一致
+    regenerate_links_and_sub > /dev/null 2>&1
+    green "✅ 节点订阅已开启（端口 ${_np}）"
+    green "  订阅地址: $(show_sub_url)"
+    return 0
+}
+
+# 订阅设置子菜单（修改订阅端口 / 开启订阅 / 取消订阅）
 edit_subscription_menu() {
-    local _sel _np
+    local _sel _np _sub_on
     while true; do
         clear
         green "========= [4][2] 节点配置修改 → 订阅设置 ========="
         echo ""
-        if is_true "$(get_subscribe_flag)"; then
+        _sub_on=false
+        is_true "$(get_subscribe_flag)" && _sub_on=true
+        if [ "$_sub_on" = "true" ]; then
             green "  📌 订阅状态: 已开启"
             yellow "  订阅端口: $(read_port_file nginx_port)"
             green "  订阅地址: $(show_sub_url)"
@@ -6365,27 +7955,38 @@ edit_subscription_menu() {
             yellow "  📌 订阅状态: 未开启"
         fi
         echo ""
-        green "  1) 修改订阅端口 (Nginx)"
-        red   "  2) 取消节点订阅"
+        if [ "$_sub_on" = "true" ]; then
+            green "  1) 修改订阅端口 (Nginx)"
+            red   "  2) 取消节点订阅"
+        else
+            green "  1) 开启节点订阅 (选择 Nginx 端口)"
+        fi
         purple "  0) 返回上级菜单"
         reading "请输入选择: " _sel
         case "$_sel" in
             0) return ;;
             1)
-                NEW_PORT=""
-                ask_new_port "订阅 (Nginx)" || { menu_pause; continue; }
-                _np="$NEW_PORT"
-                echo "$_np" > "$SINGBOX_FOLDER_PATH/nginx_port"
-                export nginx_pt="$_np"
-                export subscribe="$(get_subscribe_flag)"
-                setup_nginx_subscribe > /dev/null 2>&1 && nginx_restart
-                refresh_firewall_rules
-                update_subscription_file
-                green "✅ 订阅端口修改操作已完成！新端口: ${_np}"
-                green "  新订阅地址: $(show_sub_url)"
+                if [ "$_sub_on" = "true" ]; then
+                    NEW_PORT=""
+                    ask_new_port "订阅 (Nginx)" || { menu_pause; continue; }
+                    _np="$NEW_PORT"
+                    echo "$_np" > "$SINGBOX_FOLDER_PATH/nginx_port"
+                    export nginx_pt="$_np"
+                    export subscribe="$(get_subscribe_flag)"
+                    setup_nginx_subscribe > /dev/null 2>&1 && nginx_restart
+                    refresh_firewall_rules
+                    update_subscription_file
+                    green "✅ 订阅端口修改操作已完成！新端口: ${_np}"
+                    green "  新订阅地址: $(show_sub_url)"
+                else
+                    _enable_subscription || { menu_pause; continue; }
+                fi
                 menu_pause
                 ;;
             2)
+                if [ "$_sub_on" != "true" ]; then
+                    yellow "无效选项"; menu_pause; continue
+                fi
                 echo "false" > "$SINGBOX_FOLDER_PATH/subscribe"
                 export subscribe="false"
                 setup_nginx_subscribe > /dev/null 2>&1 && nginx_restart
@@ -6397,6 +7998,45 @@ edit_subscription_menu() {
             *) yellow "无效选项"; menu_pause ;;
         esac
     done
+}
+
+# 修改「每协议专属」的 CDN 参数（落盘文件名 = 变量名，ws_cdn_val 会优先读环境变量再读文件）
+# 参数：$1=键名（如 ws_cdn_vmess_sni）  $2=host|sni|port  $3=中文名（用于提示）
+# 回车=取消；输入 - =删除该文件，回退到共享值
+_edit_proto_param() {
+    local _k="$1" _kind="$2" _tip="$3" _v="" _cur=""
+    _cur="$(ws_cdn_val "$_k")"
+    yellow "  当前 ${_tip}: ${_cur:-（未设置，回退共享值）}"
+    case "$_kind" in
+        port) reading "  请输入新的 ${_tip} (仅限 ${HTTPS_CDN_PORTS_TEXT}；回车=取消，- =清除): " _v ;;
+        sni)  reading "  请输入新的 ${_tip} (真实域名，不能是 IP；回车=取消，- =清除): " _v ;;
+        *)    reading "  请输入新的 ${_tip} (域名或 IP；回车=取消，- =清除): " _v ;;
+    esac
+    [ -z "$_v" ] && { yellow "已取消"; return 0; }
+    if [ "$_v" = "-" ]; then
+        rm -f "$SINGBOX_FOLDER_PATH/$_k"
+        refresh_sb_and_sub
+        green "✅ 已清除 ${_tip}，该协议回退到共享值"
+        return 0
+    fi
+    case "$_kind" in
+        port)
+            if ! is_https_cdn_port "$_v"; then
+                red "❌ CDN 端口仅限 HTTPS 系端口 (${HTTPS_CDN_PORTS_TEXT})"; return 1
+            fi ;;
+        sni)
+            if ! is_valid_domain "$_v"; then
+                red "❌ SNI 必须是真实域名（不能是 IP 或含非法字符）"; return 1
+            fi ;;
+        *)
+            if printf '%s' "$_v" | grep -qE '[[:space:]]'; then
+                red "❌ 不能包含空格/制表符"; return 1
+            fi ;;
+    esac
+    printf '%s\n' "$_v" > "$SINGBOX_FOLDER_PATH/$_k"
+    refresh_sb_and_sub
+    green "✅ ${_tip} 已修改为: ${_v}"
+    return 0
 }
 
 # SNI / CDN 修改子菜单
@@ -6433,7 +8073,34 @@ edit_snis_menu() {
         yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/ws_cdn_vless_cf_host" 2>/dev/null)"
         green " 13)  Trojan 专属优选域名"
         yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/ws_cdn_trojan_cf_host" 2>/dev/null)"
+        green "  ── WS-CDN 每协议专属 SNI / 端口 ──"
+        green " 14)  Vmess 专属回源 SNI"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/ws_cdn_vmess_sni" 2>/dev/null)"
+        green " 15)  Vless 专属回源 SNI"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/ws_cdn_vless_sni" 2>/dev/null)"
+        green " 16)  Trojan 专属回源 SNI"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/ws_cdn_trojan_sni" 2>/dev/null)"
+        green " 17)  Vmess 专属 CDN 端口"
+        yellow "       当前: $(read_port_file ws_cdn_vmess_cf_pt)"
+        green " 18)  Vless 专属 CDN 端口"
+        yellow "       当前: $(read_port_file ws_cdn_vless_cf_pt)"
+        green " 19)  Trojan 专属 CDN 端口"
+        yellow "       当前: $(read_port_file ws_cdn_trojan_cf_pt)"
+        green "  ── Argo 每协议专属优选域名 / 端口 ──"
+        green " 20)  Vmess-Argo 专属优选域名"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/argo_vmess_cf_host" 2>/dev/null)"
+        green " 21)  Vless-Argo 专属优选域名"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/argo_vless_cf_host" 2>/dev/null)"
+        green " 22)  Trojan-Argo 专属优选域名"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/argo_trojan_cf_host" 2>/dev/null)"
+        green " 23)  Vmess-Argo 专属优选端口"
+        yellow "       当前: $(read_port_file argo_vmess_cf_pt)"
+        green " 24)  Vless-Argo 专属优选端口"
+        yellow "       当前: $(read_port_file argo_vless_cf_pt)"
+        green " 25)  Trojan-Argo 专属优选端口"
+        yellow "       当前: $(read_port_file argo_trojan_cf_pt)"
         purple "  0) 返回上级菜单"
+        yellow "  注：每协议专属值留空即回退到共享值；输入 - 可清除已设置的专属值。"
         reading "请输入选择: " _sel
         case "$_sel" in
             0) return ;;
@@ -6558,6 +8225,25 @@ edit_snis_menu() {
                 green "✅ Trojan 专属优选域名修改操作已完成！新值: ${_val}"
                 menu_pause
                 ;;
+            14|15|16|17|18|19|20|21|22|23|24|25)
+                local _vk="" _vkind="" _vtip=""
+                case "$_sel" in
+                    14) _vk="ws_cdn_vmess_sni";   _vkind=sni;  _vtip="Vmess 专属回源 SNI" ;;
+                    15) _vk="ws_cdn_vless_sni";   _vkind=sni;  _vtip="Vless 专属回源 SNI" ;;
+                    16) _vk="ws_cdn_trojan_sni";  _vkind=sni;  _vtip="Trojan 专属回源 SNI" ;;
+                    17) _vk="ws_cdn_vmess_cf_pt"; _vkind=port; _vtip="Vmess 专属 CDN 端口" ;;
+                    18) _vk="ws_cdn_vless_cf_pt"; _vkind=port; _vtip="Vless 专属 CDN 端口" ;;
+                    19) _vk="ws_cdn_trojan_cf_pt"; _vkind=port; _vtip="Trojan 专属 CDN 端口" ;;
+                    20) _vk="argo_vmess_cf_host"; _vkind=host; _vtip="Vmess-Argo 专属优选域名" ;;
+                    21) _vk="argo_vless_cf_host"; _vkind=host; _vtip="Vless-Argo 专属优选域名" ;;
+                    22) _vk="argo_trojan_cf_host"; _vkind=host; _vtip="Trojan-Argo 专属优选域名" ;;
+                    23) _vk="argo_vmess_cf_pt";   _vkind=port; _vtip="Vmess-Argo 专属优选端口" ;;
+                    24) _vk="argo_vless_cf_pt";   _vkind=port; _vtip="Vless-Argo 专属优选端口" ;;
+                    25) _vk="argo_trojan_cf_pt";  _vkind=port; _vtip="Trojan-Argo 专属优选端口" ;;
+                esac
+                _edit_proto_param "$_vk" "$_vkind" "$_vtip"
+                menu_pause
+                ;;
             *) yellow "无效选项"; menu_pause ;;
         esac
     done
@@ -6601,34 +8287,89 @@ edit_argo_menu() {
                 fi
                 reading "请输入 Argo Token 或粘贴 JSON 凭据: " _a
                 [ -z "$_a" ] && { red "❌ Token/JSON 不能为空"; menu_pause; continue; }
-                rm -f "$SINGBOX_FOLDER_PATH/tunnel.yml" "$SINGBOX_FOLDER_PATH/tunnel.json" "$SINGBOX_FOLDER_PATH/sbargotoken"
-                # 先校验（含域名/凭据格式），通过后再落盘，避免失败时留下不一致状态
-                if ! prepare_argo_credentials "$_a" "$_d" "$(cat "$SINGBOX_FOLDER_PATH/argoport" 2>/dev/null)"; then
-                    red "❌ Argo 凭据校验失败，未切换"; menu_pause; continue
+                # 先备份现有凭据：prepare 失败时能回滚，避免「旧的删了、新的没写进去」直接失联
+                _abak="$(mktemp -d 2> /dev/null)" || _abak=""
+                if [ -n "$_abak" ]; then
+                    for _f in tunnel.yml tunnel.json sbargotoken argo_domain; do
+                        [ -e "$SINGBOX_FOLDER_PATH/$_f" ] && cp -p "$SINGBOX_FOLDER_PATH/$_f" "$_abak/$_f" 2> /dev/null
+                    done
                 fi
+                rm -f "$SINGBOX_FOLDER_PATH/tunnel.yml" "$SINGBOX_FOLDER_PATH/tunnel.json" "$SINGBOX_FOLDER_PATH/sbargotoken"
+                if ! prepare_argo_credentials "$_a" "$_d" "$(_eff_argo_pt)"; then
+                    rm -f "$SINGBOX_FOLDER_PATH/tunnel.yml" "$SINGBOX_FOLDER_PATH/tunnel.json" "$SINGBOX_FOLDER_PATH/sbargotoken"
+                    if [ -n "$_abak" ]; then
+                        for _f in tunnel.yml tunnel.json sbargotoken argo_domain; do
+                            [ -e "$_abak/$_f" ] && cp -p "$_abak/$_f" "$SINGBOX_FOLDER_PATH/$_f" 2> /dev/null
+                        done
+                    fi
+                    [ -n "$_abak" ] && rm -rf "$_abak"
+                    red "❌ Argo 凭据校验失败，已回滚到原来的凭据"
+                    menu_pause; continue
+                fi
+                [ -n "$_abak" ] && rm -rf "$_abak"
                 echo "$_d" > "$SINGBOX_FOLDER_PATH/argo_domain"
-                chmod 600 "$SINGBOX_FOLDER_PATH/argo_domain" 2>/dev/null || true
-                if [ "$ARGO_MODE" = "json" ]; then
-                    echo "" > /dev/null
-                elif [ "$ARGO_MODE" = "token" ]; then
+                chmod 600 "$SINGBOX_FOLDER_PATH/argo_domain" 2> /dev/null || true
+                if [ "$ARGO_MODE" = "token" ]; then
                     echo "$_a" > "$SINGBOX_FOLDER_PATH/sbargotoken"
-                    chmod 600 "$SINGBOX_FOLDER_PATH/sbargotoken" 2>/dev/null || true
+                    chmod 600 "$SINGBOX_FOLDER_PATH/sbargotoken" 2> /dev/null || true
+                fi
+                export ARGO_AUTH="$_a" ARGO_DOMAIN="$_d"
+                # 关键：token 写在服务单元的 ExecStart 里，必须重建单元，否则重启还是用旧 token
+                if ! rebuild_argo_service "$_a"; then
+                    red "❌ Argo 服务单元重建失败：凭据已写入但服务未更新，请检查 systemd/openrc"
+                    menu_pause; continue
                 fi
                 argorestart
+                refresh_sb_and_sub
                 green "✅ 切换固定 Argo 隧道操作已完成！"
                 menu_pause
                 ;;
             2)
                 rm -f "$SINGBOX_FOLDER_PATH/tunnel.yml" "$SINGBOX_FOLDER_PATH/tunnel.json" "$SINGBOX_FOLDER_PATH/sbargotoken" "$SINGBOX_FOLDER_PATH/argo_domain"
-                argorestart
+                # 固定隧道是服务托管的：不停服务的话 Restart=always 会把旧的固定隧道拉回来
+                if [ -f /etc/systemd/system/argo.service ] && command -v systemctl > /dev/null 2>&1; then
+                    systemctl stop argo > /dev/null 2>&1
+                    systemctl disable argo > /dev/null 2>&1
+                    rm -f /etc/systemd/system/argo.service
+                    systemctl daemon-reload
+                fi
+                if [ -f /etc/init.d/argo ] && command -v rc-service > /dev/null 2>&1; then
+                    rc-service argo stop > /dev/null 2>&1
+                    rc-update del argo default > /dev/null 2>&1
+                    rm -f /etc/init.d/argo
+                fi
+                pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null
+                sleep 1
+                start_argo_no_daemon "temp" "" "$(_eff_argo_pt)"
+                wait_and_check_argo "临时"
+                refresh_sb_and_sub
                 green "✅ 切换临时 Argo 隧道操作已完成！"
                 menu_pause
                 ;;
             3)
+                # 1) 先停服务托管：否则 Restart=always / supervise-daemon 5 秒后又拉起来
+                if [ -f /etc/systemd/system/argo.service ] && command -v systemctl > /dev/null 2>&1; then
+                    systemctl stop argo > /dev/null 2>&1
+                    systemctl disable argo > /dev/null 2>&1
+                    rm -f /etc/systemd/system/argo.service
+                    systemctl daemon-reload
+                fi
+                if [ -f /etc/init.d/argo ] && command -v rc-service > /dev/null 2>&1; then
+                    rc-service argo stop > /dev/null 2>&1
+                    rc-update del argo default > /dev/null 2>&1
+                    rm -f /etc/init.d/argo
+                fi
+                # 2) 临时隧道是 nohup 起的，直接结束进程
                 pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null
-                [ -x "$SINGBOX_FOLDER_PATH/cloudflared" ] && pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null
-                rm -f "$SINGBOX_FOLDER_PATH/tunnel.yml" "$SINGBOX_FOLDER_PATH/tunnel.json" "$SINGBOX_FOLDER_PATH/sbargotoken" "$SINGBOX_FOLDER_PATH/argo_domain" "$LOGS_DIR/argo.log"
-                green "✅ 取消使用 Argo 隧道操作已完成！"
+                # 3) 清理凭据 + 协议清单：argo/vlvm 不清掉的话 need_argo() 仍为真，
+                #    nginx 会继续按「有 argo」生成配置，节点也还会输出 argo 域名
+                rm -f "$SINGBOX_FOLDER_PATH/tunnel.yml" "$SINGBOX_FOLDER_PATH/tunnel.json" \
+                    "$SINGBOX_FOLDER_PATH/sbargotoken" "$SINGBOX_FOLDER_PATH/argo_domain" \
+                    "$SINGBOX_FOLDER_PATH/argo" "$SINGBOX_FOLDER_PATH/vlvm" "$LOGS_DIR/argo.log"
+                rm -f "$SINGBOX_FOLDER_PATH"/argo_*_cf_host "$SINGBOX_FOLDER_PATH"/argo_*_cf_pt 2> /dev/null
+                unset argo
+                refresh_sb_and_sub
+                green "✅ 取消使用 Argo 隧道操作已完成（服务已停用，协议清单已清理）！"
                 menu_pause
                 ;;
             *) yellow "无效选项"; menu_pause ;;
@@ -6722,6 +8463,9 @@ _set_argo_proto() {
     new="${new#,}"
     if [ -n "$new" ]; then
         printf '%s' "$new" > "$SINGBOX_FOLDER_PATH/argo"
+        # 同步到环境变量：argo_proto_list / need_argo 都是「环境变量优先」，
+        # 不同步的话本次会话里改完不生效（要重开脚本才行）
+        export argo="$new"
     else
         rm -f "$SINGBOX_FOLDER_PATH/argo"
     fi
@@ -6739,6 +8483,156 @@ _set_argo_proto() {
         rm -f "$SINGBOX_FOLDER_PATH/vlvm"
     fi
     unset _sp _pp
+}
+
+# ================== WS-CDN 回源协议开关 ==================
+# 该协议是否已启用 CDN 回源（以 sb.json 里的独立 inbound 为准，避免文件与配置不一致）
+_ws_cdn_proto_enabled() {
+    local t=""
+    case "$1" in
+        vmess)  t="vmess-ws-cdn-sb" ;;
+        vless)  t="vless-ws-cdn-sb" ;;
+        trojan) t="trojan-ws-cdn-sb" ;;
+        *) return 1 ;;
+    esac
+    [ -s "$SINGBOX_FOLDER_PATH/sb.json" ] || return 1
+    jq -e --arg t "$t" 'any(.inbounds[]?; .tag==$t)' "$SINGBOX_FOLDER_PATH/sb.json" > /dev/null 2>&1
+}
+
+# 修改 WS-CDN 回源协议启用状态（_set_ws_cdn_proto <vmess|vless|trojan> <on|off>）
+# 与 Argo 不同：CDN 回源是独立 inbound（*-ws-cdn-sb）+ 独立端口文件 + 独立 nginx location，
+# 所以开启要补 inbound/端口文件，关闭要删掉它们，再按端口文件重生成 nginx 配置。
+_set_ws_cdn_proto() {
+    local p="$1" act="$2" new="" tag="" portf="" _uuid="" _port="" tmpj="" kept="" _sp="" _on=0
+    case "$p" in
+        vmess)  tag="vmess-ws-cdn-sb";  portf="port_vmess_ws_cdn" ;;
+        vless)  tag="vless-ws-cdn-sb";  portf="port_vless_ws_cdn" ;;
+        trojan) tag="trojan-ws-cdn-sb"; portf="port_trojan_ws_cdn" ;;
+        *) red "❌ 未知协议: ${p}"; return 1 ;;
+    esac
+    _uuid="$(cat "$SINGBOX_FOLDER_PATH/uuid" 2> /dev/null | tr -d '\r\n')"
+    [ -n "$_uuid" ] || { red "❌ 读取 uuid 失败"; return 1; }
+
+    # 1) 更新 ws_cdn 列表文件（逗号分隔、去重、去空项）
+    [ -s "$SINGBOX_FOLDER_PATH/ws_cdn" ] && new="$(cat "$SINGBOX_FOLDER_PATH/ws_cdn" 2> /dev/null | tr -d '\r\n')"
+    if [ "$act" = "on" ]; then
+        case ",$new," in *",$p,"*) : ;; *) new="$new,$p" ;; esac
+    else
+        for _sp in vmess vless trojan; do
+            [ "$_sp" = "$p" ] && continue
+            case ",$new," in *",$_sp,"*) kept="$kept,$_sp" ;; esac
+        done
+        new="${kept#,}"
+    fi
+    new="$(printf '%s' "$new" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed '/^$/d' | sort -u | paste -sd, -)"
+    new="${new#,}"
+    if [ -n "$new" ]; then
+        printf '%s' "$new" > "$SINGBOX_FOLDER_PATH/ws_cdn"
+    else
+        rm -f "$SINGBOX_FOLDER_PATH/ws_cdn"
+    fi
+    export ws_cdn="$new"
+
+    # 2) 增删 CDN inbound（幂等：已存在就不再追加，避免 sing-box 因重复 tag 起不来）
+    tmpj="$SINGBOX_FOLDER_PATH/.sb.tmp"
+    if [ "$act" = "on" ]; then
+        if _ws_cdn_proto_enabled "$p"; then
+            _on=1
+        fi
+        if [ "$_on" -eq 0 ]; then
+            _port="$(cat "$SINGBOX_FOLDER_PATH/$portf" 2> /dev/null | tr -d '\r\n')"
+            [ -n "$_port" ] || _port="$(rand_port)"
+            printf '%s\n' "$_port" > "$SINGBOX_FOLDER_PATH/$portf"
+            case "$p" in
+                vmess)
+                    jq --arg port "$_port" --arg uuid "$_uuid" '
+                        .inbounds += [{type:"vmess", tag:"vmess-ws-cdn-sb", listen:"::",
+                          listen_port:($port|tonumber), users:[{uuid:$uuid, alterId:0}],
+                          transport:{type:"ws", path:"/\($uuid)-vm-cdn"}}]' "$SINGBOX_FOLDER_PATH/sb.json" > "$tmpj" ;;
+                vless)
+                    jq --arg port "$_port" --arg uuid "$_uuid" '
+                        .inbounds += [{type:"vless", tag:"vless-ws-cdn-sb", listen:"::",
+                          listen_port:($port|tonumber), users:[{uuid:$uuid}],
+                          transport:{type:"ws", path:"/\($uuid)-vl-cdn"}}]' "$SINGBOX_FOLDER_PATH/sb.json" > "$tmpj" ;;
+                trojan)
+                    jq --arg port "$_port" --arg uuid "$_uuid" '
+                        .inbounds += [{type:"trojan", tag:"trojan-ws-cdn-sb", listen:"::",
+                          listen_port:($port|tonumber), users:[{password:$uuid}],
+                          transport:{type:"ws", path:"/\($uuid)-tr-cdn"}}]' "$SINGBOX_FOLDER_PATH/sb.json" > "$tmpj" ;;
+            esac
+            sbj_save "$tmpj" || { rm -f "$tmpj"; red "❌ 写入 sb.json 失败"; return 1; }
+            yellow "  ↳ ${p}-WS-CDN 回源端口(本地, 随机)：${_port}"
+        fi
+    else
+        if _ws_cdn_proto_enabled "$p"; then
+            jq --arg t "$tag" 'del(.inbounds[] | select(.tag==$t))' "$SINGBOX_FOLDER_PATH/sb.json" > "$tmpj" || { rm -f "$tmpj"; red "❌ 写入 sb.json 失败"; return 1; }
+            sbj_save "$tmpj" || { rm -f "$tmpj"; red "❌ 写入 sb.json 失败"; return 1; }
+        fi
+        rm -f "$SINGBOX_FOLDER_PATH/$portf"
+    fi
+
+    # 3) 回源必须经 nginx：开启时确保已安装，再按最新端口文件重生成配置
+    if [ "$act" = "on" ]; then
+        ensure_nginx_if_needed > /dev/null 2>&1 || { red "❌ Nginx 准备失败，CDN 回源不可用"; return 1; }
+    fi
+    if [ -x "$SB_NGINX_BIN" ]; then
+        setup_nginx_subscribe > /dev/null 2>&1 && nginx_restart
+    fi
+    return 0
+}
+
+edit_ws_cdn_proto_menu() {
+    local _tmp="" _ws_show="" _p="" _h="" _pt="" _npt="" _sni=""
+    while true; do
+        clear
+        green "========= [4][9] 节点配置修改 → WS-CDN 回源协议（可多选） ========="
+        echo ""
+        _ws_show="$(ws_cdn_val ws_cdn)"
+        green "  当前走 CDN 回源的协议: ${_ws_show:-未启用}"
+        echo ""
+        green "  1) Vmess-WS-CDN   [$(_ws_cdn_proto_enabled vmess && echo 已启用 || echo 未启用)]"
+        green "  2) Vless-WS-CDN   [$(_ws_cdn_proto_enabled vless && echo 已启用 || echo 未启用)]"
+        green "  3) Trojan-WS-CDN  [$(_ws_cdn_proto_enabled trojan && echo 已启用 || echo 未启用)]"
+        echo ""
+        yellow "  回源域名 / SNI / CDN 端口在 [4][3] SNI / CDN 设置里改"
+        purple "  0) 返回上级菜单"
+        reading "输入编号切换启用/停用（每次一个，多选可多次进入）: " _tmp
+        case "$_tmp" in
+            0) return ;;
+            1) _p=vmess ;;
+            2) _p=vless ;;
+            3) _p=trojan ;;
+            *) yellow "无效选项"; sleep 1; continue ;;
+        esac
+        _npt="$(_eff_nginx_pt)"
+        if _ws_cdn_proto_enabled "$_p"; then
+            if _set_ws_cdn_proto "$_p" off; then
+                green "✅ 已关闭 ${_p} 的 CDN 回源（对应节点已失效，订阅已重新生成）"
+                refresh_sb_and_sub
+            fi
+        else
+            if _set_ws_cdn_proto "$_p" on; then
+                green "✅ 已开启 ${_p} 的 CDN 回源"
+                _h="$(ws_cdn_val "ws_cdn_${_p}_cf_host")"
+                [ -n "$_h" ] || _h="$(ws_cdn_val ws_cdn_cf_host)"
+                [ -n "$_h" ] || _h="saas.sin.fan"
+                _pt="$(ws_cdn_val "ws_cdn_${_p}_cf_pt")"
+                [ -n "$_pt" ] || _pt="$(ws_cdn_val ws_cdn_cf_pt)"
+                [ -n "$_pt" ] || _pt="443"
+                # 没配回源 SNI 时不会生成节点链接（回源域名靠 SNI 区分），先提醒
+                _sni="$(ws_cdn_val "ws_cdn_${_p}_sni")"
+                [ -n "$_sni" ] || _sni="$(ws_cdn_val ws_cdn_sni)"
+                if [ -z "$_sni" ]; then
+                    yellow "  ⚠️ 还没配置回源域名 SNI，该协议暂时不会生成节点链接"
+                    yellow "     请先到 [4][3] SNI / CDN 设置里配置回源域名（或专属 ws_cdn_${_p}_sni）"
+                fi
+                purple "  回源地址: ${_h}:${_pt} → 本机 nginx:${_npt}"
+                yellow "  ⚠️ 记得在 Cloudflare 给 ${_h} 配置回源规则指向本机 ${_npt} 端口（或用同一 A 记录 + 回源端口）"
+                refresh_sb_and_sub
+            fi
+        fi
+        menu_pause
+    done
 }
 
 # ================== Socks5 IP白名单管理 ==================
@@ -6871,7 +8765,16 @@ _resolve_domain_ips_impl() {
             | grep -v '#' >> "$f"
     fi
     local out
-    out="$(grep -v '^[[:space:]]*$' "$f" | sort -u)"
+    # 过滤空行，并丢掉「本地解析器地址」（busybox nslookup 会把 `10.10.0.1:53` 这类
+    # DNS 服务器地址一起打出来，看起来像解析结果）：IPv4:port / [IPv6]:port 一律丢弃
+    _uniq_resolved_ips() {
+        grep -v '^[[:space:]]*$' "$1" \
+            | sed 's/^[[:space:]]*//' \
+            | grep -vE '^[0-9]{1,3}(\.[0-9]{1,3}){3}:[0-9]+$' \
+            | grep -vE '^\[[0-9a-fA-F:]+\]:[0-9]+$' \
+            | sort -u
+    }
+    out="$(_uniq_resolved_ips "$f")"
     # 5) 本地解析仍空 → DoH（cloudflare 公共 DNS，curl+jq 为脚本必装依赖；-m3 限时）
     if [ -z "$out" ] && command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
         local q
@@ -6880,21 +8783,43 @@ _resolve_domain_ips_impl() {
                 -H 'accept: application/dns-json' 2>/dev/null \
                 | jq -r '(.Answer[]? | select(.type == 1 or .type == 28) | .data)' >> "$f"
         done
-        out="$(grep -v '^[[:space:]]*$' "$f" | sort -u)"
+        out="$(_uniq_resolved_ips "$f")"
     fi
     printf '%s' "$out" | tr '\n' ' '
     return 0
 }
 
-# 对外反查入口：整体 timeout 兜底（默认 8s，可用 DIRECT_HOST_RESOLVE_TIMEOUT 覆盖），保证不卡菜单
+# 限时执行 shell 函数（timeout 是外部命令，无法执行 shell 函数：execvp 找不到同名程序，
+# 必然以 127 失败且 stderr 被丢弃，导致功能静默失效）。这里用「后台执行 + 看门狗 kill」实现，
+# stdout 原样返回，超时则返回子进程被杀的状态码。
+_sb_run_with_timeout() {
+    local _secs="${1:-8}"; shift
+    local _out _pid _wd _rc=0
+    _out="$(mktemp 2> /dev/null)" || _out=""
+    if [ -z "$_out" ]; then
+        "$@" 2> /dev/null
+        return $?
+    fi
+    "$@" > "$_out" 2> /dev/null &
+    _pid=$!
+    (
+        sleep "$_secs"
+        kill -9 "$_pid" 2> /dev/null
+    ) > /dev/null 2>&1 &
+    _wd=$!
+    wait "$_pid" 2> /dev/null
+    _rc=$?
+    kill -9 "$_wd" 2> /dev/null
+    cat "$_out" 2> /dev/null
+    rm -f "$_out" 2> /dev/null
+    return "$_rc"
+}
+
+# 对外反查入口：整体限时兜底（默认 8s，可用 DIRECT_HOST_RESOLVE_TIMEOUT 覆盖），保证不卡菜单
 resolve_domain_ips() {
     local d="$1" out=""
     [ -n "$d" ] || return 1
-    if command -v timeout >/dev/null 2>&1; then
-        out="$(timeout "${DIRECT_HOST_RESOLVE_TIMEOUT:-8}" _resolve_domain_ips_impl "$d" 2>/dev/null)"
-    else
-        out="$(_resolve_domain_ips_impl "$d" 2>/dev/null)"
-    fi
+    out="$(_sb_run_with_timeout "${DIRECT_HOST_RESOLVE_TIMEOUT:-8}" _resolve_domain_ips_impl "$d" 2> /dev/null)"
     printf '%s' "$out" | sed 's/ $//'
     return 0
 }
@@ -6903,11 +8828,7 @@ resolve_domain_ips() {
 safe_query_region() {
     local v="$1"
     [ -n "$v" ] || return 0
-    if command -v timeout >/dev/null 2>&1; then
-        timeout 6 query_ip_region "$v" 2>/dev/null
-    else
-        query_ip_region "$v" 2>/dev/null
-    fi
+    _sb_run_with_timeout 6 query_ip_region "$v" 2> /dev/null
 }
 
 # 反查并比对：域名当前解析到哪些 IP，是否已指向服务器真实 IP（server_ip 文件）
@@ -6942,6 +8863,7 @@ edit_mask_host_menu() {
         yellow "  直连协议 (hy2/tuic/vless-reality/anytls/socks5) 链接默认使用真实服务器 IP。"
         yellow "  设置对外域名后，这些链接将用域名替换 IP；Argo/回源协议有自己的 CDN 域名，不受影响。"
         yellow "  要求：域名须能解析到本机（如 DNS A/AAAA 记录），端口沿用本地监听端口。"
+        yellow "  想改「真实服务器 IP」本身 → 用 [4][10] 服务器地址"
         echo ""
         if [ -s "$SINGBOX_FOLDER_PATH/direct_host" ]; then
             _cur_dh="$(cat "$SINGBOX_FOLDER_PATH/direct_host" 2>/dev/null | tr -d '\r\n')"
@@ -7000,6 +8922,380 @@ edit_mask_host_menu() {
     done
 }
 
+# ================== 身份信息修改（UUID / 节点名称前缀 / Socks5 账号密码 / Reality 密钥） ==================
+# ⚠️ 改 UUID 会让所有已下发节点立即失效：用户凭据、ws 路径、nginx 反代 location、订阅地址
+#    全部随之变化，因此必须二次确认（输入 yes 才执行）。Reality 密钥轮换同理。其余项风险低。
+_uuid_is_valid() { printf '%s' "${1:-}" | grep -qE '^[0-9a-fA-F-]{1,64}$'; }
+
+# 当前是否装了 VLESS-Reality（以 sb.json 里的 inbound 为准）
+_reality_installed() {
+    [ -s "$SINGBOX_FOLDER_PATH/sb.json" ] || return 1
+    jq -e '.inbounds[]? | select(.tag=="vless-reality-vision-sb")' "$SINGBOX_FOLDER_PATH/sb.json" > /dev/null 2>&1
+}
+
+# 轮换 Reality 密钥对
+# 三处必须同步，漏一处客户端就连不上：
+#   1) reality.key   —— 公钥（链接里的 pbk）从这里读
+#   2) short_id 文件 —— 链接里的 sid；且 short_id 是由私钥 sha256 推导的（get_short_id 规则）
+#   3) sb.json       —— tls.reality.private_key / .short_id
+_rotate_reality_keypair() {
+    local _kp="" _priv="" _pub="" _sid="" _tmpj="" _old_priv=""
+    _reality_installed || { red "❌ 当前未安装 VLESS-Reality 协议，无需轮换"; return 1; }
+    [ -x "$SINGBOX_FOLDER_PATH/sing-box" ] || { red "❌ 未找到 sing-box 二进制"; return 1; }
+
+    # 1) 生成新 keypair
+    _kp="$("$SINGBOX_FOLDER_PATH/sing-box" generate reality-keypair 2> /dev/null)"
+    _priv="$(printf '%s\n' "$_kp" | awk '/PrivateKey/{print $NF; exit}')"
+    _pub="$(printf '%s\n' "$_kp" | awk '/PublicKey/{print $NF; exit}')"
+    if [ -z "$_priv" ] || [ -z "$_pub" ]; then
+        red "❌ 生成 Reality 密钥对失败"
+        return 1
+    fi
+    _priv="$(_to_urlsafe_base64 "$_priv")"
+    _pub="$(_to_urlsafe_base64 "$_pub")"
+
+    # 2) short_id 由私钥稳定推导（与 get_short_id 同一规则：sha256 前 8 位）
+    if command -v sha256sum > /dev/null 2>&1; then
+        _sid="$(printf '%s' "$_priv" | sha256sum | awk '{print $1}' | cut -c1-8)"
+    elif command -v openssl > /dev/null 2>&1; then
+        _sid="$(printf '%s' "$_priv" | openssl dgst -sha256 2> /dev/null | awk '{print $NF}' | cut -c1-8)"
+    else
+        _sid="$(head -c 4 /dev/urandom 2> /dev/null | od -An -tx1 | tr -d ' \n' | cut -c1-8)"
+    fi
+    _sid="${_sid,,}"
+    printf '%s' "$_sid" | grep -qiE '^[0-9a-f]{8}$' || { red "❌ short_id 推导失败"; return 1; }
+
+    # 3) 先改临时文件并校验，校验不过直接放弃（不动现网配置）
+    _tmpj="$SINGBOX_FOLDER_PATH/.sb.tmp"
+    jq --arg k "$_priv" --arg s "$_sid" '
+        (.inbounds[] | select(.tag=="vless-reality-vision-sb") | .tls.reality.private_key) = $k
+      | (.inbounds[] | select(.tag=="vless-reality-vision-sb") | .tls.reality.short_id) = [$s]
+    ' "$SINGBOX_FOLDER_PATH/sb.json" > "$_tmpj" || { rm -f "$_tmpj"; red "❌ 写入临时配置失败"; return 1; }
+    if ! "$SINGBOX_FOLDER_PATH/sing-box" check -c "$_tmpj" > /dev/null 2>&1; then
+        rm -f "$_tmpj"
+        red "❌ 新配置校验未通过，已放弃本次轮换（现网配置未改动）"
+        return 1
+    fi
+
+    # 4) 备份旧密钥对（每次轮换覆盖），再落盘新密钥
+    _old_priv="$(awk '/PrivateKey/{print $NF; exit}' "$SINGBOX_FOLDER_PATH/reality.key" 2> /dev/null)"
+    if [ -n "$_old_priv" ]; then
+        cp -p "$SINGBOX_FOLDER_PATH/reality.key" "$SINGBOX_FOLDER_PATH/reality.key.bak" 2> /dev/null || true
+    fi
+    sbj_save "$_tmpj" || { rm -f "$_tmpj"; red "❌ 写入 sb.json 失败"; return 1; }
+    printf "PrivateKey: %s\nPublicKey: %s\n" "$_priv" "$_pub" > "$SINGBOX_FOLDER_PATH/reality.key"
+    chmod 600 "$SINGBOX_FOLDER_PATH/reality.key" 2> /dev/null || true
+    printf '%s\n' "$_sid" > "$SINGBOX_FOLDER_PATH/short_id"
+
+    export reality_private="$_priv"
+    export reality_public="$_pub"
+    green "  ↳ 新 public key (pbk): ${_pub}"
+    green "  ↳ 新 short_id  (sid): ${_sid}"
+    return 0
+}
+
+edit_identity_menu() {
+    local _sel _val _old _ok
+    while true; do
+        clear
+        green "========= [4][8] 节点配置修改 → 身份信息 ========="
+        echo ""
+        green "  1) 修改 UUID"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/uuid" 2>/dev/null)"
+        green "  2) 修改节点名称前缀"
+        yellow "       当前: $(cat "$SINGBOX_FOLDER_PATH/name" 2>/dev/null | tr -d '\r\n')"
+        if grep -q "socks5-sb" "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null; then
+            green "  3) 修改 Socks5 用户名"
+            yellow "       当前: $(jq -r '.inbounds[]? | select(.tag=="socks5-sb") | .users[0].username // empty' "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null)"
+            green "  4) 修改 Socks5 密码"
+            yellow "       当前: $(jq -r '.inbounds[]? | select(.tag=="socks5-sb") | .users[0].password // empty' "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null)"
+        fi
+        if _reality_installed; then
+            green "  5) 重新生成 Reality 密钥对 (pbk/sid 会变)"
+            yellow "       当前 public key: $(awk '/PublicKey/{print $NF; exit}' "$SINGBOX_FOLDER_PATH/reality.key" 2>/dev/null)"
+        fi
+        purple "  0) 返回上级菜单"
+        reading "请输入选择: " _sel
+        case "$_sel" in
+            0) return ;;
+            1)
+                _old="$(cat "$SINGBOX_FOLDER_PATH/uuid" 2>/dev/null)"
+                red   "  ⚠️ 修改 UUID 会让所有已下发的节点链接和订阅地址立即失效，客户端必须重新导入！"
+                reading "  请输入新的 UUID (回车=取消): " _val
+                [ -z "$_val" ] && { yellow "已取消"; menu_pause; continue; }
+                if ! _uuid_is_valid "$_val"; then
+                    red "❌ UUID 非法（只允许 0-9 / a-f / A-F / -，1~64 字符）"; menu_pause; continue
+                fi
+                if [ "$_val" = "$_old" ]; then
+                    yellow "新旧 UUID 相同，无需修改"; menu_pause; continue
+                fi
+                echo ""
+                red    "  即将把 UUID 从 ${_old:-未设置} 改为 ${_val}"
+                yellow "  影响：所有协议的用户凭据、ws 路径、nginx 反代 location、订阅地址都会变化"
+                reading "  确认修改请输入 yes (其它任意输入=取消): " _ok
+                if [ "$_ok" != "yes" ]; then
+                    yellow "已取消，UUID 未改动"; menu_pause; continue
+                fi
+                printf '%s\n' "$_val" > "$SINGBOX_FOLDER_PATH/uuid"
+                chmod 600 "$SINGBOX_FOLDER_PATH/uuid" 2> /dev/null || true
+                # sb.json 里 uuid 既在 users 凭据中，也在 ws transport path 里 → 整串替换
+                if [ -s "$SINGBOX_FOLDER_PATH/sb.json" ] && [ -n "$_old" ]; then
+                    sed "s/${_old}/${_val}/g" "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" \
+                        && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"
+                fi
+                export uuid="$_val"
+                # nginx 的 location /{uuid}-* 与订阅路径 /sub/{uuid} 都按新 uuid 重建
+                setup_nginx_subscribe > /dev/null 2>&1 && nginx_restart
+                refresh_sb_and_sub
+                green "✅ UUID 修改完成，节点链接与订阅已按新 UUID 重新生成"
+                green "  新订阅地址: $(show_sub_url)"
+                menu_pause
+                ;;
+            2)
+                _old="$(cat "$SINGBOX_FOLDER_PATH/name" 2>/dev/null | tr -d '\r\n')"
+                reading "  请输入新的节点名称前缀 (回车=清除前缀): " _val
+                if [ -z "$_val" ]; then
+                    rm -f "$SINGBOX_FOLDER_PATH/name"
+                    green "  ↳ 已清除节点名称前缀（节点名恢复为 hy2-xxx 等默认形式）"
+                else
+                    # 落盘格式为「前缀-」，与安装时 set_sbyx 保持一致
+                    _val="$(printf '%s' "$_val" | tr -d '\r\n')"
+                    printf '%s-\n' "$_val" > "$SINGBOX_FOLDER_PATH/name"
+                    green "  ↳ 节点名称前缀: ${_val}"
+                fi
+                regenerate_links_and_sub > /dev/null 2>&1
+                green "✅ 节点名称已更新，节点链接与订阅已重新生成"
+                menu_pause
+                ;;
+            3)
+                if ! grep -q "socks5-sb" "$SINGBOX_FOLDER_PATH/sb.json" 2> /dev/null; then
+                    yellow "当前未安装 Socks5，无法修改"; menu_pause; continue
+                fi
+                reading "  请输入新的 Socks5 用户名 (回车=取消): " _val
+                [ -z "$_val" ] && { yellow "已取消"; menu_pause; continue; }
+                if printf '%s' "$_val" | grep -qE '[[:space:]]'; then
+                    red "❌ 用户名不能包含空格/制表符"; menu_pause; continue
+                fi
+                printf '%s\n' "$_val" > "$SINGBOX_FOLDER_PATH/socks5_user"
+                chmod 600 "$SINGBOX_FOLDER_PATH/socks5_user" 2> /dev/null || true
+                jq --arg u "$_val" \
+                    '(.inbounds[]? | select(.tag == "socks5-sb") | .users[0].username) = $u' \
+                    "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" \
+                    && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"
+                refresh_sb_and_sub
+                green "✅ Socks5 用户名已修改为: ${_val}"
+                menu_pause
+                ;;
+            4)
+                if ! grep -q "socks5-sb" "$SINGBOX_FOLDER_PATH/sb.json" 2> /dev/null; then
+                    yellow "当前未安装 Socks5，无法修改"; menu_pause; continue
+                fi
+                reading "  请输入新的 Socks5 密码 (回车=取消): " _val
+                [ -z "$_val" ] && { yellow "已取消"; menu_pause; continue; }
+                if printf '%s' "$_val" | grep -qE '[[:space:]]'; then
+                    red "❌ 密码不能包含空格/制表符"; menu_pause; continue
+                fi
+                printf '%s\n' "$_val" > "$SINGBOX_FOLDER_PATH/socks5_pass"
+                chmod 600 "$SINGBOX_FOLDER_PATH/socks5_pass" 2> /dev/null || true
+                jq --arg p "$_val" \
+                    '(.inbounds[]? | select(.tag == "socks5-sb") | .users[0].password) = $p' \
+                    "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" \
+                    && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"
+                refresh_sb_and_sub
+                green "✅ Socks5 密码已修改"
+                menu_pause
+                ;;
+            5)
+                if ! _reality_installed; then
+                    yellow "当前未安装 VLESS-Reality，无法轮换密钥"; menu_pause; continue
+                fi
+                _old="$(awk '/PublicKey/{print $NF; exit}' "$SINGBOX_FOLDER_PATH/reality.key" 2> /dev/null)"
+                echo ""
+                red    "  ⚠️ 重新生成 Reality 密钥对会让所有 Reality 节点立即失效，客户端必须重新导入！"
+                yellow "  影响：服务端 private_key、short_id（由私钥推导）、链接里的 pbk/sid 全部变化"
+                yellow "  当前 public key (pbk): ${_old:-未知}"
+                yellow "  旧密钥会备份到 reality.key.bak（每次轮换覆盖）"
+                reading "  确认重新生成请输入 yes (其它任意输入=取消): " _ok
+                if [ "$_ok" != "yes" ]; then
+                    yellow "已取消，密钥未改动"; menu_pause; continue
+                fi
+                if _rotate_reality_keypair; then
+                    refresh_sb_and_sub
+                    green "✅ Reality 密钥轮换完成，节点链接与订阅已重新生成"
+                    yellow "  请到客户端删除旧节点并重新导入订阅（旧 pbk/sid 已失效）"
+                fi
+                menu_pause
+                ;;
+            *) yellow "无效选项"; menu_pause ;;
+        esac
+    done
+}
+
+# ================== 服务器地址（server_ip）修改 ==================
+# 查 IP 是否属于三大 CDN（Cloudflare / Fastly / Akamai）
+# 为什么要在意：这类 IP 出现在「本机出口 IPv4」上，通常说明 v4 出口被 WARP / 云厂商
+# NAT 之类代理了，拿它当节点地址，客户端会连到 CDN 边缘节点而不是本机。
+# 命中则打印厂商名（Cloudflare/Fastly/Akamai），未命中返回 1。
+_ip_cdn_vendor() {
+    local _ip="$1" _json="" _meta="" _asn="" _v=""
+    [ -n "$_ip" ] || return 1
+    # ip-api.com 免费接口：https 偶尔不通，回退 http（与 safe_query_region 一致）
+    _json="$(curl -s -m5 "https://ip-api.com/json/${_ip}?fields=status,as,org,isp" 2> /dev/null)"
+    case "$_json" in
+        *'"status":"success"'*) ;;
+        *) _json="$(curl -s -m5 "http://ip-api.com/json/${_ip}?fields=status,as,org,isp" 2> /dev/null)" ;;
+    esac
+    case "$_json" in
+        *'"status":"success"'*) ;;
+        *) return 1 ;;
+    esac
+    _meta="$(printf '%s' "$_json" | tr '[:upper:]' '[:lower:]')"
+    # 先按 ASN 精确匹配（CDN 厂商常有多个 ASN），再按名称兜底
+    _asn="$(printf '%s' "$_json" | sed -n 's/.*"as":"AS\([0-9]*\)[^"]*".*/\1/p')"
+    case "$_asn" in
+        13335|132892|202623|203898|394536) _v="Cloudflare" ;;
+        54113) _v="Fastly" ;;
+        20940|16625|21342|18717|32787) _v="Akamai" ;;
+    esac
+    if [ -z "$_v" ]; then
+        case "$_meta" in
+            *cloudflare*) _v="Cloudflare" ;;
+            *fastly*) _v="Fastly" ;;
+            *akamai*) _v="Akamai" ;;
+        esac
+    fi
+    [ -n "$_v" ] || return 1
+    printf '%s' "$_v"
+    return 0
+}
+
+# 自动检测出口 IP
+# 参数：4 = 仅 IPv4 / 6 = 仅 IPv6 / 空 = 自动（优先 IPv4，无 v4 再退回 v6）
+# 语义与安装时的 ippz 一致，不按「当前 server_ip 的地址族」猜。
+# 自动模式下若 v4 属于三大 CDN，说明 v4 出口被代理，改用 v6（提示打到 stderr）。
+_detect_server_ip() {
+    local _pref="${1:-${ippz:-}}"
+    local _res="" _v4="" _v6="" _vendor=""
+    _res="$(check_ip_connectivity "https://icanhazip.com" 2> /dev/null)"
+    _v4="$(printf '%s' "$_res" | cut -d'|' -f1 | tr -d ' \r\n')"
+    _v6="$(printf '%s' "$_res" | cut -d'|' -f2 | tr -d ' \r\n')"
+    case "$_pref" in
+        4)
+            is_valid_ip_simple "$_v4" || return 1
+            _vendor="$(_ip_cdn_vendor "$_v4")" || _vendor=""
+            if [ -n "$_vendor" ]; then
+                yellow "  ⚠️ 出口 IPv4 ${_v4} 属于 ${_vendor}（CDN 厂商），用它当节点地址客户端会连到 CDN 边缘节点" >&2
+            fi
+            printf '%s' "$_v4"
+            return 0
+            ;;
+        6)
+            is_valid_ip_simple "$_v6" && { printf '%s' "$_v6"; return 0; }
+            return 1
+            ;;
+        *)
+            if is_valid_ip_simple "$_v4"; then
+                # v4 是 CDN 的地址 → 说明 v4 出口被代理了，优先改用 v6
+                _vendor="$(_ip_cdn_vendor "$_v4")" || _vendor=""
+                if [ -n "$_vendor" ] && is_valid_ip_simple "$_v6"; then
+                    yellow "  ⚠️ 出口 IPv4 ${_v4} 属于 ${_vendor}（CDN 厂商），已改用 IPv6 ${_v6}" >&2
+                    printf '%s' "$_v6"
+                    return 0
+                fi
+                [ -n "$_vendor" ] && yellow "  ⚠️ 出口 IPv4 ${_v4} 属于 ${_vendor}（CDN 厂商），但本机没有可用 IPv6，仍沿用 IPv4" >&2
+                printf '%s' "$_v4"
+                return 0
+            fi
+            is_valid_ip_simple "$_v6" && { printf '%s' "$_v6"; return 0; }
+            return 1
+            ;;
+    esac
+}
+
+edit_server_ip_menu() {
+    local _sel="" _in="" _cur="" _dh="" _new="" _fmt="" _pref="" _vendor=""
+    while true; do
+        clear
+        green "========= [4][10] 节点配置修改 → 服务器地址 (server_ip) ========="
+        echo ""
+        _cur="$(cat "$SINGBOX_FOLDER_PATH/server_ip" 2> /dev/null | tr -d '\r\n')"
+        _dh="$(cat "$SINGBOX_FOLDER_PATH/direct_host" 2> /dev/null | tr -d '\r\n')"
+        green "  📌 当前 server_ip  : ${_cur:-未设置}"
+        if [ -n "$_dh" ]; then
+            green "  📌 当前 direct_host: ${_dh}（直连链接用域名，server_ip 仅作回退）"
+        else
+            yellow "  📌 当前 direct_host: 未设置（直连链接直接用 server_ip）"
+        fi
+        echo ""
+        yellow "  server_ip = 直连协议链接里显示的地址；Argo / CDN 回源协议有自己的域名，不受影响"
+        yellow "  想用域名代替 IP → 用 [4][6] 直连对外域名（掩盖 IP）"
+        echo ""
+        green "  1) 自动重新检测（可选 IPv4 / IPv6 / 自动）"
+        green "  2) 手动指定 IP"
+        purple "  0) 返回上级菜单"
+        reading "请输入选择: " _sel
+        case "$_sel" in
+            0) return ;;
+            1)
+                # 地址族由用户当场指定（语义同安装时的 ippz），不按当前 server_ip 猜
+                reading "  IP 偏好 [4=仅IPv4 / 6=仅IPv6 / 回车=自动(优先IPv4)]: " _pref
+                case "$_pref" in
+                    ""|4|6) : ;;
+                    *) yellow "  无效偏好，按自动处理"; _pref="" ;;
+                esac
+                green "  ⏳ 正在检测出口 IP..."
+                _new="$(_detect_server_ip "$_pref")" || _new=""
+                if [ -z "$_new" ]; then
+                    case "$_pref" in
+                        4) red "❌ 未检测到 IPv4 出口地址（网络异常，或本机没有公网 IPv4）" ;;
+                        6) red "❌ 未检测到 IPv6 出口地址（网络异常，或本机没有公网 IPv6）" ;;
+                        *) red "❌ 检测失败（网络异常，或无法访问 IP 回显服务 icanhazip.com）" ;;
+                    esac
+                    menu_pause
+                    continue
+                fi
+                _fmt="$(format_ip_for_log "$_new")"
+                if [ "$_fmt" = "$_cur" ]; then
+                    yellow "检测结果与当前 server_ip 相同（${_fmt}），无需修改"
+                    menu_pause
+                    continue
+                fi
+                printf '%s\n' "$_fmt" > "$SINGBOX_FOLDER_PATH/server_ip"
+                refresh_sb_and_sub
+                green "✅ server_ip 已更新: ${_cur:-未设置} → ${_fmt}"
+                green "   节点链接与订阅已按新地址重新生成"
+                menu_pause
+                ;;
+            2)
+                reading "  请输入新的服务器 IP（IPv4 / IPv6，回车=取消）: " _in
+                [ -z "$_in" ] && { yellow "已取消"; menu_pause; continue; }
+                if ! is_valid_ip_simple "$_in"; then
+                    red "❌ IP 格式非法（只接受 IPv4 / IPv6；想用域名请走 [4][6]）"
+                    menu_pause
+                    continue
+                fi
+                _fmt="$(format_ip_for_log "$_in")"
+                if [ "$_fmt" = "$_cur" ]; then
+                    yellow "与当前 server_ip 相同，无需修改"
+                    menu_pause
+                    continue
+                fi
+                # 手动指定也提示一下：CDN 厂商的 IP 当节点地址连的是边缘节点
+                _vendor="$(_ip_cdn_vendor "$(strip_ip_brackets_all "$_in")")" || _vendor=""
+                if [ -n "$_vendor" ]; then
+                    yellow "  ⚠️ ${_fmt} 属于 ${_vendor}（CDN 厂商）：客户端会连到 CDN 边缘节点，通常不是本机"
+                fi
+                printf '%s\n' "$_fmt" > "$SINGBOX_FOLDER_PATH/server_ip"
+                refresh_sb_and_sub
+                green "✅ server_ip 已更新: ${_cur:-未设置} → ${_fmt}"
+                green "   节点链接与订阅已按新地址重新生成"
+                menu_pause
+                ;;
+            *) yellow "无效选项"; sleep 1 ;;
+        esac
+    done
+}
+
 # 节点配置修改主菜单
 node_config_menu() {
     local _ch
@@ -7022,6 +9318,9 @@ node_config_menu() {
             fi
             green "  7) Socks5 IP白名单管理 (当前：${_wl_status})"
         fi
+        green "  8) 身份信息 (UUID / 名称前缀 / Socks5 账号 / Reality 密钥)"
+        green "  9) WS-CDN 回源协议 (Vmess / Vless / Trojan 开关)"
+        green "  10) 服务器地址 (server_ip)"
         purple "  0) 返回主菜单"
         reading "请输入选择: " _ch
         case "$_ch" in
@@ -7033,6 +9332,9 @@ node_config_menu() {
             5) edit_argo_protocol_menu ;;
             6) edit_mask_host_menu ;;
             7) edit_socks5_whitelist_menu ;;
+            8) edit_identity_menu ;;
+            9) edit_ws_cdn_proto_menu ;;
+            10) edit_server_ip_menu ;;
             *) yellow "无效选项"; sleep 1 ;;
         esac
     done
@@ -7078,8 +9380,8 @@ interactive_log_menu() {
                 _title="Argo (cloudflared) 日志"
                 _hint="暂无日志：$_log" ;;
             3)
-                _log="/var/log/nginx/error.log"
-                _title="Nginx 日志"
+                _log="$SB_NGINX_DIR/logs/error.log"
+                _title="Nginx 日志（沙箱）"
                 _hint="暂无日志：$_log" ;;
             4)
                 # 安装日志：直接显示全文，不问行数
@@ -7107,7 +9409,7 @@ interactive_log_menu() {
 }
 
 # ================== 分流管理 (rt) ==================
-# 参照 lwsb.sh 的 WARP 分流管理实现，适配 sb00 单文件配置 (sb.json)
+# 参照 lwsb.sh 的 WARP 分流管理实现，适配本脚本的单文件配置 (sb.json)
 # 分流规则插入在 sniff 之后、resolve 之前，保留 sing-box 默认行为
 
 # 分流服务 tag -> 远程规则集 URL
@@ -7347,15 +9649,20 @@ edit_protocol_proxy() {
     [ -z "$_choice" ] && { yellow "已取消，未做任何修改。"; menu_pause; return; }
 
     if [ "$_choice" = "0" ]; then
-        # 直连：从所有 inbound 规则中移除该协议
+        # 直连：只把该协议从 inbound 数组里摘掉，不能删整条规则
+        #（一条规则常挂多个协议，删整条会把同规则的其它协议一起改成直连）
         if jq --arg p "$_tag" '
             . as $doc
             | ($doc.route.rules // []) as $R
             | ($R | map(select(.action == "sniff"))) as $sniff
             | ($R | map(select(.action == "resolve"))) as $resolve
-            | ($R | map(select(.action != "sniff" and .action != "resolve" and (.inbound == null or ((.inbound | index($p)) | not))))) as $splits
+            | ($R | map(select(.action != "sniff" and .action != "resolve"))) as $splits
             | $doc
-            | .route.rules = $sniff + $splits + $resolve
+            | .route.rules = $sniff
+              + ($splits
+                 | map(if (.inbound != null) and ((.inbound | index($p)) != null) then .inbound -= [$p] else . end)
+                 | map(select((.inbound == null) or ((.inbound | length) > 0))))
+              + $resolve
         ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"; then
             sbrestart
             green "✅ $_tag 已改为直连（原IP出口）"
@@ -7366,26 +9673,35 @@ edit_protocol_proxy() {
     fi
 
     # 选择某个代理：把该协议移动到目标代理的 inbound 规则
+    # ⚠️ 必须挡掉 0：jq 的 .[-1] 会取到最后一条，等于静默删错对象
+    if ! [[ "$_choice" =~ ^[0-9]+$ ]] || [ "$_choice" -lt 1 ]; then
+        red "无效的代理编号（必须 ≥ 1）！"; menu_pause; return
+    fi
     _p=$(jq -r --arg idx "$_choice" '[.outbounds[]? | select(.type == "socks" or .type == "http") | .tag] | .[($idx | tonumber) - 1] // empty' "$sbj" 2>/dev/null)
     if [ -z "$_p" ]; then
         red "无效的代理编号！"; menu_pause; return
     fi
+    # 同理：先把该协议从所有规则里摘掉（而不是把含有它的整条规则丢掉），
+    # 再挂到目标代理上，避免同规则里的其它协议被静默改成直连
     if jq --arg p "$_p" --arg proto "$_tag" '
         . as $doc
         | ($doc.route.rules // []) as $R
         | ($R | map(select(.action == "sniff"))) as $sniff
         | ($R | map(select(.action == "resolve"))) as $resolve
-        | ($R | map(select(.action != "sniff" and .action != "resolve" and .inbound == null))) as $others
-        | ($R | map(select(.action != "sniff" and .action != "resolve" and .inbound != null and .outbound == $p))) as $target
-        | ($R | map(select(.action != "sniff" and .action != "resolve" and .inbound != null and .outbound != $p and ((.inbound | index($proto)) | not)))) as $inb_others
+        | ($R | map(select(.action != "sniff" and .action != "resolve"))) as $splits
+        | ($splits
+           | map(if (.inbound != null) and ((.inbound | index($proto)) != null) then .inbound -= [$proto] else . end)
+           | map(select((.inbound == null) or ((.inbound | length) > 0)))) as $cleaned
+        | ($cleaned | map(select(.inbound != null and .outbound == $p))) as $target
         | $doc
-        | .route.rules = $sniff + ($others + $inb_others + [
-            if ($target | length) > 0 then
-                (if ($target[0].inbound | index($proto)) then $target[0] else ($target[0] | .inbound += [$proto]) end)
-            else
-                {inbound: [$proto], outbound: $p}
-            end
-          ] | sort_by(if .rule_set != null then 0 elif .inbound != null then 1 else 2 end)) + $resolve
+        | .route.rules = $sniff
+          + (if ($target | length) > 0 then
+                ($cleaned | map(if (.inbound != null and .outbound == $p and ((.inbound | index($proto)) == null))
+                                   then .inbound += [$proto] else . end))
+             else
+                ($cleaned + [{inbound: [$proto], outbound: $p}])
+             end)
+          + $resolve
     ' "$sbj" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"; then
         sbrestart
         green "✅ $_tag 已改用代理: $_p"
@@ -7462,7 +9778,7 @@ add_rule_menu() {
         selected_out="${out_tags[$((_out_choice-1))]}"
     fi
 
-    # 注入 rule_set 定义（sb00 默认不预置，需按需添加）
+    # 注入 rule_set 定义（本脚本默认不预置，需按需添加）
     rt_ensure_rule_set "$rule_tag"
 
     jq --arg tag "$rule_tag" --arg out "$selected_out" '
@@ -7502,6 +9818,9 @@ delete_rule_menu() {
     fi
     jq -r '.route.rules[]? | select(.rule_set != null) | .rule_set[]?' "$SINGBOX_FOLDER_PATH/sb.json" | nl -w2 -s'. '
     reading "输入要删除的规则名称或序号: " _del_input
+    if [[ "$_del_input" =~ ^[0-9]+$ ]] && [ "$_del_input" -lt 1 ]; then
+        red "无效的序号（必须 ≥ 1）"; menu_pause; return
+    fi
     if [[ "$_del_input" =~ ^[0-9]+$ ]]; then
         _tag=$(jq -r --arg idx "$_del_input" '[.route.rules[]? | select(.rule_set != null) | .rule_set[]] | .[(($idx | tonumber) - 1)]' "$SINGBOX_FOLDER_PATH/sb.json")
     else
@@ -7576,7 +9895,19 @@ add_socks5_proxy() {
     # 兼容 URL 末尾斜杠/路径/查询：socks/http 出站只认 host:port，去掉多余部分（如 socks5://1.2.3.4:7928/ → 1.2.3.4:7928）
     _host_port="${_host_port%%/*}"
     _host_port="${_host_port%%\?*}"
-    _server="${_host_port%%:*}"; _port="${_host_port##*:}"
+    # IPv6 必须走方括号分支：直接按 ':' 切会把 [2001:db8::1]:1080 切成 "[2001"
+    case "$_host_port" in
+        \[*\]:*)
+            _server="${_host_port%]:*}"
+            _server="${_server#[}"
+            _server="${_server%]}"
+            _port="${_host_port##*]:}"
+            ;;
+        *)
+            _server="${_host_port%%:*}"
+            _port="${_host_port##*:}"
+            ;;
+    esac
     if [ -z "$_server" ] || [ -z "$_port" ] || ! [[ "$_port" =~ ^[0-9]+$ ]]; then
         red "格式错误：缺少 IP 或端口非法（${_host_port}）"; menu_pause; return
     fi
@@ -7632,7 +9963,7 @@ add_socks5_proxy() {
 
 # 删除 Socks5/HTTP 代理出站
 delete_socks5_proxy() {
-     local _out_list _del_input _tag _del_type _used_inbound _used_rule _del_confirm
+     local _out_list _del_input _tag _del_type _used_inbound _used_rule _used_final _del_confirm
      clear
      green "========= [5][5] 分流管理 → 删除 Socks5/HTTP 出站 ========="
      echo ""
@@ -7663,11 +9994,17 @@ delete_socks5_proxy() {
     _used_rule=$(jq -r --arg tag "$_tag" '
         [.route.rules[]? | select(.rule_set != null and .outbound == $tag) | .rule_set[]?] | join(", ")
     ' "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null)
-    if [ -n "$_used_inbound" ] || [ -n "$_used_rule" ]; then
+    # 全局出口（route.final）指向它时必须一并改回 direct，否则 final 悬空 → sing-box 直接拒绝启动
+    _used_final=""
+    if [ "$(jq -r '.route.final // ""' "$SINGBOX_FOLDER_PATH/sb.json" 2>/dev/null)" = "$_tag" ]; then
+        _used_final="全局出口(route.final)"
+    fi
+    if [ -n "$_used_inbound" ] || [ -n "$_used_rule" ] || [ -n "$_used_final" ]; then
         echo ""
         yellow "⚠️  该代理当前正在被以下对象使用："
         [ -n "$_used_inbound" ] && yellow "    附着协议: ${_used_inbound}"
         [ -n "$_used_rule" ] && yellow "    分流规则: ${_used_rule}"
+        [ -n "$_used_final" ] && yellow "    ${_used_final}"
         echo ""
         yellow "删除后将自动解除这些关联（相关协议/服务改走服务器原IP出站）。"
         reading "确认删除该被使用中的代理？(y/n，直接回车=否): " _del_confirm
@@ -7676,6 +10013,10 @@ delete_socks5_proxy() {
         fi
     fi
 
+    # 先把 route.final 从该出站摘掉，再删出站（顺序反了会留下悬空引用）
+    if [ -n "$_used_final" ]; then
+        jq '.route.final = "direct"' "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"
+    fi
     jq --arg tag "$_tag" 'del(.outbounds[] | select(.tag == $tag))' "$SINGBOX_FOLDER_PATH/sb.json" > "$SINGBOX_FOLDER_PATH/.sb.tmp" && sbj_save "$SINGBOX_FOLDER_PATH/.sb.tmp"
     # 同步删除引用该出站的分流规则
     jq --arg tag "$_tag" '
@@ -7807,32 +10148,6 @@ attach_socks5_proxy() {
 }
 
 # 选择一个 socks/http 出站，重新设置它附着的协议
-edit_socks5_proxy() {
-     local sbj="$SINGBOX_FOLDER_PATH/sb.json"
-     local _out_list _edit_input _tag _e_type
-     clear
-     green "========= [5][4] 分流管理 → 修改 Socks5/HTTP 出站关联的协议 ========="
-     echo ""
-     green "当前 socks/http 代理出站（可修改关联协议）:"
-    _out_list=$(jq -r '[.outbounds[]? | select(.type == "socks" or .type == "http")] | to_entries | .[] | "\(.key+1). \(.value.tag) [\(.value.type)]"' "$sbj" 2>/dev/null)
-    [ -z "$_out_list" ] && { yellow "没有可修改的 socks/http 代理出站。"; menu_pause; return; }
-    echo "$_out_list"
-    echo ""
-    reading "输入要修改的代理编号或标签: " _edit_input
-    if [[ "$_edit_input" =~ ^[0-9]+$ ]]; then
-        _tag=$(jq -r --arg idx "$_edit_input" '.outbounds | map(select(.type == "socks" or .type == "http")) | .[($idx | tonumber)-1].tag // empty' "$sbj")
-        [ -z "$_tag" ] && { red "编号无效！"; menu_pause; return; }
-    else
-        _tag="$_edit_input"
-        _e_type=$(jq -r --arg tag "$_tag" '.outbounds[]? | select(.tag == $tag) | .type' "$sbj" 2>/dev/null)
-        if [ -z "$_e_type" ]; then
-            red "标签 '$_tag' 不存在！"; menu_pause; return
-        elif [ "$_e_type" != "socks" ] && [ "$_e_type" != "http" ]; then
-            red "'$_tag' 不是 socks/http 代理出站，不可修改！"; menu_pause; return
-        fi
-    fi
-    attach_socks5_proxy "$_tag" 4
-}
 
 # 设置全局代理出站（所有流量走指定 socks/http 代理）
 set_global_outbound() {
