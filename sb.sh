@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.35(2026-11-02)"
+VERSION="3.2.36(2026-11-02)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -10250,8 +10250,12 @@ submerge_load() {
         submerge_conf_set SUBMERGE_TOKEN "$REPORT_TOKEN"
     fi
     if [ -n "${REPORT_MACHINE:-}" ]; then
-        SUBMERGE_MACHINE="$REPORT_MACHINE"
-        submerge_conf_set SUBMERGE_MACHINE "$REPORT_MACHINE"
+        # 只有非空白才落盘；空白视为「没传」，交给后面的 name 回落逻辑
+        _rm="$(printf '%s' "$REPORT_MACHINE" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+        if [ -n "$_rm" ]; then
+            SUBMERGE_MACHINE="$_rm"
+            submerge_conf_set SUBMERGE_MACHINE "$_rm"
+        fi
     fi
     if [ -n "${REPORT_SOURCE:-}" ]; then
         SUBMERGE_SOURCE="$REPORT_SOURCE"
@@ -10262,8 +10266,11 @@ submerge_load() {
         submerge_conf_set SUBMERGE_AUTO "$REPORT_FLAG"
     fi
     [ -n "$SUBMERGE_AUTO" ] || SUBMERGE_AUTO="0"
-    # 机器名默认取「全局配置里的 name」（安装时填的节点名前缀，存在 $SINGBOX_FOLDER_PATH/name，
-    # 带结尾的 -），不用再单独配一次；没填过 name 才退回主机名
+    # 机器名取值优先级：REPORT_MACHINE（界面会下发的那个）> 配置文件里的 SUBMERGE_MACHINE
+    #   > 全局配置里的 name（$SINGBOX_FOLDER_PATH/name，安装时填的节点名前缀，结尾带 -）
+    #   > 主机名 > sb-node
+    # 也就是说：只有 REPORT_MACHINE 没传或为空时，才回落到 name
+    SUBMERGE_MACHINE="$(printf '%s' "$SUBMERGE_MACHINE" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
     if [ -z "$SUBMERGE_MACHINE" ]; then
         SUBMERGE_MACHINE="$(cat "$SINGBOX_FOLDER_PATH/name" 2> /dev/null | tr -d '\r\n' | sed 's/-*$//')"
         [ -n "$SUBMERGE_MACHINE" ] || SUBMERGE_MACHINE="$(hostname 2> /dev/null | tr -cd 'A-Za-z0-9._-' 2> /dev/null)"

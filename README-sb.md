@@ -978,7 +978,7 @@ bash <(curl -Ls ...)    # 或 sb report 里手工配置
 ```
 
 - `REPORT_BASE` **没有默认值**：每个人的 sub-merge 域名都不一样，必须自己填；没填时上报会直接跳过并提示（不会偷偷发到别人的域名）
-- 机器名默认取 ④ 全局配置里的 `name`（安装时填的节点名前缀，存在 `/root/doraemon/name`），不用单独设置；没填过 `name` 才退回服务器 hostname
+- 机器名取值优先级：`REPORT_MACHINE`（界面会下发，值就是 ④ 的 `name`）> 配置文件里的 `SUBMERGE_MACHINE` > `/root/doraemon/name`（安装时填的节点名前缀）> 服务器 hostname。也就是**只有 `REPORT_MACHINE` 没传或为空时，才回落到 `name`**
 - 来源默认留空即可（服务端本来就把空来源记成 `default`），只有同一台机器要分多份数据时才需要填
 - `REPORT_FLAG` 未设置或为 `0` → 生成节点后什么都不做（默认行为）
 - `REPORT_FLAG=1` → 每次 `sb ins / rep / sub` 生成节点后自动推送一次；失败只在末尾黄字提示，不影响节点生成
@@ -1048,7 +1048,7 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 | `REPORT_FLAG` | `SUBMERGE_AUTO` | `1` 才自动上报，默认 `0` |
 | `REPORT_BASE` | `SUBMERGE_BASE` | 你自己的 sub-merge 域名（必填，无默认值） |
 | `REPORT_TOKEN` | `SUBMERGE_TOKEN` | 上报凭证（只认 `REPORT_TOKEN`，主 token 会 401） |
-| `REPORT_MACHINE` | `SUBMERGE_MACHINE` | 机器名，可不填（默认取 ④ 全局配置的 `name`） |
+| `REPORT_MACHINE` | `SUBMERGE_MACHINE` | 机器名；界面会把 ④ 的 `name` 作为它下发。不传/为空才回落到 `name`，再退到 hostname |
 | `REPORT_SOURCE` | `SUBMERGE_SOURCE` | 来源名，默认 `default` |
 
 优先级：环境变量 > 配置文件。`REPORT_FLAG` 存在时以它为准（子菜单里会提醒你在覆盖配置）。
@@ -1060,6 +1060,14 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 - **失败提示**：401 凭证错、400 机器名/内容不合规、413 超过 512KB、连不上域名，都会给对应的中文提示
 
 ## 2.7 版本变更信息
+
+v3.2.36 (2026-11-02)
+ > 机器名统一由 `REPORT_MACHINE` 下发，脚本只在它为空时才取 `name`。
+
+ - **取值链**：`REPORT_MACHINE`（环境变量） > `SUBMERGE_MACHINE`（`submerge.conf`） > `$SINGBOX_FOLDER_PATH/name` > `hostname` > `sb-node`
+ - **空白容错**：`REPORT_MACHINE="   "` 以前会被当成「有值」写进 conf（机器名却回落成 name，两边不一致），现在先 trim，只有非空白才落盘；`REPORT_MACHINE=`（空串）同理
+ - **界面配套**：`singbox-tools-interface` 的第 ⑧ 张卡片会把机器名（跟随 ④ 的 `name`）作为 `REPORT_MACHINE=…` 一起下发，两边值永远一致
+ - 实测：不传 → `小叮当-淡-美国北卡莱罗纳`；`REPORT_MACHINE=HK-2` → `HK-2` 且写入 conf；空白 → 回落 `name` 且不写 conf；name 也没有 → `hostname`
 
 v3.2.35 (2026-11-02)
  > 上报子菜单从 7 项砍到 4 项，头部压到三行。
