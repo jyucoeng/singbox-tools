@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.37(2026-11-02)"
+VERSION="3.2.38(2026-11-02)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -10352,8 +10352,8 @@ submerge_conf_set() {
 }
 
 # 文件 → 单行 base64（openssl 优先，busybox/GNU base64 兜底）
-# 可排除上报的协议（与脚本生成的链接 scheme 一一对应）
-SUBMERGE_PROTOCOLS="vless vmess trojan hysteria2 tuic anytls"
+# 可排除上报的协议：前 5 个是 scheme（粗粒度），后面是按脚本节点形态细分的类型
+SUBMERGE_PROTOCOLS="vless vmess trojan hysteria2 tuic anytls socks5 vless-reality vless-argo vless-cdn vmess-argo vmess-cdn trojan-argo trojan-cdn"
 
 # 规范化排除列表：小写、去空格、只留已知协议、去重，英文逗号拼接
 submerge_exclude_list() {
@@ -10380,9 +10380,51 @@ submerge_exclude_list_show() {
     fi
 }
 
+# 判断一条节点链接属于哪种形态（与 sb00.sh 生成时的命名/参数一致）
+# 直连：vless-reality / hysteria2 / tuic / anytls / socks5
+# Argo：vless-argo / vmess-argo / trojan-argo（path 里带 <uuid>-vl|-vm|-tr）
+# CDN 回源：vless-cdn / vmess-cdn / trojan-cdn（path 里带 -vl-cdn|-vm-cdn|-tr-cdn）
+submerge_kind_of() {
+    local _l="$1" _scheme _json _path
+    _scheme="$(printf '%s' "$_l" | sed -n 's#^\([A-Za-z0-9]*\)://.*#\1#p' | tr 'A-Z' 'a-z')"
+    case "$_scheme" in
+        hysteria2 | hy2) printf '%s' "hysteria2"; return 0 ;;
+        tuic | anytls | socks5) printf '%s' "$_scheme"; return 0 ;;
+        vless | vmess | trojan) ;;
+        *) printf '%s' "$_scheme"; return 0 ;;
+    esac
+    if [ "$_scheme" = "vmess" ]; then
+        # vmess 是 base64 JSON，path 只能解出来看
+        _json="$(printf '%s' "$_l" | sed 's#^vmess://##' | tr -d ' \r\n' | base64 -d 2> /dev/null || true)"
+        case "$_json" in
+            *-vm-cdn*) printf '%s' "vmess-cdn"; return 0 ;;
+            *-vm*) printf '%s' "vmess-argo"; return 0 ;;
+        esac
+        printf '%s' "vmess"; return 0
+    fi
+    case "$_l" in
+        *security=reality*) printf '%s' "vless-reality"; return 0 ;;
+        *-vl-cdn* | *-tr-cdn*) printf '%s' "$_scheme-cdn"; return 0 ;;
+        *-vl*) printf '%s' "vless-argo"; return 0 ;;
+        *-tr*) printf '%s' "trojan-argo"; return 0 ;;
+    esac
+    printf '%s' "$_scheme"
+}
+
+# 命中排除列表？支持前缀：填 vless 等于 vless-reality / vless-argo / vless-cdn 全排除
+submerge_kind_excluded() {
+    local _k="$1" _t
+    for _t in $(printf '%s' "$2" | tr ',' ' '); do
+        [ -n "$_t" ] || continue
+        [ "$_k" = "$_t" ] && return 0
+        case "$_k" in "$_t"-*) return 0 ;; esac
+    done
+    return 1
+}
+
 # 按排除列表过滤节点文件 → stdout（空行自动丢掉，方便客户端解析）
 submerge_filter_nodes() {
-    local _f="$1" _ex="$2" _line _scheme
+    local _f="$1" _ex="$2" _line _kind
     [ -s "$_f" ] || return 1
     if [ -z "$_ex" ]; then
         cat "$_f"
@@ -10390,8 +10432,8 @@ submerge_filter_nodes() {
     fi
     while IFS= read -r _line; do
         [ -n "$_line" ] || continue
-        _scheme="$(printf '%s' "$_line" | sed -n 's#^\([A-Za-z0-9]*\)://.*#\1#p' | tr 'A-Z' 'a-z')"
-        case ",$_ex," in *",$_scheme,"*) continue ;; esac
+        _kind="$(submerge_kind_of "$_line")"
+        submerge_kind_excluded "$_kind" "$_ex" && continue
         printf '%s\n' "$_line"
     done < "$_f"
 }

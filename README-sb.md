@@ -1049,7 +1049,7 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 | `REPORT_BASE` | `SUBMERGE_BASE` | 你自己的 sub-merge 域名（必填，无默认值） |
 | `REPORT_TOKEN` | `SUBMERGE_TOKEN` | 上报凭证（只认 `REPORT_TOKEN`，主 token 会 401） |
 | `REPORT_MACHINE` | `SUBMERGE_MACHINE` | 机器名；界面会把 ④ 的 `name` 作为它下发。不传/为空才回落到 `name`，再退到 hostname |
-| `REPORT_EXCLUDE` | `SUBMERGE_EXCLUDE` | 不上报的协议，英文逗号分隔（`vless,vmess,trojan,hysteria2,tuic,anytls`），空=全部上报 |
+| `REPORT_EXCLUDE` | `SUBMERGE_EXCLUDE` | 不上报的协议，英文逗号分隔；可选 `hysteria2 tuic anytls socks5 vless-reality vless-argo vmess-argo trojan-argo vless-cdn vmess-cdn trojan-cdn`（也接受 `vless`/`trojan` 这类前缀，等于把该协议所有形态一起排掉），空=全部上报 |
 | `REPORT_SOURCE` | `SUBMERGE_SOURCE` | 来源名，默认 `default` |
 
 优先级：环境变量 > 配置文件。`REPORT_FLAG` 存在时以它为准（子菜单里会提醒你在覆盖配置）。
@@ -1061,6 +1061,15 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 - **失败提示**：401 凭证错、400 机器名/内容不合规、413 超过 512KB、连不上域名，都会给对应的中文提示
 
 ## 2.7 版本变更信息
+
+v3.2.38 (2026-11-02)
+ > 排除项按 sb00.sh 实际的节点形态细分，而不是只看 scheme。
+
+ - **细分依据**（对照脚本生成逻辑）：直连 `hysteria2 / tuic / vless-reality（security=reality）/ anytls / socks5`；Argo `vless-argo / vmess-argo / trojan-argo`（path 为 `<uuid>-vl|-vm|-tr`）；CDN 回源 `vless-cdn / vmess-cdn / trojan-cdn`（path 为 `-vl-cdn|-vm-cdn|-tr-cdn`）
+ - **`submerge_kind_of()`**：vless/trojan 看 `security=reality` 与 path 标记；vmess 的 path 在 base64 JSON 里，先 `base64 -d` 再匹配；其它 scheme 直接返回自身
+ - **前缀匹配**：`submerge_kind_excluded()` 除精确相等外还认前缀，`vless` → 三种 vless 全排；`vmess-cdn` 只排 vmess 的 CDN 形态
+ - **白名单**同步扩到 14 个 token，`ss`/`foo` 之类未知值仍静默丢弃
+ - **界面**：`singbox-tools-interface` 的勾选框改成 11 个，按「直连 / Argo / CDN 回源」分组
 
 v3.2.37 (2026-11-02)
  > 支持「不上报的协议」：勾上的协议不参与上报。
