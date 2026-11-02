@@ -1,6 +1,6 @@
 #  singbox一键安装脚本、socks5一键脚本、mtp一键脚本
 
-> 在线体验：https://singbox.example.com/
+> 命令生成界面：见 [singbox-tools-interface](https://github.com/jyucoeng/singbox-tools-interface)，部署后用自己的域名访问
 
 ## 请点击跳转对应的readme
 
