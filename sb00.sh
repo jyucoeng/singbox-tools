@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.29(2026-11-02)"
+VERSION="3.2.30(2026-11-02)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -6012,6 +6012,9 @@ regenerate_links_and_sub() {
 
     # jh.txt 内含全部节点口令，收紧权限
     chmod 600 "$SINGBOX_FOLDER_PATH/jh.txt" 2>/dev/null || true
+
+    # 自动上报（默认关闭）：只有 REPORT_FLAG=1 才把节点推到 sub-merge
+    submerge_auto_report || true
 }
 
 # SNI/端口等配置修改后统一调用：先刷新订阅，最后重启 sing-box 使新配置生效
@@ -10222,21 +10225,93 @@ restore_direct_outbound() {
 SUBMERGE_DEFAULT_BASE="https://sub.dingdang.de5.net"
 SUBMERGE_CONF="$SINGBOX_FOLDER_PATH/submerge.conf"
 
-# 读取上报配置（地址 / 凭证 / 机器名 / 来源），缺省给默认值
+# 读取上报配置（地址 / 凭证 / 机器名 / 来源 / 自动开关），缺省给默认值
+# 环境变量优先并自动落盘：REPORT_BASE / REPORT_TOKEN / REPORT_MACHINE / REPORT_SOURCE / REPORT_FLAG
 submerge_load() {
     SUBMERGE_BASE=""
     SUBMERGE_TOKEN=""
     SUBMERGE_MACHINE=""
     SUBMERGE_SOURCE=""
+    SUBMERGE_AUTO=""
     if [ -s "$SUBMERGE_CONF" ]; then
         . "$SUBMERGE_CONF" 2> /dev/null || true
     fi
+    # 环境变量给了值就覆盖并持久化（下次不带环境变量也还在）
+    if [ -n "${REPORT_BASE:-}" ]; then
+        SUBMERGE_BASE="$REPORT_BASE"
+        submerge_conf_set SUBMERGE_BASE "$REPORT_BASE"
+    fi
+    if [ -n "${REPORT_TOKEN:-}" ]; then
+        SUBMERGE_TOKEN="$REPORT_TOKEN"
+        submerge_conf_set SUBMERGE_TOKEN "$REPORT_TOKEN"
+    fi
+    if [ -n "${REPORT_MACHINE:-}" ]; then
+        SUBMERGE_MACHINE="$REPORT_MACHINE"
+        submerge_conf_set SUBMERGE_MACHINE "$REPORT_MACHINE"
+    fi
+    if [ -n "${REPORT_SOURCE:-}" ]; then
+        SUBMERGE_SOURCE="$REPORT_SOURCE"
+        submerge_conf_set SUBMERGE_SOURCE "$REPORT_SOURCE"
+    fi
+    if [ -n "${REPORT_FLAG:-}" ]; then
+        SUBMERGE_AUTO="$REPORT_FLAG"
+        submerge_conf_set SUBMERGE_AUTO "$REPORT_FLAG"
+    fi
     [ -n "$SUBMERGE_BASE" ] || SUBMERGE_BASE="$SUBMERGE_DEFAULT_BASE"
     [ -n "$SUBMERGE_SOURCE" ] || SUBMERGE_SOURCE="default"
+    [ -n "$SUBMERGE_AUTO" ] || SUBMERGE_AUTO="0"
     if [ -z "$SUBMERGE_MACHINE" ]; then
         SUBMERGE_MACHINE="$(hostname 2> /dev/null | tr -cd 'A-Za-z0-9._-' 2> /dev/null)"
         [ -n "$SUBMERGE_MACHINE" ] || SUBMERGE_MACHINE="sb-node"
     fi
+    # 配过凭证就把「地址 + 自动开关」也固化下来，下次不用再带环境变量
+    if [ -n "$SUBMERGE_TOKEN" ]; then
+        grep -q '^SUBMERGE_BASE=' "$SUBMERGE_CONF" 2> /dev/null || submerge_conf_set SUBMERGE_BASE "$SUBMERGE_BASE"
+        grep -q '^SUBMERGE_AUTO=' "$SUBMERGE_CONF" 2> /dev/null || submerge_conf_set SUBMERGE_AUTO "$SUBMERGE_AUTO"
+    fi
+}
+
+# 自动上报开关：环境变量 REPORT_FLAG 优先，其次配置文件里的 SUBMERGE_AUTO
+# 默认 0 = 不上报；只有 1/true/yes/on 才算开启
+submerge_auto_flag() {
+    if [ -n "${REPORT_FLAG:-}" ]; then
+        printf '%s' "$REPORT_FLAG"
+    elif [ -n "${SUBMERGE_AUTO:-}" ]; then
+        printf '%s' "$SUBMERGE_AUTO"
+    elif [ -s "$SUBMERGE_CONF" ]; then
+        sed -n 's/^SUBMERGE_AUTO=//p' "$SUBMERGE_CONF" 2> /dev/null | tail -n1 | tr -d '\r'
+    else
+        printf '0'
+    fi
+}
+
+submerge_auto_enabled() {
+    local _f
+    _f="$(submerge_auto_flag)"
+    [ -n "$_f" ] || return 1
+    is_true "$_f"
+}
+
+# 生成节点后自动上报（REPORT_FLAG=1 才动作；失败只提示，绝不影响节点生成）
+submerge_auto_report() {
+    submerge_auto_enabled || return 0
+    submerge_load
+    if [ -z "$SUBMERGE_TOKEN" ]; then
+        yellow "⚠️ 已开启自动上报（REPORT_FLAG=1），但还没配置上报凭证，本次跳过"
+        yellow "   配置：sb report → 2) 修改上报配置，或 REPORT_TOKEN=<凭证> 跑一次"
+        return 0
+    fi
+    local _out _rc
+    _out="$(submerge_report 2>&1)"
+    _rc=$?
+    if [ "$_rc" -eq 0 ]; then
+        green "📤 已自动上报到 sub-merge（自动上报已开启）"
+        printf '%s\n' "$_out" | grep -E '上报成功|内容与' | sed 's/^[[:space:]]*/   /'
+    else
+        yellow "⚠️ 自动上报失败（REPORT_FLAG=1），节点已正常生成："
+        printf '%s\n' "$_out" | tail -n 4 | sed 's/^/   /'
+    fi
+    return 0
 }
 
 # 写一条配置（不覆盖其它键）
@@ -10405,6 +10480,11 @@ submerge_conf_show() {
     green "  上报凭证：${_mask}"
     green "  机器名　：${SUBMERGE_MACHINE}"
     green "  来源　　：${SUBMERGE_SOURCE}"
+    if submerge_auto_enabled; then
+        green "  自动上报：已开启（$(submerge_auto_flag)）"
+    else
+        yellow "  自动上报：已关闭（默认，只有 REPORT_FLAG=1 才自动上报）"
+    fi
     purple "  配置文件：$SUBMERGE_CONF"
 }
 
@@ -10436,6 +10516,11 @@ interactive_submerge_menu() {
         if [ -n "$SUBMERGE_TOKEN" ]; then
             green "  服务端：${SUBMERGE_BASE%/}"
             green "  机器名：${SUBMERGE_MACHINE}    来源：${SUBMERGE_SOURCE}    凭证：已配置"
+            if submerge_auto_enabled; then
+                green "  自动上报：已开启（生成节点后自动推送）"
+            else
+                purple "  自动上报：已关闭（默认）"
+            fi
         else
             red "  尚未配置上报凭证（先选 2 填 REPORT_TOKEN）"
         fi
@@ -10449,7 +10534,8 @@ interactive_submerge_menu() {
         purple "  2) 修改上报配置（地址 / 凭证 / 机器名 / 来源）"
         purple "  3) 查看上报配置"
         purple "  4) 上传前预览（节点条数 / base64 长度 / 目标地址）"
-        purple "  5) 清除上报配置"
+        purple "  5) 切换自动上报开关（当前：$(submerge_auto_enabled && echo 开 || echo 关)）"
+        purple "  6) 清除上报配置"
         purple "  0) 返回主菜单"
         echo ""
         reading "  请输入选项: " _ch
@@ -10460,6 +10546,16 @@ interactive_submerge_menu() {
             3) submerge_conf_show; menu_pause ;;
             4) submerge_preview; menu_pause ;;
             5)
+                if submerge_auto_enabled; then
+                    submerge_conf_set SUBMERGE_AUTO 0
+                    green "✅ 已关闭自动上报（生成节点后不再自动推送）"
+                else
+                    submerge_conf_set SUBMERGE_AUTO 1
+                    green "✅ 已开启自动上报（以后每次生成节点都会推到 ${SUBMERGE_BASE%/}）"
+                    [ -n "${REPORT_FLAG:-}" ] && yellow "   注意：当前 shell 里 REPORT_FLAG=$REPORT_FLAG，它会覆盖配置文件"
+                fi
+                menu_pause ;;
+            6)
                 rm -f "$SUBMERGE_CONF" 2> /dev/null
                 green "✅ 已清除 $SUBMERGE_CONF"
                 menu_pause ;;

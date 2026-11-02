@@ -957,19 +957,37 @@ sb log_stop        查看服务停止原因日志（排查崩溃用）
 
 把本机 `jh.txt` 里的全部节点链接上报到自己的订阅聚合服务（sub-merge），服务端存成这台机器的「自动上报」层，立刻进入合并订阅；本机的手动层不受影响。
 
+**默认不上报**。两种用法：
+
 ```
-sb report           # 直接上报（配置已存在时一条命令搞定）
-sb                  # 主菜单 → [13] 上报到 sub-merge（子菜单里能配置/预览/上报）
+sb report           # 手动上报一次（配置已存在时一条命令搞定）
+sb                  # 主菜单 → [13] 上报到 sub-merge（配置/预览/上报/自动开关）
 ```
+
+自动上报由 `REPORT_FLAG` 控制，只有等于 `1` 才在每次生成节点后推送：
+
+```bash
+# 装完顺手带上三件套，一次配好（值会落盘，下次不用再带）
+REPORT_FLAG=1 \
+REPORT_BASE=https://sub.dingdang.de5.net \
+REPORT_TOKEN=<上报凭证> \
+REPORT_MACHINE=hk-1 \
+bash <(curl -Ls ...)    # 或 sb report 里手工配置
+```
+
+- `REPORT_FLAG` 未设置或为 `0` → 生成节点后什么都不做（默认行为）
+- `REPORT_FLAG=1` → 每次 `sb ins / rep / sub` 生成节点后自动推送一次；失败只在末尾黄字提示，不影响节点生成
+- 也可以不设环境变量，进 `sb report` 子菜单选 `5) 切换自动上报开关`，开关写在配置文件里
 
 子菜单：
 
 ```
 1) 立即上报当前节点
 2) 修改上报配置（地址 / 凭证 / 机器名 / 来源）
-3) 查看上报配置（凭证打码）
+3) 查看上报配置（凭证打码 + 自动上报开关状态）
 4) 上传前预览（节点条数 / base64 长度 / 目标地址）
-5) 清除上报配置
+5) 切换自动上报开关（开 / 关，写进配置文件）
+6) 清除上报配置
 ```
 
 配置落盘在 `/root/doraemon/submerge.conf`（权限 600，含上报凭证，别外传）：
@@ -979,7 +997,20 @@ SUBMERGE_BASE=https://sub.dingdang.de5.net
 SUBMERGE_TOKEN=<上报凭证 REPORT_TOKEN>
 SUBMERGE_MACHINE=hk-1            # 机器名：首字符字母/数字（可中文），可含空格 _ . -，≤64 字符
 SUBMERGE_SOURCE=default          # 来源名，同一台机器可多来源并存
+SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 ```
+
+环境变量与会自动落盘的对应关系（给过值就写进上面这个文件，之后不带环境变量也生效）：
+
+| 环境变量 | 落盘键 | 说明 |
+| --- | --- | --- |
+| `REPORT_FLAG` | `SUBMERGE_AUTO` | `1` 才自动上报，默认 `0` |
+| `REPORT_BASE` | `SUBMERGE_BASE` | 服务端地址，默认 `https://sub.dingdang.de5.net` |
+| `REPORT_TOKEN` | `SUBMERGE_TOKEN` | 上报凭证（只认 `REPORT_TOKEN`，主 token 会 401） |
+| `REPORT_MACHINE` | `SUBMERGE_MACHINE` | 机器名 |
+| `REPORT_SOURCE` | `SUBMERGE_SOURCE` | 来源名，默认 `default` |
+
+优先级：环境变量 > 配置文件。`REPORT_FLAG` 存在时以它为准（子菜单里会提醒你在覆盖配置）。
 
 - **凭证**：只认 sub-merge 的 `REPORT_TOKEN`，主订阅 token 上报会被 401 拒绝（订阅链接泄露也写不了数据）
 - **内容**：脚本自动把 `jh.txt` 整段 base64 后 POST，不用手工编码；`jh.txt` 不存在时会先按当前配置重新生成
@@ -988,6 +1019,16 @@ SUBMERGE_SOURCE=default          # 来源名，同一台机器可多来源并存
 - **失败提示**：401 凭证错、400 机器名/内容不合规、413 超过 512KB、连不上域名，都会给对应的中文提示
 
 ## 2.7 版本变更信息
+
+v3.2.30 (2026-11-02)
+ > 上报默认关闭：只有 `REPORT_FLAG=1` 才自动上报；地址与凭证落盘到 `submerge.conf`。
+
+ - **背景**：上一版把「上报」做成了手动命令，但用户希望「装完就自动推、默认又别偷偷往外发数据」
+ - **改动**：新增 `submerge_auto_flag()` / `submerge_auto_enabled()` / `submerge_auto_report()`，挂在 `regenerate_links_and_sub()` 末尾（`sb ins` / `sb rep` / `sb sub` / 配置修改后都会经过这里）；默认 `REPORT_FLAG` 未设置或 `0` 时完全静默，`1` 才推送
+ - **持久化**：`submerge_load()` 支持环境变量 `REPORT_BASE` / `REPORT_TOKEN` / `REPORT_MACHINE` / `REPORT_SOURCE` / `REPORT_FLAG`，给过值就写进 `/root/doraemon/submerge.conf`（600），下次不带环境变量也在；配过凭证后连默认地址和自动开关也一起固化
+ - **交互**：子菜单新增 `5) 切换自动上报开关`（写 `SUBMERGE_AUTO`），`3) 查看配置` 会显示「自动上报：已开启/已关闭」；`REPORT_FLAG` 存在时切换会提醒环境变量优先
+ - **失败不影响安装**：自动上报失败只输出几行黄色提示，节点生成/订阅刷新照常完成
+ - **实测**：无 `REPORT_FLAG` 静默、`REPORT_FLAG=0` 不上报、`REPORT_FLAG=1` 自动推送成功并落盘 `SUBMERGE_BASE/TOKEN/MACHINE/SOURCE/AUTO` 五项；清掉环境变量后仅凭 conf 仍判定为开启
 
 v3.2.29 (2026-11-02)
  > 新增「上报节点到 sub-merge」：`sb report` 一条命令把本机全部节点推到自己的订阅聚合服务。
