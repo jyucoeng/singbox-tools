@@ -1,6 +1,6 @@
 #  singbox一键安装脚本、socks5一键脚本、mtp一键脚本
 
-> 在线体验：https://singbox.dingdang.de5.net/
+> 在线体验：https://singbox.example.com/
 
 ## 请点击跳转对应的readme
 
