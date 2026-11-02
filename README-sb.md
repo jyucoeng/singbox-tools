@@ -972,12 +972,14 @@ sb                  # 主菜单 → [13] 上报到 sub-merge（配置/预览/上
 ```bash
 # 装完顺手带上三件套，一次配好（值会落盘，下次不用再带）
 REPORT_FLAG=1 \
-REPORT_BASE=https://sub.dingdang.de5.net \
+REPORT_BASE=https://你的-sub-merge-域名 \
 REPORT_TOKEN=<上报凭证> \
-REPORT_MACHINE=hk-1 \
 bash <(curl -Ls ...)    # 或 sb report 里手工配置
 ```
 
+- `REPORT_BASE` **没有默认值**：每个人的 sub-merge 域名都不一样，必须自己填；没填时上报会直接跳过并提示（不会偷偷发到别人的域名）
+- 机器名默认取 ④ 全局配置里的 `name`（安装时填的节点名前缀，存在 `/root/doraemon/name`），不用单独设置；没填过 `name` 才退回服务器 hostname
+- 来源默认留空即可（服务端本来就把空来源记成 `default`），只有同一台机器要分多份数据时才需要填
 - `REPORT_FLAG` 未设置或为 `0` → 生成节点后什么都不做（默认行为）
 - `REPORT_FLAG=1` → 每次 `sb ins / rep / sub` 生成节点后自动推送一次；失败只在末尾黄字提示，不影响节点生成
 - 也可以不设环境变量，进 `sb report` 子菜单选 `6) 切换自动上报开关`，开关写在配置文件里
@@ -1009,14 +1011,14 @@ sb report status     # 或 sb rstatus，或主菜单 [13] → 1)
 ========= 上报状态 =========
   自动上报：已开启（1）
     开关来源：/root/doraemon/submerge.conf 里的 SUBMERGE_AUTO
-  上报地址：https://sub.dingdang.de5.net/api/v1/report/hk-1?source=airportA
+  上报地址：https://sub.你的域名/api/v1/report/小叮当-淡-美国北卡莱罗纳
   上报凭证：6a4a25****44ad
   机器名　：hk-1    来源：airportA
 
   最近一次：2026-11-02 18:53:55  成功 (HTTP 200)
     结果：内容已更新，节点 6 条（自动 6 + 手动 0）
     节点：6 条
-    目标：https://sub.dingdang.de5.net/api/v1/report/hk-1?source=airportA
+    目标：https://sub.你的域名/api/v1/report/小叮当-淡-美国北卡莱罗纳
   最近成功：2026-11-02 18:53:55
   状态文件：/root/doraemon/submerge.state
   配置文件：/root/doraemon/submerge.conf
@@ -1032,10 +1034,10 @@ sb report status     # 或 sb rstatus，或主菜单 [13] → 1)
 配置落盘在 `/root/doraemon/submerge.conf`（权限 600，含上报凭证，别外传）：
 
 ```
-SUBMERGE_BASE=https://sub.dingdang.de5.net
-SUBMERGE_TOKEN=<上报凭证 REPORT_TOKEN>
-SUBMERGE_MACHINE=hk-1            # 机器名：首字符字母/数字（可中文），可含空格 _ . -，≤64 字符
-SUBMERGE_SOURCE=default          # 来源名，同一台机器可多来源并存
+SUBMERGE_BASE=https://你的-sub-merge-域名   # 必填，没有默认值
+SUBMERGE_TOKEN=<上报凭证 REPORT_TOKEN>      # 必填，只认 REPORT_TOKEN
+SUBMERGE_MACHINE=小叮当-淡-美国北卡莱罗纳    # 可不填：默认取全局配置里的 name
+SUBMERGE_SOURCE=                            # 可不填：留空即 default，多来源时才填
 SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 ```
 
@@ -1044,9 +1046,9 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 | 环境变量 | 落盘键 | 说明 |
 | --- | --- | --- |
 | `REPORT_FLAG` | `SUBMERGE_AUTO` | `1` 才自动上报，默认 `0` |
-| `REPORT_BASE` | `SUBMERGE_BASE` | 服务端地址，默认 `https://sub.dingdang.de5.net` |
+| `REPORT_BASE` | `SUBMERGE_BASE` | 你自己的 sub-merge 域名（必填，无默认值） |
 | `REPORT_TOKEN` | `SUBMERGE_TOKEN` | 上报凭证（只认 `REPORT_TOKEN`，主 token 会 401） |
-| `REPORT_MACHINE` | `SUBMERGE_MACHINE` | 机器名 |
+| `REPORT_MACHINE` | `SUBMERGE_MACHINE` | 机器名，可不填（默认取 ④ 全局配置的 `name`） |
 | `REPORT_SOURCE` | `SUBMERGE_SOURCE` | 来源名，默认 `default` |
 
 优先级：环境变量 > 配置文件。`REPORT_FLAG` 存在时以它为准（子菜单里会提醒你在覆盖配置）。
@@ -1058,6 +1060,13 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 - **失败提示**：401 凭证错、400 机器名/内容不合规、413 超过 512KB、连不上域名，都会给对应的中文提示
 
 ## 2.7 版本变更信息
+
+v3.2.32 (2026-11-02)
+ > 上报地址不再内置默认域名；机器名自动取全局配置的 name；来源默认留空。
+
+ - **背景**：上一版内置了一个固定的示例域名当默认值，谁装都往那个域名推；机器名还得单独填一次，其实 ④ 全局配置里的 `name` 就是节点名前缀，本来就该当机器名；来源绝大多数人用不到
+ - **改法**：`SUBMERGE_DEFAULT_BASE=""`，`submerge_report()` 与 `submerge_auto_report()` 在地址为空时直接给中文提示并跳过（同时记一条失败状态 `未配置上报地址`）；`submerge_load()` 里机器名默认读 `/root/doraemon/name`（去掉结尾 `-`），没填过才退回 hostname；`SUBMERGE_SOURCE` 不再兜底成 `default`，空值时不拼 `?source=`
+ - **界面**：`singbox-tools-interface` 删除「机器名」「来源」两个输入框（改为只读说明：机器名取 ④ 的 name、来源默认空），只留开关 / 上报地址 / 上报凭证；地址 placeholder 改成「你自己的 sub-merge 域名（必填）」；开关打开但地址或凭证为空时两个输入框同时标红提示
 
 v3.2.31 (2026-11-02)
  > 上报结果落盘 + 状态查询：开关、最近一次时间与结果、目标路径与凭证，菜单和命令行都能查。

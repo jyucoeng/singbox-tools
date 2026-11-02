@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.31(2026-11-02)"
+VERSION="3.2.32(2026-11-02)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -10224,7 +10224,8 @@ restore_direct_outbound() {
 # ================== 上报到 sub-merge ==================
 # 把本机 jh.txt（全部节点链接）整段 base64 后 POST 到 sub-merge，
 # 服务端存成这台机器的「自动上报」层，立刻进合并订阅；本机手动层不受影响。
-SUBMERGE_DEFAULT_BASE="https://sub.dingdang.de5.net"
+# 上报地址没有默认值：每个人的 sub-merge 域名不同，必须由使用方自己填
+SUBMERGE_DEFAULT_BASE=""
 SUBMERGE_CONF="$SINGBOX_FOLDER_PATH/submerge.conf"
 SUBMERGE_STATE="$SINGBOX_FOLDER_PATH/submerge.state"
 
@@ -10260,13 +10261,15 @@ submerge_load() {
         SUBMERGE_AUTO="$REPORT_FLAG"
         submerge_conf_set SUBMERGE_AUTO "$REPORT_FLAG"
     fi
-    [ -n "$SUBMERGE_BASE" ] || SUBMERGE_BASE="$SUBMERGE_DEFAULT_BASE"
-    [ -n "$SUBMERGE_SOURCE" ] || SUBMERGE_SOURCE="default"
     [ -n "$SUBMERGE_AUTO" ] || SUBMERGE_AUTO="0"
+    # 机器名默认取「全局配置里的 name」（安装时填的节点名前缀，存在 $SINGBOX_FOLDER_PATH/name，
+    # 带结尾的 -），不用再单独配一次；没填过 name 才退回主机名
     if [ -z "$SUBMERGE_MACHINE" ]; then
-        SUBMERGE_MACHINE="$(hostname 2> /dev/null | tr -cd 'A-Za-z0-9._-' 2> /dev/null)"
+        SUBMERGE_MACHINE="$(cat "$SINGBOX_FOLDER_PATH/name" 2> /dev/null | tr -d '\r\n' | sed 's/-*$//')"
+        [ -n "$SUBMERGE_MACHINE" ] || SUBMERGE_MACHINE="$(hostname 2> /dev/null | tr -cd 'A-Za-z0-9._-' 2> /dev/null)"
         [ -n "$SUBMERGE_MACHINE" ] || SUBMERGE_MACHINE="sb-node"
     fi
+    # 来源留空即只上 default 一个来源，URL 不带 ?source=（服务端本来就按 default 存）
     # 配过凭证就把「地址 + 自动开关」也固化下来，下次不用再带环境变量
     if [ -n "$SUBMERGE_TOKEN" ]; then
         grep -q '^SUBMERGE_BASE=' "$SUBMERGE_CONF" 2> /dev/null || submerge_conf_set SUBMERGE_BASE "$SUBMERGE_BASE"
@@ -10299,9 +10302,14 @@ submerge_auto_enabled() {
 submerge_auto_report() {
     submerge_auto_enabled || return 0
     submerge_load
+    if [ -z "$SUBMERGE_BASE" ]; then
+        yellow "⚠️ 已开启自动上报，但还没配置上报地址（每个人的 sub-merge 域名不同），本次跳过"
+        yellow "   配置：sb report → 3) 修改上报配置，或 REPORT_BASE=<你的域名> 跑一次"
+        return 0
+    fi
     if [ -z "$SUBMERGE_TOKEN" ]; then
         yellow "⚠️ 已开启自动上报（REPORT_FLAG=1），但还没配置上报凭证，本次跳过"
-        yellow "   配置：sb report → 2) 修改上报配置，或 REPORT_TOKEN=<凭证> 跑一次"
+        yellow "   配置：sb report → 3) 修改上报配置，或 REPORT_TOKEN=<凭证> 跑一次"
         return 0
     fi
     local _out _rc
@@ -10360,6 +10368,7 @@ submerge_urlencode() {
 submerge_target_url() {
     local _u _b
     _b="${SUBMERGE_BASE:-$SUBMERGE_DEFAULT_BASE}"
+    [ -n "$_b" ] || { printf '%s' "（未配置上报地址）"; return 0; }
     _b="${_b%/}"
     _u="${_b}/api/v1/report/$(submerge_urlencode "${SUBMERGE_MACHINE:-}")"
     if [ -n "${SUBMERGE_SOURCE:-}" ] && [ "$SUBMERGE_SOURCE" != "default" ]; then
@@ -10413,11 +10422,20 @@ submerge_report() {
     _mach="$SUBMERGE_MACHINE"
     _src="$SUBMERGE_SOURCE"
 
+    if [ -z "$_base" ]; then
+        red "❌ 还没有配置上报地址（每个人的 sub-merge 域名不同，需要你填自己的）"
+        yellow "   填法：sb report 菜单选 3 填写上报地址，或写进 $SUBMERGE_CONF"
+        echo "   SUBMERGE_BASE=https://你的-sub-merge-域名"
+        echo "   SUBMERGE_TOKEN=<上报凭证 REPORT_TOKEN>"
+        submerge_record fail "" "未配置上报地址"
+        return 1
+    fi
+
     if [ -z "$_tok" ]; then
         red "❌ 还没有配置上报凭证"
         submerge_record fail "" "未配置上报凭证"
-        yellow "   先执行：sb report 进入菜单，或直接把下面几行写进 $SUBMERGE_CONF"
-        echo "   SUBMERGE_BASE=https://sub.dingdang.de5.net"
+        yellow "   填法：sb report 菜单选 3 填写上报凭证，或写进 $SUBMERGE_CONF"
+        echo "   SUBMERGE_BASE=${_base}"
         echo "   SUBMERGE_TOKEN=<上报凭证 REPORT_TOKEN>"
         echo "   SUBMERGE_MACHINE=<机器名，如 hk-1>"
         echo "   SUBMERGE_SOURCE=default"
@@ -10528,7 +10546,11 @@ submerge_conf_show() {
     else
         _mask="（未配置）"
     fi
-    green "  上报地址：${SUBMERGE_BASE%/}"
+    if [ -n "$SUBMERGE_BASE" ]; then
+        green "  上报地址：${SUBMERGE_BASE%/}"
+    else
+        yellow "  上报地址：（未配置——每个人的 sub-merge 域名不同，需要你填自己的）"
+    fi
     green "  上报凭证：${_mask}"
     green "  机器名　：${SUBMERGE_MACHINE}"
     green "  来源　　：${SUBMERGE_SOURCE}"
@@ -10546,12 +10568,14 @@ submerge_configure() {
     local _in
     echo ""
     yellow "  直接回车表示保持当前值"
-    reading "  上报地址 [${SUBMERGE_BASE}]: " _in
+    reading "  上报地址（你的 sub-merge 域名，如 https://sub.你的域名） [${SUBMERGE_BASE:-未配置}]: " _in
     [ -n "$_in" ] && submerge_conf_set SUBMERGE_BASE "$_in"
     reading "  上报凭证 [${SUBMERGE_TOKEN:+已配置}]: " _in
     [ -n "$_in" ] && submerge_conf_set SUBMERGE_TOKEN "$_in"
+    yellow "  机器名默认取全局配置里的 name（当前：${SUBMERGE_MACHINE}），一般不用改"
     reading "  机器名 [${SUBMERGE_MACHINE}]: " _in
     [ -n "$_in" ] && submerge_conf_set SUBMERGE_MACHINE "$_in"
+    yellow "  来源留空即可（同一台机器要分多份数据时才填，比如 hk2）"
     reading "  来源 [${SUBMERGE_SOURCE}]: " _in
     [ -n "$_in" ] && submerge_conf_set SUBMERGE_SOURCE "$_in"
     green "✅ 已保存到 $SUBMERGE_CONF"
@@ -10584,9 +10608,13 @@ submerge_status_show() {
     else
         _mask="（未配置）"
     fi
-    green "  上报地址：$(submerge_target_url)"
+    if [ -n "$SUBMERGE_BASE" ]; then
+        green "  上报地址：$(submerge_target_url)"
+    else
+        yellow "  上报地址：（未配置）需要填你自己的 sub-merge 域名"
+    fi
     green "  上报凭证：${_mask}"
-    green "  机器名　：${SUBMERGE_MACHINE}    来源：${SUBMERGE_SOURCE}"
+    green "  机器名　：${SUBMERGE_MACHINE}    来源：${SUBMERGE_SOURCE:-（默认）}"
 
     _lt="$(submerge_state_get LAST_TIME)"
     _lr="$(submerge_state_get LAST_RESULT)"
@@ -10630,7 +10658,7 @@ interactive_submerge_menu() {
                 purple "  自动上报：已关闭（默认）"
             fi
         else
-            red "  尚未配置上报凭证（先选 2 填 REPORT_TOKEN）"
+            red "  尚未配置上报凭证（先选 3 填上报地址与 REPORT_TOKEN）"
         fi
         if [ -n "$(submerge_state_get LAST_TIME)" ]; then
             if [ "$(submerge_state_get LAST_RESULT)" = "ok" ]; then
