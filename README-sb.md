@@ -1028,10 +1028,10 @@ sb report status     # 或 sb rstatus，或主菜单 [13] → 1)
 - 地址：完整上报路径（含 `?source=`，可直接复制给别的机器用）
 - 凭证：打码显示（前 6 位 + 后 4 位）
 - 最近一次：时间 + 成功/失败 + HTTP 码 + 结果说明 + 节点数；另存「最近成功」时间，失败不会覆盖它
-- 状态文件 `/root/doraemon/submerge.state`（600），键：`LAST_TIME` `LAST_RESULT` `LAST_HTTP` `LAST_MSG` `LAST_NODES` `LAST_MACHINE` `LAST_SOURCE` `LAST_URL` `LAST_OK_TIME`
+- 状态文件 `/root/doraemon/submerge.state`（root:root、600，脚本每次写入后重新 `chmod 600`），键：`LAST_TIME` `LAST_RESULT` `LAST_HTTP` `LAST_MSG` `LAST_NODES` `LAST_MACHINE` `LAST_SOURCE` `LAST_URL` `LAST_OK_TIME`
 - 自动上报也会记录：`sb ins` / `sb rep` / `sb sub` / 配置修改后只要开关是开的，都会写一条结果
 
-配置落盘在 `/root/doraemon/submerge.conf`（权限 600，含上报凭证，别外传）：
+配置落盘在 `/root/doraemon/submerge.conf`（属主 root、权限 600，只有 root 能读；含上报凭证，别外传。换凭证、打开/关闭上报、改地址都会重写这个文件，脚本每次写完都会重新 `chmod 600`，不会因为 umask 变松）：
 
 ```
 SUBMERGE_BASE=https://你的-sub-merge-域名   # 必填，没有默认值
@@ -1060,6 +1060,13 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 - **失败提示**：401 凭证错、400 机器名/内容不合规、413 超过 512KB、连不上域名，都会给对应的中文提示
 
 ## 2.7 版本变更信息
+
+v3.2.33 (2026-11-02)
+ > 状态页显示配置文件的真实权限；修全角括号紧跟变量名导致的乱码。
+
+ - **修 bug**：`状态文件：$SUBMERGE_STATE（600）` 这种「变量名后直接跟全角括号」的写法，在 bash 里会把 `（` 的首字节吞进变量名解析，输出成 `submerge.state` 缺失 + 乱码（`：��600）`）。改成 `${SUBMERGE_STATE}（600）` / `${SUBMERGE_CONF}（…）`，并全文扫了一遍同类写法
+ - **权限可见**：新增 `submerge_conf_perm()`（`ls -l` 取实际权限位，`-rw-------` → 「600，仅 root 可读写」，没建过 → 「未创建」）；状态页与「查看上报配置」都显示，说明改写后会重新 `chmod 600`
+ - 实测：未创建 → `（未创建）`；创建后 → `（600，仅 root 可读写）`；`umask 000` 下写入仍是 `-rw-------`（`submerge_conf_set` 写临时文件 + `mv` 后统一 `chmod 600`）；目录 `/root/doraemon` 保持 755，但文件内容只有 root 能读
 
 v3.2.32 (2026-11-02)
  > 上报地址不再内置默认域名；机器名自动取全局配置的 name；来源默认留空。

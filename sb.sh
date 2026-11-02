@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.32(2026-11-02)"
+VERSION="3.2.33(2026-11-02)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -10559,7 +10559,7 @@ submerge_conf_show() {
     else
         yellow "  自动上报：已关闭（默认，只有 REPORT_FLAG=1 才自动上报）"
     fi
-    purple "  配置文件：$SUBMERGE_CONF"
+    purple "  配置文件：${SUBMERGE_CONF}（$(submerge_conf_perm)）"
 }
 
 # 交互式修改配置（回车保持原值）
@@ -10580,6 +10580,17 @@ submerge_configure() {
     [ -n "$_in" ] && submerge_conf_set SUBMERGE_SOURCE "$_in"
     green "✅ 已保存到 $SUBMERGE_CONF"
     submerge_conf_show
+}
+
+# 配置文件实际权限（3600 = rw-------），拿不到就报「未知」
+submerge_conf_perm() {
+    local _p
+    _p="$(ls -l "$SUBMERGE_CONF" 2> /dev/null | awk '{print $1}')"
+    [ -n "$_p" ] || { printf '%s' "未创建"; return 0; }
+    case "$_p" in
+        -rw-------) printf '%s' "600，仅 root 可读写" ;;
+        *) printf '%s' "$_p" ;;
+    esac
 }
 
 # 上报状态查询：开关 / 最近一次时间与结果 / 地址与凭证
@@ -10638,8 +10649,8 @@ submerge_status_show() {
     else
         yellow "  还没有上报记录（手动 sb report 或开启自动上报后生成节点会记录下来）"
     fi
-    purple "  状态文件：$SUBMERGE_STATE"
-    purple "  配置文件：$SUBMERGE_CONF"
+    purple "  状态文件：${SUBMERGE_STATE}（600）"
+    purple "  配置文件：${SUBMERGE_CONF}（$(submerge_conf_perm)）"
 }
 
 interactive_submerge_menu() {
