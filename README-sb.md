@@ -954,6 +954,14 @@ sb log_stop        查看服务停止原因日志（排查崩溃用）
 
 ## 2.7 版本变更信息
 
+v3.2.28 (2026-11-02)
+ > 节点名不再拼服务器 hostname：`小叮当-淡-美国北卡莱罗纳-tuic-NC6KW8` 里的 `-NC6KW8` 去掉。
+
+ - **背景**：节点名一直是 `${sxname}<协议>-${hostname}`，`hostname` 取 `uname -a` 的第 2 段。云厂商给的默认主机名常是随机串（本例 `NC6KW8`），于是分享链接里多出一段看不懂的尾巴，客户端列表里也显得脏
+ - **改动**：11 处节点名模板统一去掉 `-${hostname}`：hy2、tuic、vless-reality、anytls、socks5、vless-ws-cdn、vmess-ws-cdn、trojan-ws-cdn，以及 argo 的 trojan/vless/vmess；argo 那三处同时去掉端口后缀，名字就是 `-argo`（同一台机若开多个 argo 端口，节点名会一致，需自行区分）
+ - **保留**：`hostname` 变量本身没删（`uname -a` 那行留着，避免影响别处可能的引用），只是不再参与节点命名
+ - **实测**（`sxname=小叮当-淡-美国北卡莱罗纳-`、`hostname=NC6KW8` 渲染全部 11 条模板）：`…-hy2`、`…-tuic`、`…-vless-reality`、`…-anytls`、`…-socks5`、`…-vless-ws-cdn`、`…-vmess-ws-cdn`、`…-trojan-ws-cdn`、`…-trojan-ws-tls-argo`、`…-vless-ws-tls-argo`、`…-vmess-ws-tls-argo`，均无 `-NC6KW8`、无端口后缀
+
 v3.2.26 (2026-10-31)
  > 统一 sing-box 的服务名：`sb autostart` 不再造出与 `sb.service` 重名的单元抢端口。
 

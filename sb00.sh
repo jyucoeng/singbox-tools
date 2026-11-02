@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.27(2026-10-31)"
+VERSION="3.2.28(2026-11-02)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -5828,7 +5828,7 @@ regenerate_links_and_sub() {
         # 这种情况宁可不带 pinSHA256
         _hy2_pin=""
         [ -n "$SHA256_hy2" ] && _hy2_pin="&pinSHA256=${SHA256_hy2}"
-        hy2_link="hysteria2://$uuid@$addr:$port_hy2/?sni=${hy_sni}&insecure=1${_hy2_pin}&alpn=h3&obfs=none#$(node_frag "${sxname}hy2-${hostname}")"
+        hy2_link="hysteria2://$uuid@$addr:$port_hy2/?sni=${hy_sni}&insecure=1${_hy2_pin}&alpn=h3&obfs=none#$(node_frag "${sxname}hy2")"
         yellow "🎯【 Hysteria2 】(直连协议)"
         green "$hy2_link"
         append_jh "$hy2_link"
@@ -5841,7 +5841,7 @@ regenerate_links_and_sub() {
         tu_sni=$(cat "$SINGBOX_FOLDER_PATH/tu_sni")
         password=$uuid
 
-        tuic_link="tuic://${uuid}:${password}@${addr}:${port_tu}?sni=${tu_sni}&congestion_control=bbr&security=tls&udp_relay_mode=native&alpn=h3&allow_insecure=1#$(node_frag "${sxname}tuic-${hostname}")"
+        tuic_link="tuic://${uuid}:${password}@${addr}:${port_tu}?sni=${tu_sni}&congestion_control=bbr&security=tls&udp_relay_mode=native&alpn=h3&allow_insecure=1#$(node_frag "${sxname}tuic")"
         yellow "🎯【 TUIC 】(直连协议)"
         green "$tuic_link"
         append_jh "$tuic_link"
@@ -5856,7 +5856,7 @@ regenerate_links_and_sub() {
 
         debug_log "【调试】regenerate_links_and_sub函数中的short_id,值为:$short_id"
 
-        vless_link="vless://${uuid}@${addr}:${port_vlr}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${vl_sni}&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#$(node_frag "${sxname}vless-reality-${hostname}")"
+        vless_link="vless://${uuid}@${addr}:${port_vlr}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${vl_sni}&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#$(node_frag "${sxname}vless-reality")"
         yellow "🎯【 VLESS-Reality-Vision 】(直连协议)"
         green "$vless_link"
         append_jh "$vless_link"
@@ -5870,7 +5870,7 @@ regenerate_links_and_sub() {
         port_any=$(cat "$SINGBOX_FOLDER_PATH/port_any")
         any_sni=$(cat "$SINGBOX_FOLDER_PATH/any_sni")
 
-        anytls_link="anytls://${uuid}@${addr}:${port_any}?security=tls&sni=${any_sni}&fp=firefox&insecure=1&allowInsecure=1&type=tcp#$(node_frag "${sxname}anytls-${hostname}")"
+        anytls_link="anytls://${uuid}@${addr}:${port_any}?security=tls&sni=${any_sni}&fp=firefox&insecure=1&allowInsecure=1&type=tcp#$(node_frag "${sxname}anytls")"
         yellow "🔐【 AnyTLS 】(直连协议)"
         green "$anytls_link"
         append_jh "$anytls_link"
@@ -5913,13 +5913,13 @@ regenerate_links_and_sub() {
             _apt="$(argo_eff_pt "$_ap")"
             case "$_ap" in
                 vmess)
-                    _argo_link="vmess://$(printf '%s' "{\"v\":\"2\",\"ps\":$(json_escape_string "${sxname}vmess-ws-tls-argo-${hostname}-${_apt}"),\"add\":$(json_escape_string "${_ah}"),\"port\":\"${_apt}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":$(json_escape_string "${argodomain}"),\"path\":\"/${uuid}-vm\",\"tls\":\"tls\",\"sni\":$(json_escape_string "${argodomain}")}" | base64 | tr -d '\n\r')"
+                    _argo_link="vmess://$(printf '%s' "{\"v\":\"2\",\"ps\":$(json_escape_string "${sxname}vmess-ws-tls-argo"),\"add\":$(json_escape_string "${_ah}"),\"port\":\"${_apt}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":$(json_escape_string "${argodomain}"),\"path\":\"/${uuid}-vm\",\"tls\":\"tls\",\"sni\":$(json_escape_string "${argodomain}")}" | base64 | tr -d '\n\r')"
                     ;;
                 trojan)
-                    _argo_link="trojan://${uuid}@${_ah}:${_apt}?security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-tr&sni=${argodomain}&fp=chrome#$(node_frag "${sxname}trojan-ws-tls-argo-${hostname}-${_apt}")"
+                    _argo_link="trojan://${uuid}@${_ah}:${_apt}?security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-tr&sni=${argodomain}&fp=chrome#$(node_frag "${sxname}trojan-ws-tls-argo")"
                     ;;
                 vless)
-                    _argo_link="vless://${uuid}@${_ah}:${_apt}?encryption=none&security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-vl&sni=${argodomain}&fp=chrome#$(node_frag "${sxname}vless-ws-tls-argo-${hostname}-${_apt}")"
+                    _argo_link="vless://${uuid}@${_ah}:${_apt}?encryption=none&security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-vl&sni=${argodomain}&fp=chrome#$(node_frag "${sxname}vless-ws-tls-argo")"
                     ;;
             esac
             green ""
@@ -5954,15 +5954,15 @@ regenerate_links_and_sub() {
         case "$_p" in
             vless)
                 # add/host 连接地址用 _ws_h（CF 优选域名/优选IP），host 头与 SNI 用真实回源域名 _ws_s
-                _ws_link="vless://${uuid}@${_ws_h}:${_ws_p}?encryption=none&security=tls&type=ws&host=${_ws_s}&path=%2F${uuid}-vl-cdn&sni=${_ws_s}&fp=chrome#$(node_frag "${sxname}vless-ws-cdn-${hostname}")"
+                _ws_link="vless://${uuid}@${_ws_h}:${_ws_p}?encryption=none&security=tls&type=ws&host=${_ws_s}&path=%2F${uuid}-vl-cdn&sni=${_ws_s}&fp=chrome#$(node_frag "${sxname}vless-ws-cdn")"
                 ;;
             vmess)
                 # add 连接地址用 _ws_h（优选域名/优选IP），host 头与 SNI 用真实回源域名 _ws_s
-                _ws_link="vmess://$(printf '%s' "{\"v\":\"2\",\"ps\":$(json_escape_string "${sxname}vmess-ws-cdn-${hostname}"),\"add\":$(json_escape_string "${_ws_h}"),\"port\":\"${_ws_p}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":$(json_escape_string "${_ws_s}"),\"path\":\"/${uuid}-vm-cdn\",\"tls\":\"tls\",\"sni\":$(json_escape_string "${_ws_s}")}" | base64 | tr -d '\n\r')"
+                _ws_link="vmess://$(printf '%s' "{\"v\":\"2\",\"ps\":$(json_escape_string "${sxname}vmess-ws-cdn"),\"add\":$(json_escape_string "${_ws_h}"),\"port\":\"${_ws_p}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":$(json_escape_string "${_ws_s}"),\"path\":\"/${uuid}-vm-cdn\",\"tls\":\"tls\",\"sni\":$(json_escape_string "${_ws_s}")}" | base64 | tr -d '\n\r')"
                 ;;
             trojan)
                 # add/host 连接地址用 _ws_h，host 头与 SNI 用真实回源域名 _ws_s
-                _ws_link="trojan://${uuid}@${_ws_h}:${_ws_p}?security=tls&type=ws&host=${_ws_s}&path=%2F${uuid}-tr-cdn&sni=${_ws_s}&fp=chrome#$(node_frag "${sxname}trojan-ws-cdn-${hostname}")"
+                _ws_link="trojan://${uuid}@${_ws_h}:${_ws_p}?security=tls&type=ws&host=${_ws_s}&path=%2F${uuid}-tr-cdn&sni=${_ws_s}&fp=chrome#$(node_frag "${sxname}trojan-ws-cdn")"
                 ;;
         esac
         if [ "$_ws_cdn_printed" = "false" ]; then
@@ -5987,7 +5987,7 @@ regenerate_links_and_sub() {
 
         socks5_user_enc=$(url_encode_component "$socks5_username")
         socks5_pass_enc=$(url_encode_component "$socks5_password")
-        socks5_link="socks5://${socks5_user_enc}:${socks5_pass_enc}@${addr}:${port_socks5}#$(node_frag "${sxname}socks5-${hostname}")"
+        socks5_link="socks5://${socks5_user_enc}:${socks5_pass_enc}@${addr}:${port_socks5}#$(node_frag "${sxname}socks5")"
         yellow "🧦【 Socks5 】(此协议请不要直接在客户端里直连使用)"
         green "$socks5_link"
         local _wl_flag_val=""
