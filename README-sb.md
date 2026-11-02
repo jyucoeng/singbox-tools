@@ -31,7 +31,7 @@ vmess / trojan / vless（走 Argo，可多选）+ Hysteria2 + VLESS-Reality + TU
 ## ① 基础命令（所有协议共用；结尾的 `bash <(...) rep` 只写这一处）
 
 ```bash
-uuid=0631a7f3-09f8-4144-acf2-a4f5bd9ed200 \
+uuid=00000000-0000-4000-8000-000000000000 \
 ippz=4 \
 name='小叮当-美国加州' \
 nginx_pt=41007 \
@@ -339,7 +339,7 @@ argo_trojan_cf_pt=443 \
 - `cdn_host` / `cdn_pt` 仍可用（`argo_cf_host` / `argo_cf_pt` 优先，旧名兜底），方便旧命令直接复用。
 - 例如旧命令里的 `cdn_host` / `cdn_pt` 会被当作 `argo_cf_host` / `argo_cf_pt`：
 ```
-trojan://0631a7f3-09f8-4144-acf2-a4f5bd9ed281@cdns.doon.eu.org:8443?...
+trojan://00000000-0000-4000-8000-000000000001@cdns.doon.eu.org:8443?...
 ```
 
 ### 4、 argo（Cloudflare Argo 开关，可多选）
@@ -435,7 +435,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 #### JSON token 场景（JSON 外层必须用英文单引号）
 
 ```bash
-uuid=0631a7f3-09f8-4144-acf2-a4f5bd9ed281 \
+uuid=00000000-0000-4000-8000-000000000001 \
 ippz=4 \
 vlrt=41003 \
 hypt=41004 \
@@ -709,7 +709,7 @@ Nginx 的一份配置里同时监听 `nginx_pt`（默认 8080，对外）和 `12
 > 下面把基础命令 + 直连 + Socks5 + Argo + 回源写在一起，只作变量清单参考。**`out_ip`、`direct_host`、`agn`、`agk`、`reality_private` 是占位值，必须改成真实值或整行删掉**，否则会安装失败；不需要的行（连同行尾 `\`）直接删。
 
 ```bash
-uuid=0631a7f3-09f8-4144-acf2-a4f5bd9ed200 \
+uuid=00000000-0000-4000-8000-000000000000 \
 ippz=4 \
 name='小叮当-美国加州' \
 nginx_pt=41007 \
