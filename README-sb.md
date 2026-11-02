@@ -1049,6 +1049,7 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 | `REPORT_BASE` | `SUBMERGE_BASE` | 你自己的 sub-merge 域名（必填，无默认值） |
 | `REPORT_TOKEN` | `SUBMERGE_TOKEN` | 上报凭证（只认 `REPORT_TOKEN`，主 token 会 401） |
 | `REPORT_MACHINE` | `SUBMERGE_MACHINE` | 机器名；界面会把 ④ 的 `name` 作为它下发。不传/为空才回落到 `name`，再退到 hostname |
+| `REPORT_EXCLUDE` | `SUBMERGE_EXCLUDE` | 不上报的协议，英文逗号分隔（`vless,vmess,trojan,hysteria2,tuic,anytls`），空=全部上报 |
 | `REPORT_SOURCE` | `SUBMERGE_SOURCE` | 来源名，默认 `default` |
 
 优先级：环境变量 > 配置文件。`REPORT_FLAG` 存在时以它为准（子菜单里会提醒你在覆盖配置）。
@@ -1060,6 +1061,16 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 - **失败提示**：401 凭证错、400 机器名/内容不合规、413 超过 512KB、连不上域名，都会给对应的中文提示
 
 ## 2.7 版本变更信息
+
+v3.2.37 (2026-11-02)
+ > 支持「不上报的协议」：勾上的协议不参与上报。
+
+ - **配置**：`REPORT_EXCLUDE`（环境变量，界面下发）→ `SUBMERGE_EXCLUDE`（`submerge.conf`）；值形如 `vless,trojan`
+ - **规范化**：`submerge_exclude_list()` 统一小写、去空格、去重、只保留已知协议（`vless vmess trojan hysteria2 tuic anytls`），并接受 `hy2`/`hysteria` 别名；未知值（如 `ss`）静默丢弃
+ - **过滤**：`submerge_filter_nodes()` 按链接 scheme 精确匹配（`^scheme://`），空行顺手丢掉；上报与预览都走它
+ - **行为**：`submerge_report()` 过滤后重新编码，「📤 正在上报」里显示「已排除 …」；全部被排除时直接报错并记一条失败状态（`排除协议后没有节点`），不会发空 body
+ - **可见性**：`查看详情`/`查看配置`/`查看状态` 都多一行「不上报：vless,trojan」或「（不过滤，全部上报）」；`3) 修改配置` 增加该项（输入 `-` 清空）
+ - 实测：6 条节点（hy2/tuic/vless/vmess/trojan/anytls）排除 `vless,trojan` → 上报 4 条，服务端收到 3 条（anytls 服务端不解析），重复上报仍 `changed:false`
 
 v3.2.36 (2026-11-02)
  > 机器名统一由 `REPORT_MACHINE` 下发，脚本只在它为空时才取 `name`。

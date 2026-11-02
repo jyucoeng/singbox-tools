@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.36(2026-11-02)"
+VERSION="3.2.37(2026-11-02)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -10236,6 +10236,7 @@ submerge_load() {
     SUBMERGE_TOKEN=""
     SUBMERGE_MACHINE=""
     SUBMERGE_SOURCE=""
+    SUBMERGE_EXCLUDE=""
     SUBMERGE_AUTO=""
     if [ -s "$SUBMERGE_CONF" ]; then
         . "$SUBMERGE_CONF" 2> /dev/null || true
@@ -10260,6 +10261,13 @@ submerge_load() {
     if [ -n "${REPORT_SOURCE:-}" ]; then
         SUBMERGE_SOURCE="$REPORT_SOURCE"
         submerge_conf_set SUBMERGE_SOURCE "$REPORT_SOURCE"
+    fi
+    if [ -n "${REPORT_EXCLUDE:-}" ]; then
+        _re="$(printf '%s' "$REPORT_EXCLUDE" | tr -d '[:space:]')"
+        if [ -n "$_re" ]; then
+            SUBMERGE_EXCLUDE="$_re"
+            submerge_conf_set SUBMERGE_EXCLUDE "$_re"
+        fi
     fi
     if [ -n "${REPORT_FLAG:-}" ]; then
         SUBMERGE_AUTO="$REPORT_FLAG"
@@ -10344,6 +10352,50 @@ submerge_conf_set() {
 }
 
 # 文件 → 单行 base64（openssl 优先，busybox/GNU base64 兜底）
+# 可排除上报的协议（与脚本生成的链接 scheme 一一对应）
+SUBMERGE_PROTOCOLS="vless vmess trojan hysteria2 tuic anytls"
+
+# 规范化排除列表：小写、去空格、只留已知协议、去重，英文逗号拼接
+submerge_exclude_list() {
+    local _in _out _p
+    _in="$(printf '%s' "${SUBMERGE_EXCLUDE:-}" | tr 'A-Z' 'a-z' | tr ',' ' ')"
+    _out=""
+    for _p in $_in; do
+        case "$_p" in hy2 | hy | hysteria) _p="hysteria2" ;; esac
+        case " $SUBMERGE_PROTOCOLS " in *" $_p "*) ;; *) continue ;; esac
+        case ",$_out," in *",$_p,"*) continue ;; esac
+        _out="${_out:+$_out,}$_p"
+    done
+    printf '%s' "$_out"
+}
+
+# 给人看的排除项文案
+submerge_exclude_list_show() {
+    local _ex
+    _ex="$(submerge_exclude_list)"
+    if [ -n "$_ex" ]; then
+        printf '%s' "$_ex"
+    else
+        printf '%s' "（不过滤，全部上报）"
+    fi
+}
+
+# 按排除列表过滤节点文件 → stdout（空行自动丢掉，方便客户端解析）
+submerge_filter_nodes() {
+    local _f="$1" _ex="$2" _line _scheme
+    [ -s "$_f" ] || return 1
+    if [ -z "$_ex" ]; then
+        cat "$_f"
+        return 0
+    fi
+    while IFS= read -r _line; do
+        [ -n "$_line" ] || continue
+        _scheme="$(printf '%s' "$_line" | sed -n 's#^\([A-Za-z0-9]*\)://.*#\1#p' | tr 'A-Z' 'a-z')"
+        case ",$_ex," in *",$_scheme,"*) continue ;; esac
+        printf '%s\n' "$_line"
+    done < "$_f"
+}
+
 submerge_b64_file() {
     local _f="$1" _out
     [ -s "$_f" ] || return 1
@@ -10423,7 +10475,7 @@ _submerge_jbool() { grep -oE "\"$1\":(true|false)" "$2" 2> /dev/null | head -n1 
 submerge_report() {
     submerge_load
 
-    local _base _tok _mach _src _srcjf _b64 _body _code _url _cnt
+    local _base _tok _mach _src _srcjf _b64 _body _code _url _cnt _ex _srcfile _tmpf
     _base="${SUBMERGE_BASE%/}"
     _tok="$SUBMERGE_TOKEN"
     _mach="$SUBMERGE_MACHINE"
@@ -10461,21 +10513,44 @@ submerge_report() {
         return 1
     fi
 
-    _b64="$(submerge_b64_file "$SINGBOX_FOLDER_PATH/jh.txt")"
+    # 按「不上报的协议」过滤后再编码
+    _ex="$(submerge_exclude_list)"
+    _srcfile="$SINGBOX_FOLDER_PATH/jh.txt"
+    _tmpf=""
+    if [ -n "$_ex" ]; then
+        _tmpf="$(mktemp 2> /dev/null || echo "/tmp/submerge.nodes.$$")"
+        submerge_filter_nodes "$SINGBOX_FOLDER_PATH/jh.txt" "$_ex" > "$_tmpf" 2> /dev/null || true
+        if [ ! -s "$_tmpf" ]; then
+            rm -f "$_tmpf" 2> /dev/null
+            red "❌ 排除协议（${_ex}）后没有可上报的节点"
+            yellow "   要改排除项：sb report 菜单选 3，或改 $SUBMERGE_CONF 里的 SUBMERGE_EXCLUDE"
+            submerge_record fail "" "排除协议后没有节点（${_ex}）"
+            return 1
+        fi
+        _srcfile="$_tmpf"
+    fi
+
+    _b64="$(submerge_b64_file "$_srcfile")"
     if [ -z "$_b64" ]; then
+        [ -n "$_tmpf" ] && rm -f "$_tmpf" 2> /dev/null
         red "❌ base64 编码失败（缺 openssl / base64？）"
         submerge_record fail "" "base64 编码失败"
         return 1
     fi
 
-    _cnt="$(grep -c . "$SINGBOX_FOLDER_PATH/jh.txt" 2> /dev/null)"
+    _cnt="$(grep -c . "$_srcfile" 2> /dev/null)"
+    [ -n "$_tmpf" ] && rm -f "$_tmpf" 2> /dev/null
     _url="${_base}/api/v1/report/$(submerge_urlencode "$_mach")"
     if [ -n "$_src" ] && [ "$_src" != "default" ]; then
         _url="${_url}?source=$(submerge_urlencode "$_src")"
     fi
 
     _body="$(mktemp 2> /dev/null || echo "/tmp/submerge.$$")"
-    green "📤 正在上报：机器=${_mach} 来源=${_src} 节点=${_cnt} 条"
+    if [ -n "$_ex" ]; then
+        green "📤 正在上报：机器=${_mach} 来源=${_src} 节点=${_cnt} 条（已排除 ${_ex}）"
+    else
+        green "📤 正在上报：机器=${_mach} 来源=${_src} 节点=${_cnt} 条"
+    fi
     _code="$(curl -sS -m 20 -o "$_body" -w '%{http_code}' -X POST "$_url" \
         -H "Authorization: Bearer ${_tok}" \
         -H "Content-Type: text/plain" \
@@ -10523,14 +10598,23 @@ submerge_report() {
 # 上传前预览：节点条数 + base64 长度 + 目标地址
 submerge_preview() {
     submerge_load
-    local _b64 _purl
+    local _b64 _purl _ex _total _view _tmpf
     if [ ! -s "$SINGBOX_FOLDER_PATH/jh.txt" ]; then
         red "❌ 节点文件不存在：$SINGBOX_FOLDER_PATH/jh.txt（先 sb sub 生成）"
         return 1
     fi
-    _b64="$(submerge_b64_file "$SINGBOX_FOLDER_PATH/jh.txt")"
+    _ex="$(submerge_exclude_list)"
+    _total="$(grep -c . "$SINGBOX_FOLDER_PATH/jh.txt" 2> /dev/null)"
+    _view="$SINGBOX_FOLDER_PATH/jh.txt"
+    _tmpf=""
+    if [ -n "$_ex" ]; then
+        _tmpf="$(mktemp 2> /dev/null || echo "/tmp/submerge.preview.$$")"
+        submerge_filter_nodes "$SINGBOX_FOLDER_PATH/jh.txt" "$_ex" > "$_tmpf" 2> /dev/null || true
+        _view="$_tmpf"
+    fi
+    _b64="$(submerge_b64_file "$_view")"
     green "节点文件：$SINGBOX_FOLDER_PATH/jh.txt"
-    purple "  节点条数：$(grep -c . "$SINGBOX_FOLDER_PATH/jh.txt" 2> /dev/null) 条"
+    purple "  节点条数：$(grep -c . "$_view" 2> /dev/null) 条$([ -n "$_ex" ] && printf '（原始 %s 条，已排除 %s）' "$_total" "$_ex")"
     purple "  base64 长度：${#_b64} 字节（上限 524288）"
     _purl="${SUBMERGE_BASE%/}/api/v1/report/$(submerge_urlencode "$SUBMERGE_MACHINE")"
     if [ -n "${SUBMERGE_SOURCE:-}" ] && [ "$SUBMERGE_SOURCE" != "default" ]; then
@@ -10538,10 +10622,13 @@ submerge_preview() {
     fi
     purple "  上报地址：${_purl}"
     purple "  来源　　：${SUBMERGE_SOURCE:-默认}"
+    purple "  不上报　：${_ex:-（不过滤，全部上报）}"
     echo ""
-    sed -n '1,5p' "$SINGBOX_FOLDER_PATH/jh.txt" 2> /dev/null | while IFS= read -r _l; do
+    sed -n '1,5p' "$_view" 2> /dev/null | while IFS= read -r _l; do
         [ -n "$_l" ] && printf '  %s...\n' "$(printf '%s' "$_l" | cut -c1-72)"
     done
+    [ -n "$_tmpf" ] && rm -f "$_tmpf" 2> /dev/null
+    return 0
 }
 
 # 查看当前上报配置（凭证打码）
@@ -10564,7 +10651,8 @@ submerge_conf_show() {
     fi
     green "  上报凭证：${_mask}"
     green "  机器名　：${SUBMERGE_MACHINE}"
-    green "  来源　　：${SUBMERGE_SOURCE}"
+    green "  来源　　：${SUBMERGE_SOURCE:-默认}"
+    green "  不上报　：$(submerge_exclude_list_show)"
     if submerge_auto_enabled; then
         green "  自动上报：已开启（$(submerge_auto_flag)）"
     else
@@ -10594,6 +10682,15 @@ submerge_configure() {
     yellow "  来源留空即可（同一台机器要分多份数据时才填，比如 hk2）"
     reading "  来源 [${SUBMERGE_SOURCE:-默认}]: " _in
     [ -n "$_in" ] && submerge_conf_set SUBMERGE_SOURCE "$_in"
+    yellow "  不上报的协议：英文逗号分隔，可选 vless,vmess,trojan,hysteria2,tuic,anytls；输入 - 清空"
+    reading "  不上报的协议 [$(submerge_exclude_list_show)]: " _in
+    if [ "$_in" = "-" ]; then
+        SUBMERGE_EXCLUDE=""
+        submerge_conf_set SUBMERGE_EXCLUDE ""
+    elif [ -n "$_in" ]; then
+        SUBMERGE_EXCLUDE="$_in"
+        submerge_conf_set SUBMERGE_EXCLUDE "$(printf '%s' "$_in" | tr -d '[:space:]')"
+    fi
     green "✅ 已保存到 $SUBMERGE_CONF"
     submerge_conf_show
 }
@@ -10642,6 +10739,7 @@ submerge_status_show() {
     fi
     green "  上报凭证：${_mask}"
     green "  机器名　：${SUBMERGE_MACHINE}    来源：${SUBMERGE_SOURCE:-（默认）}"
+    green "  不上报　：$(submerge_exclude_list_show)"
 
     _lt="$(submerge_state_get LAST_TIME)"
     _lr="$(submerge_state_get LAST_RESULT)"
