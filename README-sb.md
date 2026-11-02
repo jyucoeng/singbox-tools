@@ -934,6 +934,7 @@ sb res             重启 sing-box 和 cloudflared
 sb rt              分流管理
 sb node            节点配置修改 (端口/订阅/SNI/Argo/身份信息/服务器地址)
 sb sub             订阅管理
+sb report          上报节点到 sub-merge（自动上报层）
 sb del             卸载（保留二进制）
 sb delall          卸载全部并清理
 sb ups             更新 sing-box 内核
@@ -952,7 +953,51 @@ sb log_ins         查看最近一次安装日志（全文）
 sb log_stop        查看服务停止原因日志（排查崩溃用）
 ```
 
+## 2.6.1 上报节点到 sub-merge（v3.2.29 新增）
+
+把本机 `jh.txt` 里的全部节点链接上报到自己的订阅聚合服务（sub-merge），服务端存成这台机器的「自动上报」层，立刻进入合并订阅；本机的手动层不受影响。
+
+```
+sb report           # 直接上报（配置已存在时一条命令搞定）
+sb                  # 主菜单 → [13] 上报到 sub-merge（子菜单里能配置/预览/上报）
+```
+
+子菜单：
+
+```
+1) 立即上报当前节点
+2) 修改上报配置（地址 / 凭证 / 机器名 / 来源）
+3) 查看上报配置（凭证打码）
+4) 上传前预览（节点条数 / base64 长度 / 目标地址）
+5) 清除上报配置
+```
+
+配置落盘在 `/root/doraemon/submerge.conf`（权限 600，含上报凭证，别外传）：
+
+```
+SUBMERGE_BASE=https://sub.dingdang.de5.net
+SUBMERGE_TOKEN=<上报凭证 REPORT_TOKEN>
+SUBMERGE_MACHINE=hk-1            # 机器名：首字符字母/数字（可中文），可含空格 _ . -，≤64 字符
+SUBMERGE_SOURCE=default          # 来源名，同一台机器可多来源并存
+```
+
+- **凭证**：只认 sub-merge 的 `REPORT_TOKEN`，主订阅 token 上报会被 401 拒绝（订阅链接泄露也写不了数据）
+- **内容**：脚本自动把 `jh.txt` 整段 base64 后 POST，不用手工编码；`jh.txt` 不存在时会先按当前配置重新生成
+- **幂等**：内容没变化时服务端返回 `changed:false` 且不重复写库，脚本会明确提示「内容与上次一致」
+- **机器名支持中文**：内部按百分号编码，`小叮当-淡-美国北卡莱罗纳` 这类名字照填
+- **失败提示**：401 凭证错、400 机器名/内容不合规、413 超过 512KB、连不上域名，都会给对应的中文提示
+
 ## 2.7 版本变更信息
+
+v3.2.29 (2026-11-02)
+ > 新增「上报节点到 sub-merge」：`sb report` 一条命令把本机全部节点推到自己的订阅聚合服务。
+
+ - **背景**：自己拿 sub-merge 管订阅时，一台机器装完节点还得手工把链接贴进网页，节点多了容易漏
+ - **改动**：新增 `submerge_report()` 等一组函数（`submerge_load` / `submerge_conf_set` / `submerge_b64_file` / `submerge_urlencode` / `submerge_report` / `submerge_preview` / `submerge_conf_show` / `submerge_configure` / `interactive_submerge_menu`），主菜单加 `[13] 上报到 sub-merge`，命令行加 `sb report`（别名 `sb up`）
+ - **实现**：读 `/root/doraemon/jh.txt` → 整段 base64（openssl 优先，busybox/GNU base64 兜底）→ `POST /api/v1/report/<机器名>` + `Authorization: Bearer <REPORT_TOKEN>`；机器名按字节百分号编码，中文名可用
+ - **配置**：`/root/doraemon/submerge.conf`（600）存 `SUBMERGE_BASE` / `SUBMERGE_TOKEN` / `SUBMERGE_MACHINE` / `SUBMERGE_SOURCE`；`jh.txt` 缺失时先调 `regenerate_links_and_sub` 再上报
+ - **返回处理**：不依赖 jq，用 `grep -oE` 解出 `changed` / `nodes` / `auto_nodes` / `manual_nodes` / `updated_at` / `error`；`changed:false` 明确提示「内容与上次一致」，401/400/413/连不上分别给中文排查提示
+ - **实测**（macOS 上用抽取的函数对线上服务跑通）：4 条节点首次上报 `changed:true, nodes:4, auto_nodes:4`；原样再报 `changed:false`；改一条名字后 `changed:true`；错误凭证 `HTTP 401 unauthorized`；中文机器名 + 自定义 `source` 均正常；测试机器已从线上删除
 
 v3.2.28 (2026-11-02)
  > 节点名不再拼服务器 hostname：`小叮当-淡-美国北卡莱罗纳-tuic-NC6KW8` 里的 `-NC6KW8` 去掉。

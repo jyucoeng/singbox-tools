@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.28(2026-11-02)"
+VERSION="3.2.29(2026-11-02)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -1071,6 +1071,7 @@ print_sb_shortcut_help() {
     green "    sb rt              分流管理"
     green "    sb node            节点配置修改 (端口/订阅/SNI/Argo)"
     green "    sb sub             订阅管理"
+    green "    sb report          上报节点到 sub-merge（自动上报层）"
     green "    sb del             卸载（保留二进制）"
     green "    sb delall          卸载全部并清理"
     green "    sb ups             更新 sing-box 内核"
@@ -10215,6 +10216,259 @@ restore_direct_outbound() {
     menu_pause
 }
 
+# ================== 上报到 sub-merge ==================
+# 把本机 jh.txt（全部节点链接）整段 base64 后 POST 到 sub-merge，
+# 服务端存成这台机器的「自动上报」层，立刻进合并订阅；本机手动层不受影响。
+SUBMERGE_DEFAULT_BASE="https://sub.dingdang.de5.net"
+SUBMERGE_CONF="$SINGBOX_FOLDER_PATH/submerge.conf"
+
+# 读取上报配置（地址 / 凭证 / 机器名 / 来源），缺省给默认值
+submerge_load() {
+    SUBMERGE_BASE=""
+    SUBMERGE_TOKEN=""
+    SUBMERGE_MACHINE=""
+    SUBMERGE_SOURCE=""
+    if [ -s "$SUBMERGE_CONF" ]; then
+        . "$SUBMERGE_CONF" 2> /dev/null || true
+    fi
+    [ -n "$SUBMERGE_BASE" ] || SUBMERGE_BASE="$SUBMERGE_DEFAULT_BASE"
+    [ -n "$SUBMERGE_SOURCE" ] || SUBMERGE_SOURCE="default"
+    if [ -z "$SUBMERGE_MACHINE" ]; then
+        SUBMERGE_MACHINE="$(hostname 2> /dev/null | tr -cd 'A-Za-z0-9._-' 2> /dev/null)"
+        [ -n "$SUBMERGE_MACHINE" ] || SUBMERGE_MACHINE="sb-node"
+    fi
+}
+
+# 写一条配置（不覆盖其它键）
+submerge_conf_set() {
+    local _k="$1" _v="$2" _tmp="$SUBMERGE_CONF.tmp"
+    mkdir -p "$SINGBOX_FOLDER_PATH" 2> /dev/null || true
+    [ -f "$SUBMERGE_CONF" ] || : > "$SUBMERGE_CONF"
+    grep -v "^${_k}=" "$SUBMERGE_CONF" > "$_tmp" 2> /dev/null || : > "$_tmp"
+    printf '%s=%s\n' "$_k" "$_v" >> "$_tmp"
+    mv "$_tmp" "$SUBMERGE_CONF" 2> /dev/null || true
+    chmod 600 "$SUBMERGE_CONF" 2> /dev/null || true
+}
+
+# 文件 → 单行 base64（openssl 优先，busybox/GNU base64 兜底）
+submerge_b64_file() {
+    local _f="$1" _out
+    [ -s "$_f" ] || return 1
+    if command -v openssl > /dev/null 2>&1; then
+        _out="$(openssl base64 -A -in "$_f" 2> /dev/null)" && [ -n "$_out" ] && {
+            printf '%s' "$_out"
+            return 0
+        }
+    fi
+    if command -v base64 > /dev/null 2>&1; then
+        _out="$(base64 -w 0 "$_f" 2> /dev/null)"
+        if [ -z "$_out" ]; then
+            _out="$(base64 "$_f" 2> /dev/null | tr -d '\n')"
+        fi
+        [ -n "$_out" ] && {
+            printf '%s' "$_out"
+            return 0
+        }
+    fi
+    return 1
+}
+
+# 机器名百分号编码（中文也能用）
+submerge_urlencode() {
+    printf '%s' "${1:-}" | od -An -tx1 -v 2> /dev/null | tr -d ' \n' | sed 's/../%&/g'
+}
+
+# 从 JSON 里取字段（不依赖 jq，grep -oE 兼容 BSD/GNU/busybox）
+_submerge_jstr() { grep -oE "\"$1\":\"[^\"]*\"" "$2" 2> /dev/null | head -n1 | sed 's/^[^:]*:"//; s/"$//'; }
+_submerge_jnum() { grep -oE "\"$1\":[0-9]+" "$2" 2> /dev/null | head -n1 | sed 's/.*://'; }
+_submerge_jbool() { grep -oE "\"$1\":(true|false)" "$2" 2> /dev/null | head -n1 | sed 's/.*://'; }
+
+# 上报当前节点（jh.txt）
+submerge_report() {
+    submerge_load
+
+    local _base _tok _mach _src _srcjf _b64 _body _code _url _cnt
+    _base="${SUBMERGE_BASE%/}"
+    _tok="$SUBMERGE_TOKEN"
+    _mach="$SUBMERGE_MACHINE"
+    _src="$SUBMERGE_SOURCE"
+
+    if [ -z "$_tok" ]; then
+        red "❌ 还没有配置上报凭证"
+        yellow "   先执行：sb report 进入菜单选 2 配置，或直接把下面几行写进 $SUBMERGE_CONF"
+        echo "   SUBMERGE_BASE=https://sub.dingdang.de5.net"
+        echo "   SUBMERGE_TOKEN=<上报凭证 REPORT_TOKEN>"
+        echo "   SUBMERGE_MACHINE=<机器名，如 hk-1>"
+        echo "   SUBMERGE_SOURCE=default"
+        return 1
+    fi
+
+    # 节点文件不存在就先按当前配置重新生成一次
+    if [ ! -s "$SINGBOX_FOLDER_PATH/jh.txt" ]; then
+        yellow "未找到节点文件，正在按当前配置重新生成 jh.txt ..."
+        regenerate_links_and_sub > /dev/null 2>&1 || true
+    fi
+    if [ ! -s "$SINGBOX_FOLDER_PATH/jh.txt" ]; then
+        red "❌ 节点文件为空：$SINGBOX_FOLDER_PATH/jh.txt"
+        yellow "   先装好节点（sb ins）或执行 sb sub 生成节点链接再上报"
+        return 1
+    fi
+
+    _b64="$(submerge_b64_file "$SINGBOX_FOLDER_PATH/jh.txt")"
+    if [ -z "$_b64" ]; then
+        red "❌ base64 编码失败（缺 openssl / base64？）"
+        return 1
+    fi
+
+    _cnt="$(grep -c . "$SINGBOX_FOLDER_PATH/jh.txt" 2> /dev/null)"
+    _url="${_base}/api/v1/report/$(submerge_urlencode "$_mach")"
+    [ "$_src" = "default" ] || _url="${_url}?source=$(submerge_urlencode "$_src")"
+
+    _body="$(mktemp 2> /dev/null || echo "/tmp/submerge.$$")"
+    green "📤 正在上报：机器=${_mach} 来源=${_src} 节点=${_cnt} 条"
+    _code="$(curl -sS -m 20 -o "$_body" -w '%{http_code}' -X POST "$_url" \
+        -H "Authorization: Bearer ${_tok}" \
+        -H "Content-Type: text/plain" \
+        --data-binary "$_b64" 2> /dev/null)"
+
+    if [ "$_code" = "200" ]; then
+        local _changed _nodes _auto _manual _when
+        _changed="$(_submerge_jbool changed "$_body")"
+        _nodes="$(_submerge_jnum nodes "$_body")"
+        _auto="$(_submerge_jnum auto_nodes "$_body")"
+        _manual="$(_submerge_jnum manual_nodes "$_body")"
+        _when="$(_submerge_jstr updated_at "$_body")"
+        if [ "$_changed" = "true" ]; then
+            green "✅ 上报成功：节点 ${_nodes} 条（自动 ${_auto} + 手动 ${_manual}）"
+            purple "   内容已更新，更新时间 ${_when}"
+        elif [ "$_changed" = "false" ]; then
+            green "✅ 上报成功，但内容与上次完全一致（服务端未重复写入）"
+            purple "   当前节点 ${_nodes} 条（自动 ${_auto} + 手动 ${_manual}），最近更新 ${_when}"
+        else
+            green "✅ 上报成功"
+            sed -n '1,3p' "$_body" 2> /dev/null
+        fi
+        rm -f "$_body" 2> /dev/null
+        return 0
+    fi
+
+    local _err
+    _err="$(_submerge_jstr error "$_body")"
+    [ -n "$_err" ] || _err="$(cat "$_body" 2> /dev/null | head -c 200)"
+    red "❌ 上报失败（HTTP ${_code}）：${_err}"
+    case "$_code" in
+        401) yellow "   凭证不对：上报只认 REPORT_TOKEN，不能用主订阅 token" ;;
+        400) yellow "   参数问题：检查机器名（首字符字母/数字，可含中文、空格、_ . -，≤64 字符）" ;;
+        413) yellow "   内容太大：base64 后超过 512KB，先精简节点" ;;
+        000|"") yellow "   连不上服务端：检查网络/域名是否可解析" ;;
+    esac
+    rm -f "$_body" 2> /dev/null
+    return 1
+}
+
+# 上传前预览：节点条数 + base64 长度 + 目标地址
+submerge_preview() {
+    submerge_load
+    local _b64 _purl
+    if [ ! -s "$SINGBOX_FOLDER_PATH/jh.txt" ]; then
+        red "❌ 节点文件不存在：$SINGBOX_FOLDER_PATH/jh.txt（先 sb sub 生成）"
+        return 1
+    fi
+    _b64="$(submerge_b64_file "$SINGBOX_FOLDER_PATH/jh.txt")"
+    green "节点文件：$SINGBOX_FOLDER_PATH/jh.txt"
+    purple "  节点条数：$(grep -c . "$SINGBOX_FOLDER_PATH/jh.txt" 2> /dev/null) 条"
+    purple "  base64 长度：${#_b64} 字节（上限 524288）"
+    _purl="${SUBMERGE_BASE%/}/api/v1/report/$(submerge_urlencode "$SUBMERGE_MACHINE")"
+    [ "$SUBMERGE_SOURCE" = "default" ] || _purl="${_purl}?source=$(submerge_urlencode "$SUBMERGE_SOURCE")"
+    purple "  上报地址：${_purl}"
+    purple "  来源　　：${SUBMERGE_SOURCE}"
+    echo ""
+    sed -n '1,5p' "$SINGBOX_FOLDER_PATH/jh.txt" 2> /dev/null | while IFS= read -r _l; do
+        [ -n "$_l" ] && printf '  %s...\n' "$(printf '%s' "$_l" | cut -c1-72)"
+    done
+}
+
+# 查看当前上报配置（凭证打码）
+submerge_conf_show() {
+    submerge_load
+    local _mask
+    if [ -n "$SUBMERGE_TOKEN" ]; then
+        if [ ${#SUBMERGE_TOKEN} -gt 12 ]; then
+            _mask="$(printf '%s' "$SUBMERGE_TOKEN" | cut -c1-6)****$(printf '%s' "$SUBMERGE_TOKEN" | rev | cut -c1-4 | rev)"
+        else
+            _mask="****"
+        fi
+    else
+        _mask="（未配置）"
+    fi
+    green "  上报地址：${SUBMERGE_BASE%/}"
+    green "  上报凭证：${_mask}"
+    green "  机器名　：${SUBMERGE_MACHINE}"
+    green "  来源　　：${SUBMERGE_SOURCE}"
+    purple "  配置文件：$SUBMERGE_CONF"
+}
+
+# 交互式修改配置（回车保持原值）
+submerge_configure() {
+    submerge_load
+    local _in
+    echo ""
+    yellow "  直接回车表示保持当前值"
+    reading "  上报地址 [${SUBMERGE_BASE}]: " _in
+    [ -n "$_in" ] && submerge_conf_set SUBMERGE_BASE "$_in"
+    reading "  上报凭证 [${SUBMERGE_TOKEN:+已配置}]: " _in
+    [ -n "$_in" ] && submerge_conf_set SUBMERGE_TOKEN "$_in"
+    reading "  机器名 [${SUBMERGE_MACHINE}]: " _in
+    [ -n "$_in" ] && submerge_conf_set SUBMERGE_MACHINE "$_in"
+    reading "  来源 [${SUBMERGE_SOURCE}]: " _in
+    [ -n "$_in" ] && submerge_conf_set SUBMERGE_SOURCE "$_in"
+    green "✅ 已保存到 $SUBMERGE_CONF"
+    submerge_conf_show
+}
+
+interactive_submerge_menu() {
+    local _ch
+    while true; do
+        clear
+        submerge_load
+        green "========= [13] 上报到 sub-merge ========="
+        echo ""
+        if [ -n "$SUBMERGE_TOKEN" ]; then
+            green "  服务端：${SUBMERGE_BASE%/}"
+            green "  机器名：${SUBMERGE_MACHINE}    来源：${SUBMERGE_SOURCE}    凭证：已配置"
+        else
+            red "  尚未配置上报凭证（先选 2 填 REPORT_TOKEN）"
+        fi
+        if [ -s "$SINGBOX_FOLDER_PATH/jh.txt" ]; then
+            purple "  本机节点：$(grep -c . "$SINGBOX_FOLDER_PATH/jh.txt" 2> /dev/null) 条（$SINGBOX_FOLDER_PATH/jh.txt）"
+        else
+            purple "  本机节点：暂无 jh.txt（先 sb sub 生成节点链接）"
+        fi
+        echo ""
+        purple "  1) 立即上报当前节点"
+        purple "  2) 修改上报配置（地址 / 凭证 / 机器名 / 来源）"
+        purple "  3) 查看上报配置"
+        purple "  4) 上传前预览（节点条数 / base64 长度 / 目标地址）"
+        purple "  5) 清除上报配置"
+        purple "  0) 返回主菜单"
+        echo ""
+        reading "  请输入选项: " _ch
+        case "$_ch" in
+            0|q|Q) return 0 ;;
+            1) submerge_report; menu_pause ;;
+            2) submerge_configure; menu_pause ;;
+            3) submerge_conf_show; menu_pause ;;
+            4) submerge_preview; menu_pause ;;
+            5)
+                rm -f "$SUBMERGE_CONF" 2> /dev/null
+                green "✅ 已清除 $SUBMERGE_CONF"
+                menu_pause ;;
+            *) yellow "无效选项"; sleep 1 ;;
+        esac
+    done
+}
+# ================== 上报到 sub-merge END ==================
+
 interactive_main() {
     local _ch
     geo_prefetch
@@ -10241,6 +10495,9 @@ interactive_main() {
         yellow "  【日 志】"
         green "    [10] 查看日志 (logs)"
         echo ""
+        yellow "  【上 报】"
+        green "    [13] 上报到 sub-merge (report)"
+        echo ""
         red   "  【危险操作】"
         red   "    [11] 卸载 (del, 保留二进制)"
         red   "    [12] 卸载全部并清理 (delall)"
@@ -10259,6 +10516,7 @@ interactive_main() {
             7) cip; menu_pause ;;
             8) menu_status_block; show_local_ip_info_with_out_ip_hint; menu_pause ;;
             9) interactive_sub_menu ;;
+            13) interactive_submerge_menu ;;
             10) interactive_log_menu ;;
             11)
                 reading "确认卸载? (y/N): " _ch
@@ -10464,6 +10722,12 @@ main() {
         exit
     fi
 
+    # 上报节点到 sub-merge（自动上报层）
+    if [ "$_cmd" = "report" ] || [ "$_cmd" = "up" ]; then
+        submerge_report
+        exit
+    fi
+
     # 分流管理
     if [ "$_cmd" = "rt" ] || [ "$_cmd" = "rule" ]; then
         rt_manage
@@ -10491,7 +10755,7 @@ main() {
     # 无效命令提示
     echo
     red "❌ 无效命令：$1"
-    yellow "可用命令：menu / ins / rep / del / delall / list / sub / res / ups / rt / node / sc / sc_off / autostart / autostart_off / nginx_start / nginx_stop / nginx_restart / nginx_status"
+    yellow "可用命令：menu / ins / rep / del / delall / list / sub / report / res / ups / rt / node / sc / sc_off / autostart / autostart_off / nginx_start / nginx_stop / nginx_restart / nginx_status"
     showmode
     exit 1
 
