@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.33(2026-11-02)"
+VERSION="3.2.34(2026-11-02)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -10661,8 +10661,12 @@ interactive_submerge_menu() {
         green "========= [13] 上报到 sub-merge ========="
         echo ""
         if [ -n "$SUBMERGE_TOKEN" ]; then
-            green "  服务端：${SUBMERGE_BASE%/}"
-            green "  机器名：${SUBMERGE_MACHINE}    来源：${SUBMERGE_SOURCE}    凭证：已配置"
+            if [ -n "$SUBMERGE_BASE" ]; then
+                green "  服务端：${SUBMERGE_BASE%/}"
+            else
+                yellow "  服务端：（未配置，选 3 填你自己的 sub-merge 域名）"
+            fi
+            green "  机器名：${SUBMERGE_MACHINE}    来源：${SUBMERGE_SOURCE:-默认}    凭证：已配置"
             if submerge_auto_enabled; then
                 green "  自动上报：已开启（生成节点后自动推送）"
             else
@@ -10709,7 +10713,11 @@ interactive_submerge_menu() {
                     green "✅ 已关闭自动上报（生成节点后不再自动推送）"
                 else
                     submerge_conf_set SUBMERGE_AUTO 1
-                    green "✅ 已开启自动上报（以后每次生成节点都会推到 ${SUBMERGE_BASE%/}）"
+                    if [ -n "$SUBMERGE_BASE" ]; then
+                        green "✅ 已开启自动上报（以后每次生成节点都会推到 ${SUBMERGE_BASE%/}）"
+                    else
+                        green "✅ 已开启自动上报（还没填上报地址，选 3 补上之后才会真正推送）"
+                    fi
                     [ -n "${REPORT_FLAG:-}" ] && yellow "   注意：当前 shell 里 REPORT_FLAG=$REPORT_FLAG，它会覆盖配置文件"
                 fi
                 menu_pause ;;
