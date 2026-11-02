@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.39(2026-11-02)"
+VERSION="3.2.41(2026-11-02)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -6146,6 +6146,9 @@ cleandel() {
                     [ -e "$item" ] || continue
                     case "$(basename "$item")" in
                         sing-box|cloudflared|logs|nginx) continue ;;
+                        # 上报地址/凭证/排除偏好属于长期配置（token 只能去 sub-merge
+                        # 后台重新拿），重装后还要用；要彻底清干净用 delall
+                        submerge.conf) continue ;;
                         *) rm -rf "$item" 2>/dev/null ;;
                     esac
                 done
@@ -10241,6 +10244,26 @@ submerge_load() {
     if [ -s "$SUBMERGE_CONF" ]; then
         . "$SUBMERGE_CONF" 2> /dev/null || true
     fi
+    # 显式清除本机上报配置：REPORT_CLEAR=1
+    #   与「传空字符串」区分开 —— REPORT_TOKEN="" 在 CI 里往往只是 secret 没配，
+    #   语义不稳定，不能拿它表达「我要清掉」。清除后仍可带 REPORT_* 重新填。
+    #   清完立刻把开关置 0：submerge_load 在一次安装里会被调很多次，
+    #   如果开关一直亮着，刚写进去的新值下一轮就被自己清掉。
+    if [ "${REPORT_CLEAR:-0}" = "1" ]; then
+        SUBMERGE_BASE=""
+        SUBMERGE_TOKEN=""
+        SUBMERGE_MACHINE=""
+        SUBMERGE_SOURCE=""
+        # 排除项回到默认 socks5：不能留空，否则后面「conf 里已有 SUBMERGE_EXCLUDE 行
+        # 就不再注入默认值」的判断会让本次运行拿到空值 = 不过滤
+        SUBMERGE_EXCLUDE="socks5"
+        SUBMERGE_AUTO="0"
+        : > "$SUBMERGE_CONF" 2> /dev/null || true
+        submerge_conf_set SUBMERGE_EXCLUDE "socks5"
+        submerge_conf_set SUBMERGE_AUTO "0"
+        yellow "  已清除本机上报配置（REPORT_CLEAR=1），回到未配置状态"
+        REPORT_CLEAR=0
+    fi
     # 环境变量给了值就覆盖并持久化（下次不带环境变量也还在）
     if [ -n "${REPORT_BASE:-}" ]; then
         SUBMERGE_BASE="$REPORT_BASE"
@@ -10400,7 +10423,7 @@ submerge_kind_of() {
     esac
     if [ "$_scheme" = "vmess" ]; then
         # vmess 是 base64 JSON，path 只能解出来看
-        _json="$(printf '%s' "$_l" | sed 's#^vmess://##' | tr -d ' \r\n' | base64 -d 2> /dev/null || true)"
+        _json="$(printf '%s' "${_l%%#*}" | sed 's#^vmess://##' | tr -d ' \r\n' | base64 -d 2> /dev/null || true)"
         case "$_json" in
             *-vm-cdn*) printf '%s' "vmess-cdn"; return 0 ;;
             *-vm*) printf '%s' "vmess-argo"; return 0 ;;
@@ -10409,6 +10432,12 @@ submerge_kind_of() {
     fi
     case "$_l" in
         *security=reality*) printf '%s' "vless-reality"; return 0 ;;
+    esac
+    # 形态标记只认 path 参数：早先对整条 URL 做 *-tr* 匹配，
+    # 用户把 SNI/host 填成 xxx-tr.example.com 时会被误判成 trojan-argo。
+    _path="$(printf '%s' "${_l%%#*}" | sed -n 's/.*[?&]path=\([^&#]*\).*/\1/p')"
+    [ -n "$_path" ] || _path="${_l%%#*}"
+    case "$_path" in
         *-vl-cdn* | *-tr-cdn*) printf '%s' "$_scheme-cdn"; return 0 ;;
         *-vl*) printf '%s' "vless-argo"; return 0 ;;
         *-tr*) printf '%s' "trojan-argo"; return 0 ;;
@@ -10425,6 +10454,38 @@ submerge_kind_excluded() {
         case "$_k" in "$_t"-*) return 0 ;; esac
     done
     return 1
+}
+
+# 当前会上报的协议形态（全集减去排除项，空格分隔）
+submerge_kinds_to_report() {
+    local _ex _k _out
+    _ex="$(submerge_exclude_list)"
+    _out=""
+    for _k in $SUBMERGE_PROTOCOLS; do
+        submerge_kind_excluded "$_k" "$_ex" && continue
+        _out="${_out:+$_out }$_k"
+    done
+    printf '%s' "${_out:-（无，全被排除了）}"
+}
+
+# 统计节点文件里各形态的条数 → 「vless-argo×2 trojan-argo×1」，第 2 个参数是排除列表
+submerge_kind_counts() {
+    local _f="$1" _ex="$2" _line _k _all _kept _total
+    [ -s "$_f" ] || return 1
+    _all=""
+    _kept=0
+    _total=0
+    while IFS= read -r _line; do
+        [ -n "$_line" ] || continue
+        _total=$((_total + 1))
+        _k="$(submerge_kind_of "$_line")"
+        _all="${_all}${_k}"$'
+'
+        submerge_kind_excluded "$_k" "$_ex" || _kept=$((_kept + 1))
+    done < "$_f"
+    [ -n "$_all" ] || return 1
+    _all="$(printf '%s' "$_all" | sed '/^$/d' | sort | uniq -c | awk '{printf "%s%s×%s", (NR>1?" ":""), $2, $1}')"
+    printf '%s（共 %s 条，排除后上报 %s 条）' "$_all" "$_total" "$_kept"
 }
 
 # 按排除列表过滤节点文件 → stdout（空行自动丢掉，方便客户端解析）
@@ -10700,12 +10761,15 @@ submerge_conf_show() {
     green "  机器名　：${SUBMERGE_MACHINE}"
     green "  来源　　：${SUBMERGE_SOURCE:-默认}"
     green "  不上报　：$(submerge_exclude_list_show)"
+    green "  会上报　：$(submerge_kinds_to_report)"
     if submerge_auto_enabled; then
         green "  自动上报：已开启（$(submerge_auto_flag)）"
     else
         yellow "  自动上报：已关闭（默认，只有 REPORT_FLAG=1 才自动上报）"
     fi
     purple "  配置文件：${SUBMERGE_CONF}（$(submerge_conf_perm)）"
+    purple "  取值顺序：环境变量 REPORT_* > 配置文件 > 默认值（传参会写回配置文件）"
+    purple "  清除配置：REPORT_CLEAR=1 重装一次，或 sb report → 3) 地址处填 - "
 }
 
 # 交互式修改配置（回车保持原值）
@@ -10729,7 +10793,10 @@ submerge_configure() {
     yellow "  来源留空即可（同一台机器要分多份数据时才填，比如 hk2）"
     reading "  来源 [${SUBMERGE_SOURCE:-默认}]: " _in
     [ -n "$_in" ] && submerge_conf_set SUBMERGE_SOURCE "$_in"
-    yellow "  不上报的协议：英文逗号分隔，可选 vless,vmess,trojan,hysteria2,tuic,anytls；输入 - 清空"
+    yellow "  不上报的协议：英文逗号分隔；输入 - 清空，回车保持"
+    purple "    协议　：vless vmess trojan hysteria2 tuic anytls socks5（填协议名自动含它的细分形态）"
+    purple "    细分　：vless-reality vless-argo vless-cdn vmess-argo vmess-cdn trojan-argo trojan-cdn"
+    purple "    当前会上报：$(submerge_kinds_to_report)"
     reading "  不上报的协议 [$(submerge_exclude_list_show)]: " _in
     if [ "$_in" = "-" ]; then
         SUBMERGE_EXCLUDE=""
@@ -10787,6 +10854,10 @@ submerge_status_show() {
     green "  上报凭证：${_mask}"
     green "  机器名　：${SUBMERGE_MACHINE}    来源：${SUBMERGE_SOURCE:-（默认）}"
     green "  不上报　：$(submerge_exclude_list_show)"
+    green "  会上报　：$(submerge_kinds_to_report)"
+    if [ -s "$SINGBOX_FOLDER_PATH/jh.txt" ]; then
+        purple "  节点分布：$(submerge_kind_counts "$SINGBOX_FOLDER_PATH/jh.txt" "$(submerge_exclude_list)")"
+    fi
 
     _lt="$(submerge_state_get LAST_TIME)"
     _lr="$(submerge_state_get LAST_RESULT)"
@@ -10831,6 +10902,11 @@ interactive_submerge_menu() {
             green "  服务端：${SUBMERGE_BASE%/}    凭证：${_cred}"
         else
             yellow "  服务端：未配置（选 3 填你自己的 sub-merge 域名）    凭证：${_cred}"
+        fi
+        green "  不上报：$(submerge_exclude_list_show)"
+        purple "  会上报：$(submerge_kinds_to_report)"
+        if [ -s "$SINGBOX_FOLDER_PATH/jh.txt" ]; then
+            purple "  当前节点：$(submerge_kind_counts "$SINGBOX_FOLDER_PATH/jh.txt" "$(submerge_exclude_list)")"
         fi
         if [ -n "$(submerge_state_get LAST_TIME)" ]; then
             if [ "$(submerge_state_get LAST_RESULT)" = "ok" ]; then
@@ -10932,6 +11008,8 @@ interactive_main() {
             13) interactive_submerge_menu ;;
             10) interactive_log_menu ;;
             11)
+                yellow "  将删除：节点配置、uuid、reality 密钥、argo 凭证、上报状态记录"
+                yellow "  将保留：sing-box / cloudflared / 沙箱 nginx 二进制、logs、上报配置（submerge.conf）"
                 reading "确认卸载? (y/N): " _ch
                 if [ "$_ch" = "y" ] || [ "$_ch" = "Y" ]; then
                     cleandel
@@ -10939,6 +11017,7 @@ interactive_main() {
                 fi
                 menu_pause ;;
             12)
+                red "  将删除：整个 $SINGBOX_FOLDER_PATH（二进制、配置、日志、上报配置全部）"
                 reading "确认卸载全部并清理? (y/N): " _ch
                 if [ "$_ch" = "y" ] || [ "$_ch" = "Y" ]; then
                     cleandel delall

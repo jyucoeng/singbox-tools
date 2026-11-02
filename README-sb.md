@@ -1051,8 +1051,14 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 | `REPORT_MACHINE` | `SUBMERGE_MACHINE` | 机器名；界面会把 ④ 的 `name` 作为它下发。不传/为空才回落到 `name`，再退到 hostname |
 | `REPORT_EXCLUDE` | `SUBMERGE_EXCLUDE` | 不上报的协议（默认 `socks5`），英文逗号分隔；可选 `hysteria2 tuic anytls socks5 vless-reality vless-argo vmess-argo trojan-argo vless-cdn vmess-cdn trojan-cdn`（也接受 `vless`/`trojan` 这类前缀，等于把该协议所有形态一起排掉），空=全部上报 |
 | `REPORT_SOURCE` | `SUBMERGE_SOURCE` | 来源名，默认 `default` |
+| `REPORT_CLEAR` | — | `1` 时先把 `submerge.conf` 清空回默认（地址/凭证/机器名/来源清空、排除项回 `socks5`、自动上报关），再走上面的覆盖逻辑。要「清掉」就用它，不要靠传空字符串。**别把它写进常驻环境变量**（如 workflow 的 `env:`）——那样每次运行都会先清一次，配置存不住；它在一次进程内只生效一次 |
 
-优先级：环境变量 > 配置文件。`REPORT_FLAG` 存在时以它为准（子菜单里会提醒你在覆盖配置）。
+优先级：环境变量 > 配置文件 > 默认值（给过值就写回 `submerge.conf`，所以不会出现「传了新的却被旧值压住」）。
+
+有两件事靠「传空字符串」表达不了，需要单独说：
+
+- **清空**：`REPORT_TOKEN=""` 和完全不传 `REPORT_TOKEN`，在 `[ -n "${REPORT_TOKEN:-}" ]` 判断下无法区分；而 CI 里 `secrets.REPORT_TOKEN` 没配就是空串，拿空串表达「我要清掉」会误伤别人的工作流。所以清空走 `REPORT_CLEAR=1`：`REPORT_CLEAR=1 bash <(curl -Ls ...) rep`。同一个命令里带 `REPORT_*` 会先清后填
+- **卸载不删这个文件**：`sb del` 的白名单里有 `submerge.conf`（连同 `sing-box`/`cloudflared`/`logs`/`nginx` 一起保留），原因是 `SUBMERGE_TOKEN` 只能去 sub-merge 后台重新创建，重装时最难恢复的就是它。`submerge.state`（上次上报时间等）仍然删除，避免重装后显示陈旧记录。要彻底清干净用 `sb delall`（删整个目录），或者在子菜单 `3) 修改配置` 的地址处填 `-`、跑一次 `REPORT_CLEAR=1`
 
 - **凭证**：只认 sub-merge 的 `REPORT_TOKEN`，主订阅 token 上报会被 401 拒绝（订阅链接泄露也写不了数据）
 - **内容**：脚本自动把 `jh.txt` 整段 base64 后 POST，不用手工编码；`jh.txt` 不存在时会先按当前配置重新生成
@@ -1061,6 +1067,23 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 - **失败提示**：401 凭证错、400 机器名/内容不合规、413 超过 512KB、连不上域名，都会给对应的中文提示
 
 ## 2.7 版本变更信息
+
+v3.2.41 (2026-11-02)
+ > 卸载保留上报配置；新增 REPORT_CLEAR 显式清除；配置文件展示取值优先级。
+
+- **`sb del` 不再删上报配置**：`cleandel` 的白名单从 `sing-box|cloudflared|logs|nginx` 增加 `submerge.conf`。原来 `del`（自称「保留二进制便于重装」）会把 `submerge.conf` 一起 `rm`，而里面的 `SUBMERGE_TOKEN` 只能去 sub-merge 后台重新创建，重装时最难恢复的偏偏是它。`submerge.state`（上次上报时间等历史记录）仍然删除，留着重装后会显示「3 天前上报成功」，反而误导。`delall` 行为不变，整目录删干净
+- **新增 `REPORT_CLEAR=1`**：保留配置文件之后，「我想清掉上报配置」就没了出口 —— `REPORT_TOKEN=""` 和完全不传在 `[ -n ]` 判断下无法区分，而 CI 里 `secrets.REPORT_TOKEN` 没配就是空串，拿空串表达「清除」会误伤。现在用独立开关：`REPORT_CLEAR=1 bash <(curl -Ls ...) rep` 把 `submerge.conf` 清空并回到默认（地址/凭证/机器名/来源清空，排除项回 `socks5`，自动上报关）。同一个命令里带 `REPORT_*` 会先清后填
+- **修清除时的排除项默认值**：清除后若把 `SUBMERGE_EXCLUDE` 置空，后面「conf 里已有 `SUBMERGE_EXCLUDE` 行就不再注入默认值」的判断会让本次运行拿到空值（= 完全不过滤，socks5 也会被报上去）。清除块直接置 `socks5`，与「未配置时默认 socks5」保持一致
+- **配置展示补两行**：`sb report → 4) 查看详情` 增加 `取值顺序：环境变量 REPORT_* > 配置文件 > 默认值（传参会写回配置文件）` 与 `清除配置：REPORT_CLEAR=1 重装一次，或 sb report → 3) 地址处填 - `，解决「我传了到底有没有生效」的疑问
+- **卸载提示写清删留清单**：`[11] 卸载` 前打印「将删除：节点配置、uuid、reality 密钥、argo 凭证、上报状态记录 / 将保留：二进制、logs、上报配置」，`[12] 卸载全部` 提示「将删除整个目录」。原来只有一句「确认卸载? (y/N)」，用户不知道会连带清掉上报凭证
+
+v3.2.40 (2026-11-02)
+ > 上报菜单直接显示「排除什么 / 会报什么」；修 SNI 里带 -tr 被误判成 trojan-argo。
+
+- **菜单可见**：`sb report` 子菜单和 `sb report status` 新增两行 —— `不上报：<排除列表>`、`会上报：<实际会发出去的形态>`；本机有 `jh.txt` 时再多一行 `当前节点：vless-argo×2 trojan-argo×1 …（共 N 条，排除后上报 M 条）`，一眼就能看出这次到底会报什么、少了几条
+- **`3) 修改配置` 的提示补全**：原来只列了 `vless,vmess,trojan,hysteria2,tuic,anytls` 六个，现在把 `socks5` 和 8 个细分形态（`vless-reality vless-argo vless-cdn vmess-argo vmess-cdn trojan-argo trojan-cdn`）一并列出，并显示当前会上报的形态
+- **修误判**：`submerge_kind_of()` 原来拿整条链接匹配 `*-tr*`，用户把 SNI/host 填成 `xxx-tr.example.com` 时，一条 vless 会被判成 `trojan-argo`，于是勾了「排除 trojan」就连它一起被丢掉。现在形态标记只从 `path=` 参数取，`security=reality` 仍按 query 判定
+- **vmess 兼容 `#fragment`**：`vmess://<base64>#名称` 这种手写/外部导入的链接原来整串送进 base64 解码会失败，直接退化成 `vmess` 粗粒度；现在先剥掉 `#` 之后的部分再解码，`-vm` / `-vm-cdn` 能正常认出来（脚本自己生成的 vmess 不带 fragment，不受影响）
 
 v3.2.39 (2026-11-02)
  > Socks5 默认不上报；勾选项按栅格对齐。
