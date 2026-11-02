@@ -1079,7 +1079,7 @@ v3.2.37 (2026-11-02)
  - **过滤**：`submerge_filter_nodes()` 按链接 scheme 精确匹配（`^scheme://`），空行顺手丢掉；上报与预览都走它
  - **行为**：`submerge_report()` 过滤后重新编码，「📤 正在上报」里显示「已排除 …」；全部被排除时直接报错并记一条失败状态（`排除协议后没有节点`），不会发空 body
  - **可见性**：`查看详情`/`查看配置`/`查看状态` 都多一行「不上报：vless,trojan」或「（不过滤，全部上报）」；`3) 修改配置` 增加该项（输入 `-` 清空）
- - 实测：6 条节点（hy2/tuic/vless/vmess/trojan/anytls）排除 `vless,trojan` → 上报 4 条，服务端收到 3 条（anytls 服务端不解析），重复上报仍 `changed:false`
+ - 实测：6 条节点（hy2/tuic/vless/vmess/trojan/anytls）排除 `vless,trojan` → 上报 4 条；服务端只认 3 条是因为那条 vmess 是手工构造的残缺样本（缺 port/id）解析失败，不是 anytls 的问题——单报 anytls、单报 socks5 都能正常进库
 
 v3.2.36 (2026-11-02)
  > 机器名统一由 `REPORT_MACHINE` 下发，脚本只在它为空时才取 `name`。
