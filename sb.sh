@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.30(2026-11-02)"
+VERSION="3.2.31(2026-11-02)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -1072,6 +1072,8 @@ print_sb_shortcut_help() {
     green "    sb node            节点配置修改 (端口/订阅/SNI/Argo)"
     green "    sb sub             订阅管理"
     green "    sb report          上报节点到 sub-merge（自动上报层）"
+    green "    sb report status   查看上报状态（开关/最近一次时间与结果/地址/凭证）"
+    green "    sb report on|off   开关自动上报"
     green "    sb del             卸载（保留二进制）"
     green "    sb delall          卸载全部并清理"
     green "    sb ups             更新 sing-box 内核"
@@ -10224,6 +10226,7 @@ restore_direct_outbound() {
 # 服务端存成这台机器的「自动上报」层，立刻进合并订阅；本机手动层不受影响。
 SUBMERGE_DEFAULT_BASE="https://sub.dingdang.de5.net"
 SUBMERGE_CONF="$SINGBOX_FOLDER_PATH/submerge.conf"
+SUBMERGE_STATE="$SINGBOX_FOLDER_PATH/submerge.state"
 
 # 读取上报配置（地址 / 凭证 / 机器名 / 来源 / 自动开关），缺省给默认值
 # 环境变量优先并自动落盘：REPORT_BASE / REPORT_TOKEN / REPORT_MACHINE / REPORT_SOURCE / REPORT_FLAG
@@ -10350,7 +10353,49 @@ submerge_b64_file() {
 
 # 机器名百分号编码（中文也能用）
 submerge_urlencode() {
-    printf '%s' "${1:-}" | od -An -tx1 -v 2> /dev/null | tr -d ' \n' | sed 's/../%&/g'
+    printf '%s' "${1:-}" | od -An -tx1 -v 2> /dev/null | tr -d ' \n' | tr 'a-f' 'A-F' | sed 's/../%&/g'
+}
+
+# 完整上报地址（含 ?source=），状态页与提示共用
+submerge_target_url() {
+    local _u _b
+    _b="${SUBMERGE_BASE:-$SUBMERGE_DEFAULT_BASE}"
+    _b="${_b%/}"
+    _u="${_b}/api/v1/report/$(submerge_urlencode "${SUBMERGE_MACHINE:-}")"
+    if [ -n "${SUBMERGE_SOURCE:-}" ] && [ "$SUBMERGE_SOURCE" != "default" ]; then
+        _u="${_u}?source=$(submerge_urlencode "$SUBMERGE_SOURCE")"
+    fi
+    printf '%s' "$_u"
+}
+
+# 上报状态落盘（/root/doraemon/submerge.state，600）
+submerge_state_set() {
+    local _k="$1" _v="$2" _tmp="$SUBMERGE_STATE.tmp"
+    [ -f "$SUBMERGE_STATE" ] || : > "$SUBMERGE_STATE"
+    grep -v "^${_k}=" "$SUBMERGE_STATE" > "$_tmp" 2> /dev/null || : > "$_tmp"
+    printf '%s=%s\n' "$_k" "$_v" >> "$_tmp"
+    mv "$_tmp" "$SUBMERGE_STATE" 2> /dev/null || true
+    chmod 600 "$SUBMERGE_STATE" 2> /dev/null || true
+}
+submerge_state_get() {
+    [ -s "$SUBMERGE_STATE" ] || return 0
+    sed -n "s/^$1=//p" "$SUBMERGE_STATE" 2> /dev/null | tail -n1
+}
+
+# 记录一次上报结果：$1=ok|fail $2=HTTP码 $3=结果说明 $4=节点数
+submerge_record() {
+    local _now
+    _now="$(date '+%Y-%m-%d %H:%M:%S' 2> /dev/null)"
+    submerge_state_set LAST_TIME "$_now"
+    submerge_state_set LAST_RESULT "${1:-fail}"
+    submerge_state_set LAST_HTTP "${2:-}"
+    submerge_state_set LAST_MSG "${3:-}"
+    submerge_state_set LAST_NODES "${4:-}"
+    submerge_state_set LAST_MACHINE "${SUBMERGE_MACHINE:-}"
+    submerge_state_set LAST_SOURCE "${SUBMERGE_SOURCE:-}"
+    submerge_state_set LAST_URL "$(submerge_target_url)"
+    [ "${1:-}" = "ok" ] && submerge_state_set LAST_OK_TIME "$_now"
+    return 0
 }
 
 # 从 JSON 里取字段（不依赖 jq，grep -oE 兼容 BSD/GNU/busybox）
@@ -10370,7 +10415,8 @@ submerge_report() {
 
     if [ -z "$_tok" ]; then
         red "❌ 还没有配置上报凭证"
-        yellow "   先执行：sb report 进入菜单选 2 配置，或直接把下面几行写进 $SUBMERGE_CONF"
+        submerge_record fail "" "未配置上报凭证"
+        yellow "   先执行：sb report 进入菜单，或直接把下面几行写进 $SUBMERGE_CONF"
         echo "   SUBMERGE_BASE=https://sub.dingdang.de5.net"
         echo "   SUBMERGE_TOKEN=<上报凭证 REPORT_TOKEN>"
         echo "   SUBMERGE_MACHINE=<机器名，如 hk-1>"
@@ -10385,6 +10431,7 @@ submerge_report() {
     fi
     if [ ! -s "$SINGBOX_FOLDER_PATH/jh.txt" ]; then
         red "❌ 节点文件为空：$SINGBOX_FOLDER_PATH/jh.txt"
+        submerge_record fail "" "节点文件为空"
         yellow "   先装好节点（sb ins）或执行 sb sub 生成节点链接再上报"
         return 1
     fi
@@ -10392,6 +10439,7 @@ submerge_report() {
     _b64="$(submerge_b64_file "$SINGBOX_FOLDER_PATH/jh.txt")"
     if [ -z "$_b64" ]; then
         red "❌ base64 编码失败（缺 openssl / base64？）"
+        submerge_record fail "" "base64 编码失败"
         return 1
     fi
 
@@ -10416,12 +10464,15 @@ submerge_report() {
         if [ "$_changed" = "true" ]; then
             green "✅ 上报成功：节点 ${_nodes} 条（自动 ${_auto} + 手动 ${_manual}）"
             purple "   内容已更新，更新时间 ${_when}"
+            submerge_record ok "$_code" "内容已更新，节点 ${_nodes} 条（自动 ${_auto} + 手动 ${_manual}）" "${_nodes:-$_cnt}"
         elif [ "$_changed" = "false" ]; then
             green "✅ 上报成功，但内容与上次完全一致（服务端未重复写入）"
             purple "   当前节点 ${_nodes} 条（自动 ${_auto} + 手动 ${_manual}），最近更新 ${_when}"
+            submerge_record ok "$_code" "内容未变，节点 ${_nodes} 条（自动 ${_auto} + 手动 ${_manual}）" "${_nodes:-$_cnt}"
         else
             green "✅ 上报成功"
             sed -n '1,3p' "$_body" 2> /dev/null
+            submerge_record ok "$_code" "上报成功" "${_cnt}"
         fi
         rm -f "$_body" 2> /dev/null
         return 0
@@ -10431,6 +10482,7 @@ submerge_report() {
     _err="$(_submerge_jstr error "$_body")"
     [ -n "$_err" ] || _err="$(cat "$_body" 2> /dev/null | head -c 200)"
     red "❌ 上报失败（HTTP ${_code}）：${_err}"
+    submerge_record fail "$_code" "HTTP ${_code}：${_err}" ""
     case "$_code" in
         401) yellow "   凭证不对：上报只认 REPORT_TOKEN，不能用主订阅 token" ;;
         400) yellow "   参数问题：检查机器名（首字符字母/数字，可含中文、空格、_ . -，≤64 字符）" ;;
@@ -10506,6 +10558,62 @@ submerge_configure() {
     submerge_conf_show
 }
 
+# 上报状态查询：开关 / 最近一次时间与结果 / 地址与凭证
+submerge_status_show() {
+    submerge_load
+    local _mask _flag _lt _lr _lmsg _lhttp _lnodes _lasturl _lok
+    green "========= 上报状态 ========="
+    _flag="$(submerge_auto_flag)"
+    if submerge_auto_enabled; then
+        green "  自动上报：已开启（${_flag}）"
+    else
+        yellow "  自动上报：已关闭（${_flag:-0}）—— 装完不会推送，手动上报不受影响"
+    fi
+    if [ -n "${REPORT_FLAG:-}" ]; then
+        purple "    开关来源：环境变量 REPORT_FLAG=${REPORT_FLAG}（覆盖配置文件）"
+    else
+        purple "    开关来源：$SUBMERGE_CONF 里的 SUBMERGE_AUTO"
+    fi
+
+    if [ -n "$SUBMERGE_TOKEN" ]; then
+        if [ ${#SUBMERGE_TOKEN} -gt 12 ]; then
+            _mask="$(printf '%s' "$SUBMERGE_TOKEN" | cut -c1-6)****$(printf '%s' "$SUBMERGE_TOKEN" | rev | cut -c1-4 | rev)"
+        else
+            _mask="****"
+        fi
+    else
+        _mask="（未配置）"
+    fi
+    green "  上报地址：$(submerge_target_url)"
+    green "  上报凭证：${_mask}"
+    green "  机器名　：${SUBMERGE_MACHINE}    来源：${SUBMERGE_SOURCE}"
+
+    _lt="$(submerge_state_get LAST_TIME)"
+    _lr="$(submerge_state_get LAST_RESULT)"
+    _lmsg="$(submerge_state_get LAST_MSG)"
+    _lhttp="$(submerge_state_get LAST_HTTP)"
+    _lnodes="$(submerge_state_get LAST_NODES)"
+    _lasturl="$(submerge_state_get LAST_URL)"
+    _lok="$(submerge_state_get LAST_OK_TIME)"
+
+    echo ""
+    if [ -n "$_lt" ]; then
+        if [ "$_lr" = "ok" ]; then
+            green "  最近一次：${_lt}  成功${_lhttp:+ (HTTP $_lhttp)}"
+        else
+            red "  最近一次：${_lt}  失败${_lhttp:+ (HTTP $_lhttp)}"
+        fi
+        purple "    结果：${_lmsg:-（无详细说明）}"
+        [ -n "$_lnodes" ] && purple "    节点：${_lnodes} 条"
+        [ -n "$_lasturl" ] && purple "    目标：${_lasturl}"
+        [ -n "$_lok" ] && green "  最近成功：${_lok}"
+    else
+        yellow "  还没有上报记录（手动 sb report 或开启自动上报后生成节点会记录下来）"
+    fi
+    purple "  状态文件：$SUBMERGE_STATE"
+    purple "  配置文件：$SUBMERGE_CONF"
+}
+
 interactive_submerge_menu() {
     local _ch
     while true; do
@@ -10524,28 +10632,39 @@ interactive_submerge_menu() {
         else
             red "  尚未配置上报凭证（先选 2 填 REPORT_TOKEN）"
         fi
+        if [ -n "$(submerge_state_get LAST_TIME)" ]; then
+            if [ "$(submerge_state_get LAST_RESULT)" = "ok" ]; then
+                green "  最近上报：$(submerge_state_get LAST_TIME) 成功"
+            else
+                red "  最近上报：$(submerge_state_get LAST_TIME) 失败"
+            fi
+        else
+            purple "  最近上报：暂无记录"
+        fi
         if [ -s "$SINGBOX_FOLDER_PATH/jh.txt" ]; then
             purple "  本机节点：$(grep -c . "$SINGBOX_FOLDER_PATH/jh.txt" 2> /dev/null) 条（$SINGBOX_FOLDER_PATH/jh.txt）"
         else
             purple "  本机节点：暂无 jh.txt（先 sb sub 生成节点链接）"
         fi
         echo ""
-        purple "  1) 立即上报当前节点"
-        purple "  2) 修改上报配置（地址 / 凭证 / 机器名 / 来源）"
-        purple "  3) 查看上报配置"
-        purple "  4) 上传前预览（节点条数 / base64 长度 / 目标地址）"
-        purple "  5) 切换自动上报开关（当前：$(submerge_auto_enabled && echo 开 || echo 关)）"
-        purple "  6) 清除上报配置"
+        purple "  1) 查看上报状态（开关 / 最近一次时间与结果 / 地址 / 凭证）"
+        purple "  2) 立即上报当前节点"
+        purple "  3) 修改上报配置（地址 / 凭证 / 机器名 / 来源）"
+        purple "  4) 查看上报配置"
+        purple "  5) 上传前预览（节点条数 / base64 长度 / 目标地址）"
+        purple "  6) 切换自动上报开关（当前：$(submerge_auto_enabled && echo 开 || echo 关)）"
+        purple "  7) 清除上报配置"
         purple "  0) 返回主菜单"
         echo ""
         reading "  请输入选项: " _ch
         case "$_ch" in
             0|q|Q) return 0 ;;
-            1) submerge_report; menu_pause ;;
-            2) submerge_configure; menu_pause ;;
-            3) submerge_conf_show; menu_pause ;;
-            4) submerge_preview; menu_pause ;;
-            5)
+            1) submerge_status_show; menu_pause ;;
+            2) submerge_report; menu_pause ;;
+            3) submerge_configure; menu_pause ;;
+            4) submerge_conf_show; menu_pause ;;
+            5) submerge_preview; menu_pause ;;
+            6)
                 if submerge_auto_enabled; then
                     submerge_conf_set SUBMERGE_AUTO 0
                     green "✅ 已关闭自动上报（生成节点后不再自动推送）"
@@ -10555,9 +10674,9 @@ interactive_submerge_menu() {
                     [ -n "${REPORT_FLAG:-}" ] && yellow "   注意：当前 shell 里 REPORT_FLAG=$REPORT_FLAG，它会覆盖配置文件"
                 fi
                 menu_pause ;;
-            6)
-                rm -f "$SUBMERGE_CONF" 2> /dev/null
-                green "✅ 已清除 $SUBMERGE_CONF"
+            7)
+                rm -f "$SUBMERGE_CONF" "$SUBMERGE_STATE" 2> /dev/null
+                green "✅ 已清除 $SUBMERGE_CONF 与上报状态"
                 menu_pause ;;
             *) yellow "无效选项"; sleep 1 ;;
         esac
@@ -10819,9 +10938,22 @@ main() {
     fi
 
     # 上报节点到 sub-merge（自动上报层）
+    #   sb report           立即上报一次
+    #   sb report status    查看上报状态（开关 / 最近一次时间与结果 / 地址 / 凭证）
+    #   sb report on|off    开关自动上报
+    #   sb rstatus          等价于 sb report status
     if [ "$_cmd" = "report" ] || [ "$_cmd" = "up" ]; then
-        submerge_report
-        exit
+        case "${2:-}" in
+            status|st|state) submerge_status_show; exit 0 ;;
+            on|enable|1) submerge_conf_set SUBMERGE_AUTO 1; green "✅ 已开启自动上报"; submerge_status_show; exit 0 ;;
+            off|disable|0) submerge_conf_set SUBMERGE_AUTO 0; green "✅ 已关闭自动上报"; submerge_status_show; exit 0 ;;
+            "") submerge_report; exit ;;
+            *) red "未知参数：sb report ${2}"; yellow "   可用：sb report | sb report status | sb report on | sb report off"; exit 1 ;;
+        esac
+    fi
+    if [ "$_cmd" = "rstatus" ] || [ "$_cmd" = "reportstatus" ]; then
+        submerge_status_show
+        exit 0
     fi
 
     # 分流管理
@@ -10851,7 +10983,7 @@ main() {
     # 无效命令提示
     echo
     red "❌ 无效命令：$1"
-    yellow "可用命令：menu / ins / rep / del / delall / list / sub / report / res / ups / rt / node / sc / sc_off / autostart / autostart_off / nginx_start / nginx_stop / nginx_restart / nginx_status"
+    yellow "可用命令：menu / ins / rep / del / delall / list / sub / report / report status / res / ups / rt / node / sc / sc_off / autostart / autostart_off / nginx_start / nginx_stop / nginx_restart / nginx_status"
     showmode
     exit 1
 

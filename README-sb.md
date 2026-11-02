@@ -935,6 +935,9 @@ sb rt              分流管理
 sb node            节点配置修改 (端口/订阅/SNI/Argo/身份信息/服务器地址)
 sb sub             订阅管理
 sb report          上报节点到 sub-merge（自动上报层）
+sb report status   查看上报状态（开关 / 最近一次时间与结果 / 地址 / 凭证）
+sb report on|off   开/关自动上报
+sb rstatus         同 sb report status
 sb del             卸载（保留二进制）
 sb delall          卸载全部并清理
 sb ups             更新 sing-box 内核
@@ -955,7 +958,7 @@ sb log_stop        查看服务停止原因日志（排查崩溃用）
 
 ## 2.6.1 上报节点到 sub-merge（v3.2.29 新增）
 
-把本机 `jh.txt` 里的全部节点链接上报到自己的订阅聚合服务（sub-merge）。`sb.sh` 与 `sb00.sh` 两份脚本都已支持（除 `SB_SCRIPT_NAME` 外保持一致）。，服务端存成这台机器的「自动上报」层，立刻进入合并订阅；本机的手动层不受影响。
+把本机 `jh.txt` 里的全部节点链接上报到自己的订阅聚合服务（sub-merge），服务端存成这台机器的「自动上报」层，立刻进入合并订阅；本机的手动层不受影响。`sb.sh` 与 `sb00.sh` 两份脚本都已支持（除 `SB_SCRIPT_NAME` 外保持一致）。
 
 **默认不上报**。两种用法：
 
@@ -977,18 +980,54 @@ bash <(curl -Ls ...)    # 或 sb report 里手工配置
 
 - `REPORT_FLAG` 未设置或为 `0` → 生成节点后什么都不做（默认行为）
 - `REPORT_FLAG=1` → 每次 `sb ins / rep / sub` 生成节点后自动推送一次；失败只在末尾黄字提示，不影响节点生成
-- 也可以不设环境变量，进 `sb report` 子菜单选 `5) 切换自动上报开关`，开关写在配置文件里
+- 也可以不设环境变量，进 `sb report` 子菜单选 `6) 切换自动上报开关`，开关写在配置文件里
+- 每次上报（手动 / 自动）都会把结果记到 `/root/doraemon/submerge.state`，用 `sb report status` 或子菜单 `1)` 随时查
 
 子菜单：
 
 ```
-1) 立即上报当前节点
-2) 修改上报配置（地址 / 凭证 / 机器名 / 来源）
-3) 查看上报配置（凭证打码 + 自动上报开关状态）
-4) 上传前预览（节点条数 / base64 长度 / 目标地址）
-5) 切换自动上报开关（开 / 关，写进配置文件）
-6) 清除上报配置
+1) 查看上报状态（开关 / 最近一次时间与结果 / 地址 / 凭证）
+2) 立即上报当前节点
+3) 修改上报配置（地址 / 凭证 / 机器名 / 来源）
+4) 查看上报配置（凭证打码 + 自动上报开关状态）
+5) 上传前预览（节点条数 / base64 长度 / 目标地址）
+6) 切换自动上报开关（开 / 关，写进配置文件）
+7) 清除上报配置（连状态记录一起清）
 ```
+
+### 上报状态查询（v3.2.31 新增）
+
+上报结果会落盘，装完/覆盖装/改配置触发的自动上报同样记录：
+
+```bash
+sb report status     # 或 sb rstatus，或主菜单 [13] → 1)
+```
+
+输出示例：
+
+```
+========= 上报状态 =========
+  自动上报：已开启（1）
+    开关来源：/root/doraemon/submerge.conf 里的 SUBMERGE_AUTO
+  上报地址：https://sub.dingdang.de5.net/api/v1/report/hk-1?source=airportA
+  上报凭证：6a4a25****44ad
+  机器名　：hk-1    来源：airportA
+
+  最近一次：2026-11-02 18:53:55  成功 (HTTP 200)
+    结果：内容已更新，节点 6 条（自动 6 + 手动 0）
+    节点：6 条
+    目标：https://sub.dingdang.de5.net/api/v1/report/hk-1?source=airportA
+  最近成功：2026-11-02 18:53:55
+  状态文件：/root/doraemon/submerge.state
+  配置文件：/root/doraemon/submerge.conf
+```
+
+- 开关：显示开/关与取值来源（环境变量 `REPORT_FLAG` 优先于配置文件）
+- 地址：完整上报路径（含 `?source=`，可直接复制给别的机器用）
+- 凭证：打码显示（前 6 位 + 后 4 位）
+- 最近一次：时间 + 成功/失败 + HTTP 码 + 结果说明 + 节点数；另存「最近成功」时间，失败不会覆盖它
+- 状态文件 `/root/doraemon/submerge.state`（600），键：`LAST_TIME` `LAST_RESULT` `LAST_HTTP` `LAST_MSG` `LAST_NODES` `LAST_MACHINE` `LAST_SOURCE` `LAST_URL` `LAST_OK_TIME`
+- 自动上报也会记录：`sb ins` / `sb rep` / `sb sub` / 配置修改后只要开关是开的，都会写一条结果
 
 配置落盘在 `/root/doraemon/submerge.conf`（权限 600，含上报凭证，别外传）：
 
@@ -1019,6 +1058,17 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 - **失败提示**：401 凭证错、400 机器名/内容不合规、413 超过 512KB、连不上域名，都会给对应的中文提示
 
 ## 2.7 版本变更信息
+
+v3.2.31 (2026-11-02)
+ > 上报结果落盘 + 状态查询：开关、最近一次时间与结果、目标路径与凭证，菜单和命令行都能查。
+
+ - **背景**：自动上报是「装完就推、推完不吭声」，事后想知道「到底推没推、推成功没有、推到哪个地址」得自己翻日志
+ - **记录**：每次上报（手动 / 自动 / 失败）都写 `/root/doraemon/submerge.state`（600）：`LAST_TIME` / `LAST_RESULT`(`ok|fail`) / `LAST_HTTP` / `LAST_MSG` / `LAST_NODES` / `LAST_MACHINE` / `LAST_SOURCE` / `LAST_URL` / `LAST_OK_TIME`（最近成功时间，失败不覆盖）
+ - **触发面**：`submerge_report()` 的每条出口都记录 —— 未配置凭证、节点文件为空、base64 失败、HTTP 200（`changed:true/false` 分别写「内容已更新」/「内容未变」+ 节点数）、非 200（HTTP 码 + 服务端 error 文案）
+ - **菜单**：`[13] 上报到 sub-merge` 顶部多一行「最近上报：<时间> 成功/失败」；新增 `1) 查看上报状态`，其余选项顺延（立即上报→2、改配置→3、看配置→4、预览→5、切开关→6、清配置→7，清配置会连状态一起删）
+ - **命令行**：`sb report status`（别名 `sb rstatus` / `sb reportstatus`）打状态；`sb report on|off` 直接开关自动上报；未知参数给用法提示
+ - **状态页内容**：开关 + 取值来源（环境变量 `REPORT_FLAG` 优先于 conf）、完整上报地址（含 `?source=`）、打码凭证、机器名/来源、最近一次（时间/成功失败/HTTP/说明/节点数/目标 URL）、最近成功时间、状态文件与配置文件路径
+ - **实测**（抽取函数对线上跑）：未配置时显示「已关闭 + 还没有上报记录」；配置后手动上报写入 `ok 200 内容已更新 节点 2 条`；错凭证写入 `fail 401 unauthorized` 且「最近成功」保持不变；开启自动上报后 `submerge_auto_report` 触发同一套记录（`内容未变`）；`sb report status` / `sb report bogus` 输出符合预期
 
 v3.2.30 (2026-11-02)
  > 上报默认关闭：只有 `REPORT_FLAG=1` 才自动上报；地址与凭证落盘到 `submerge.conf`。
