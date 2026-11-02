@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.38(2026-11-02)"
+VERSION="3.2.39(2026-11-02)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -10283,6 +10283,11 @@ submerge_load() {
         SUBMERGE_MACHINE="$(cat "$SINGBOX_FOLDER_PATH/name" 2> /dev/null | tr -d '\r\n' | sed 's/-*$//')"
         [ -n "$SUBMERGE_MACHINE" ] || SUBMERGE_MACHINE="$(hostname 2> /dev/null | tr -cd 'A-Za-z0-9._-' 2> /dev/null)"
         [ -n "$SUBMERGE_MACHINE" ] || SUBMERGE_MACHINE="sb-node"
+    fi
+    # 没有任何配置时的默认排除项：socks5（多数客户端不吃，默认不报）
+    # 判断依据：环境变量没给、conf 里也没有 SUBMERGE_EXCLUDE 这一行
+    if [ -z "${REPORT_EXCLUDE:-}" ] && ! grep -q '^SUBMERGE_EXCLUDE=' "$SUBMERGE_CONF" 2> /dev/null; then
+        SUBMERGE_EXCLUDE="socks5"
     fi
     # 来源留空即只上 default 一个来源，URL 不带 ?source=（服务端本来就按 default 存）
     # 配过凭证就把「地址 + 自动开关」也固化下来，下次不用再带环境变量

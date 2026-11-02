@@ -1049,7 +1049,7 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 | `REPORT_BASE` | `SUBMERGE_BASE` | 你自己的 sub-merge 域名（必填，无默认值） |
 | `REPORT_TOKEN` | `SUBMERGE_TOKEN` | 上报凭证（只认 `REPORT_TOKEN`，主 token 会 401） |
 | `REPORT_MACHINE` | `SUBMERGE_MACHINE` | 机器名；界面会把 ④ 的 `name` 作为它下发。不传/为空才回落到 `name`，再退到 hostname |
-| `REPORT_EXCLUDE` | `SUBMERGE_EXCLUDE` | 不上报的协议，英文逗号分隔；可选 `hysteria2 tuic anytls socks5 vless-reality vless-argo vmess-argo trojan-argo vless-cdn vmess-cdn trojan-cdn`（也接受 `vless`/`trojan` 这类前缀，等于把该协议所有形态一起排掉），空=全部上报 |
+| `REPORT_EXCLUDE` | `SUBMERGE_EXCLUDE` | 不上报的协议（默认 `socks5`），英文逗号分隔；可选 `hysteria2 tuic anytls socks5 vless-reality vless-argo vmess-argo trojan-argo vless-cdn vmess-cdn trojan-cdn`（也接受 `vless`/`trojan` 这类前缀，等于把该协议所有形态一起排掉），空=全部上报 |
 | `REPORT_SOURCE` | `SUBMERGE_SOURCE` | 来源名，默认 `default` |
 
 优先级：环境变量 > 配置文件。`REPORT_FLAG` 存在时以它为准（子菜单里会提醒你在覆盖配置）。
@@ -1061,6 +1061,14 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 - **失败提示**：401 凭证错、400 机器名/内容不合规、413 超过 512KB、连不上域名，都会给对应的中文提示
 
 ## 2.7 版本变更信息
+
+v3.2.39 (2026-11-02)
+ > Socks5 默认不上报；勾选项按栅格对齐。
+
+ - **默认排除 socks5**：环境变量没给、`submerge.conf` 里也没有 `SUBMERGE_EXCLUDE` 这一行时，`submerge_load()` 自动设成 `socks5`（多数客户端不吃这个协议）
+ - **想全报**：`sb report` → `3) 修改配置` → 不上报的协议处直接回车后再输入 `-`，或手写 `SUBMERGE_EXCLUDE=`（空值也算「显式选择不过滤」，不会再被默认值覆盖）
+ - 实测：空配置 → `不上报：socks5`；conf 里留空 → `（不过滤，全部上报）`；`REPORT_EXCLUDE=trojan` → 环境变量优先
+ - 界面：`singbox-tools-interface` 的 Socks5 勾选框默认选中，三行按 60px 标签 + 3 等分栅格对齐
 
 v3.2.38 (2026-11-02)
  > 排除项按 sb00.sh 实际的节点形态细分，而不是只看 scheme。
