@@ -1091,6 +1091,12 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 
 ## 2.7 版本变更信息
 
+v3.2.46 (2026-11-03)
+ > 上报配置摘要补一行「排除协议」。
+
+- 新增 `排除协议：socks5（这几类不上报，其余照常）` / `排除协议：无（全部上报）`
+- 取值与 `sb report status` 的「不上报」一致：走 `submerge_exclude_list()`，认 `hysteria2/socks5/tuic/anytls/vless-reality/vmess-argo/vless-argo/trojan-argo/*-cdn`，`hy2` 归一成 `hysteria2`，不认识的写法直接忽略（不会把 `vless` 这种非 kind 词当排除项）
+
 v3.2.45 (2026-11-03)
  > 安装参数区连带打印节点上报（sub-merge）配置，装完就知道会不会上报。
 

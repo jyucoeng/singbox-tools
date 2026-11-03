@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.45(2026-11-03)"
+VERSION="3.2.46(2026-11-03)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -2243,6 +2243,14 @@ submerge_install_summary() {
     yellow "上报域名：${_base_disp}"
     yellow "上报凭证：${_mask}"
     yellow "上报机器名：${SUBMERGE_MACHINE:-（未设置）}"
+    # 排除项：留空表示什么都上报（v3.2.42 起脚本不再默认塞 socks5）
+    local _ex_disp
+    _ex_disp="$(submerge_exclude_list)"
+    if [ -n "$_ex_disp" ]; then
+        yellow "排除协议：${_ex_disp}（这几类不上报，其余照常）"
+    else
+        yellow "排除协议：无（全部上报）"
+    fi
 }
 
 # Set up name for nodes and IP version preference
