@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.42(2026-11-03)"
+VERSION="3.2.43(2026-11-03)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -4115,6 +4115,8 @@ start_nginx_service() {
         debug_print green "✅ 沙箱 Nginx 已在运行"
         return 0
     fi
+    # pid 文件说「没在跑」，但进程可能还活着（孤儿 master 占着端口）→ 先清掉
+    sb_nginx_kill_orphan
     rm -f "$SB_NGINX_PID" 2> /dev/null
 
     # 启动前先查端口占用：把「系统/宝塔 Nginx 抢端口」这件事直接说清楚，
@@ -4158,6 +4160,41 @@ start_nginx_service() {
 
 nginx_start() {
     start_nginx_service
+}
+
+# 清理「不受 pid 文件管理」的沙箱 Nginx 残留（孤儿 master）
+#   触发场景：旧版卸载只按 pid 文件停进程，而 pid 文件在更早的清理里已被删，
+#             于是 master 变成孤儿继续占着 nginx_pt / argo_pt；下次安装要 bind 同一端口
+#             → 启动即失败，且状态判断也看不见它（没有 pid 文件）。
+#   判定只看 exe 真实路径是否等于本项目 prefix 下的 nginx：
+#     系统 / 宝塔 nginx 的 exe 是 /usr/sbin/nginx 等，绝不会被误杀。
+sb_nginx_kill_orphan() {
+    local pid exe hit="" _managed=""
+    [ -s "$SB_NGINX_PID" ] && _managed="$(cat "$SB_NGINX_PID" 2> /dev/null | tr -d ' \r\n')"
+    for pid in /proc/[0-9]*; do
+        pid="${pid#/proc/}"
+        [ -n "$pid" ] || continue
+        exe="$(readlink "/proc/${pid}/exe" 2> /dev/null)" || continue
+        case "$exe" in
+            "$SB_NGINX_BIN"*) ;;
+            *) continue ;;
+        esac
+        # 受管实例（pid 文件正指向它）交给 nginx_stop 处理，这里不动
+        if [ -n "$_managed" ] && [ "$pid" = "$_managed" ]; then
+            continue
+        fi
+        hit="${hit} ${pid}"
+    done
+    [ -n "${hit// /}" ] || return 0
+    yellow "  ↳ 发现不受 pid 文件管理的沙箱 Nginx 残留（pid:${hit}），先清理再继续"
+    for pid in $hit; do
+        kill -15 "$pid" 2> /dev/null || true
+    done
+    sleep 1
+    for pid in $hit; do
+        kill -0 "$pid" 2> /dev/null && kill -9 "$pid" 2> /dev/null || true
+    done
+    return 0
 }
 
 nginx_stop() {
@@ -6035,6 +6072,8 @@ cleanup_nginx() {
 
     # 停沙箱进程（按 pid 文件）
     nginx_stop
+    # pid 文件丢了 / 手动拉起过的孤儿：按 exe 路径兜底清掉，否则下次安装抢不到端口
+    sb_nginx_kill_orphan
 
     # 清理沙箱配置/日志
     rm -f "$SB_NGINX_SUB_CONF" "$SB_NGINX_PID" 2> /dev/null
@@ -6069,6 +6108,8 @@ cleandel() {
     pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null
     pkill -15 -f "$OLD_SINGBOX_FOLDER/sing-box" 2> /dev/null
     pkill -15 -f "$OLD_SINGBOX_FOLDER/cloudflared" 2> /dev/null
+    # 沙箱 nginx 也要杀：只按 pid 文件停的方式在 pid 文件丢失时会留下孤儿（占 nginx_pt/argo_pt）
+    sb_nginx_kill_orphan
     green "  ✓ 进程已终止"
 
     # 处理 crontab，兼容 Debian 和 Alpine

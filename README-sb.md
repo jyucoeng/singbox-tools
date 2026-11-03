@@ -1091,6 +1091,13 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 
 ## 2.7 版本变更信息
 
+v3.2.43 (2026-11-03)
+ > 修「卸载/重装后沙箱 Nginx 变成孤儿，占着端口导致下次安装起不来」。
+
+- **新增 `sb_nginx_kill_orphan()`**：按 `/proc/<pid>/exe` 的真实路径判断，只清理 exe 等于本项目 `$SB_NGINX_DIR/sbin/nginx` 且不受 pid 文件管理的进程（系统/宝塔 nginx 的 exe 是 `/usr/sbin/nginx` 等，绝不会被误杀）。先 `TERM` 再 `KILL`，受管实例（pid 文件正指向它）跳过，交给 `nginx_stop`
+- **触发场景**：旧版卸载只按 pid 文件停 nginx，而 pid 文件常在更早的清理里已被删除 → master 变孤儿，继续占着 `nginx_pt` / `argo_pt`；下次安装要 `listen 127.0.0.1:${argo_pt}` 时 bind 失败 → nginx 启动即退出，而 `sb nginx_status` 显示「未运行」，日志只留一句「启动后立即退出」，很难定位
+- **三处调用**：`start_nginx_service()` 起之前、`cleanup_nginx()` 停之后、`uninstall()` 的终止进程块（原来只 `pkill` sing-box / cloudflared，漏了 nginx）
+
 v3.2.42 (2026-11-03)
  > 上报地址自动补 https；排除项改为「不填=不过滤」。
 
