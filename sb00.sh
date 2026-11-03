@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.50(2026-11-03)"
+VERSION="3.2.51(2026-11-03)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -10818,15 +10818,21 @@ submerge_report() {
         return 0
     fi
 
-    local _err
+    local _err _msg _hint
     _err="$(_submerge_jstr error "$_body")"
-    [ -n "$_err" ] || _err="$(cat "$_body" 2> /dev/null | head -c 200)"
+    _msg="$(_submerge_jstr message "$_body")"
+    _hint="$(_submerge_jstr hint "$_body")"
+    if [ -z "$_err" ]; then _err="$(cat "$_body" 2> /dev/null | head -c 200)"; fi
     red "❌ 上报失败（HTTP ${_code}）：${_err}"
+    # 服务端的 message/hint 才是能动手的信息，只印 error 等于什么都没说
+    if [ -n "$_msg" ] && [ "$_msg" != "$_err" ]; then red "   服务端说明：${_msg}"; fi
+    if [ -n "$_hint" ]; then yellow "   处理建议：${_hint}"; fi
     submerge_record fail "$_code" "HTTP ${_code}：${_err}" ""
     case "$_code" in
         401) yellow "   凭证不对：上报只认 REPORT_TOKEN，不能用主订阅 token" ;;
         400) yellow "   参数问题：检查机器名（首字符字母/数字，可含中文、空格、_ . -，≤64 字符）" ;;
         413) yellow "   内容太大：base64 后超过 512KB，先精简节点" ;;
+        500) if [ -z "$_hint" ]; then yellow "   服务端内部错误：多半是 D1 还没建表，重跑一次上报即可（新版会自动补建），或登进 WebUI 的 /api/v1/admin/schema"; fi ;;
         000|"") yellow "   连不上服务端：检查网络/域名是否可解析" ;;
     esac
     rm -f "$_body" 2> /dev/null
