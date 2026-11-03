@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.43(2026-11-03)"
+VERSION="3.2.44(2026-11-03)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -6589,6 +6589,18 @@ check_port_conflicts_or_exit() {
             # 通道2：pid 属于本脚本栈
             if printf '%s\n' "$own_pids" | grep -qx "$pid"; then
                 echo OWN; return
+            fi
+            # 通道2.5：pid 的可执行文件就是本脚本自己的沙箱 nginx
+            #   pid 文件丢失后 master 变孤儿，pgrep 白名单与 pid 文件都认不出它，
+            #   安装前的端口占用体检就会把它当"外部进程"报警（用户会以为被人占了）。
+            #   这里按 /proc/<pid>/exe 的真实路径判断：只认 $SB_NGINX_BIN 开头，
+            #   宝塔/系统 nginx（/usr/sbin/nginx）绝不会命中；rep 的清理阶段会把它杀掉。
+            if [ -x "$SB_NGINX_BIN" ]; then
+                local _exe_path
+                _exe_path="$(readlink "/proc/$pid/exe" 2> /dev/null)"
+                case "$_exe_path" in
+                    "$SB_NGINX_BIN"*) echo OWN; return ;;
+                esac
             fi
             # 通道3：该 pid 是 sh/nohup/singbox 等包装进程，从 /proc 还原真实命令
             if [ -r "/proc/$pid/comm" ]; then
