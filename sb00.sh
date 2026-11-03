@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.44(2026-11-03)"
+VERSION="3.2.45(2026-11-03)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -2209,6 +2209,42 @@ v4v6() {
 
 }
 
+# 安装参数区打印上报（sub-merge）配置摘要
+#   —— 装完才发现「没开上报 / 域名没填 / token 没配」是最常见的返工原因，
+#      所以在这里和端口、口令一起展示一次；凭证只显示首尾，避免整段泄露到日志。
+submerge_install_summary() {
+    submerge_load
+    local _flag _base_disp _mask
+    # 完全没配过（无地址、无凭证、未开自动上报）→ 只说一句，不占版面
+    if [ -z "$SUBMERGE_BASE" ] && [ -z "$SUBMERGE_TOKEN" ] && ! submerge_auto_enabled; then
+        yellow "节点上报：未配置（如需汇总到自己的 sub-merge，见 sb report）"
+        return 0
+    fi
+    if submerge_auto_enabled; then
+        _flag="已开启"
+    else
+        _flag="未开启"
+    fi
+    if [ -n "$SUBMERGE_BASE" ]; then
+        _base_disp="$SUBMERGE_BASE"
+    else
+        _base_disp="（未配置，装完不会上报）"
+    fi
+    if [ -n "$SUBMERGE_TOKEN" ]; then
+        if [ ${#SUBMERGE_TOKEN} -gt 12 ]; then
+            _mask="已配置 $(printf '%s' "$SUBMERGE_TOKEN" | cut -c1-6)****$(printf '%s' "$SUBMERGE_TOKEN" | rev | cut -c1-4 | rev)"
+        else
+            _mask="已配置 ****"
+        fi
+    else
+        _mask="未配置"
+    fi
+    yellow "节点上报：${_flag}"
+    yellow "上报域名：${_base_disp}"
+    yellow "上报凭证：${_mask}"
+    yellow "上报机器名：${SUBMERGE_MACHINE:-（未设置）}"
+}
+
 # Set up name for nodes and IP version preference
 set_sbyx() {
     if [ -n "$name" ]; then
@@ -2219,6 +2255,8 @@ set_sbyx() {
         echo
         yellow "所有节点名称前缀：$name"
     fi
+    # 上报配置与端口/口令一起展示（未配置也照实打印，便于一次性发现漏配）
+    submerge_install_summary
     debug_print echo "IP版本获取中……请稍候"
     v4v6 # This now sets both v4_ok and v6_ok
 
