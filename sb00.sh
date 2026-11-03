@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.47(2026-11-03)"
+VERSION="3.2.48(2026-11-03)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -2242,7 +2242,12 @@ submerge_install_summary() {
     yellow "节点上报：${_flag}"
     yellow "上报域名：${_base_disp}"
     yellow "上报凭证：${_mask}"
-    yellow "上报机器名：${SUBMERGE_MACHINE:-（未设置）}"
+    # 安装参数阶段 name 文件还没落盘，优先用本次传入的节点名前缀，显示与最终一致
+    local _mach_disp="${SUBMERGE_MACHINE:-}"
+    if [ -z "${REPORT_MACHINE:-}" ] && [ -n "${name:-}" ]; then
+        _mach_disp="$name"
+    fi
+    yellow "上报机器名：${_mach_disp:-（未设置）}"
     # 排除项：留空表示什么都上报（v3.2.42 起脚本不再默认塞 socks5）
     local _ex_disp
     _ex_disp="$(submerge_exclude_list)"
@@ -2263,8 +2268,6 @@ set_sbyx() {
         echo
         yellow "所有节点名称前缀：$name"
     fi
-    # 上报配置与端口/口令一起展示（未配置也照实打印，便于一次性发现漏配）
-    submerge_install_summary
     debug_print echo "IP版本获取中……请稍候"
     v4v6 # This now sets both v4_ok and v6_ok
 
@@ -5246,6 +5249,11 @@ ins() {
     green "  订阅: ${_sub_txt}"
     [ -n "$vlr" ] && green "  reality_private: ${reality_private:-自动生成}"
     green "  节点名称前缀: ${name:-跳过}"
+    # ---- 上报（sub-merge）块：装完是否上报、报到哪、凭证有没有、报哪些协议 ----
+    if [ -n "${SUBMERGE_BASE:-}${SUBMERGE_TOKEN:-}${REPORT_BASE:-}${REPORT_TOKEN:-}" ] \
+        || [ -n "${REPORT_FLAG:-}" ] || [ -s "$SUBMERGE_CONF" ]; then
+        submerge_install_summary
+    fi
     green "============================"
     echo
     fi
