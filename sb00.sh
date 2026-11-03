@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.46(2026-11-03)"
+VERSION="3.2.47(2026-11-03)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -4232,7 +4232,9 @@ sb_nginx_kill_orphan() {
         hit="${hit} ${pid}"
     done
     [ -n "${hit// /}" ] || return 0
-    yellow "  ↳ 发现不受 pid 文件管理的沙箱 Nginx 残留（pid:${hit}），先清理再继续"
+    # 自家的孤儿 nginx 属正常清理对象，只在调试日志里留痕；
+    # 卸载/重装时把内部步骤打成黄字会让用户以为出了问题。
+    debug_log "  ↳ 发现不受 pid 文件管理的沙箱 Nginx 残留（pid:${hit}），静默清理"
     for pid in $hit; do
         kill -15 "$pid" 2> /dev/null || true
     done
