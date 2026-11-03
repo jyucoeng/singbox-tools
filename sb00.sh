@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.49(2026-11-03)"
+VERSION="3.2.50(2026-11-03)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -3687,8 +3687,13 @@ sbbout() {
         sleep 3
         if [ -s "$LOGS_DIR/singbox.log" ]; then
             debug_print green "✓ singbox.log 已生成"
+        elif pgrep -f "$SINGBOX_FOLDER_PATH/sing-box" > /dev/null 2>&1; then
+            # 进程在跑、日志暂时为空是正常现象（openrc/supervise 有缓冲，sing-box 也常在
+            # 首个连接后才写第一行）。这种情况不能报警，否则用户会以为装坏了。
+            debug_print green "✓ sing-box 已在运行（日志暂无内容，属正常）"
         else
-            yellow "⚠ singbox.log 为空，sing-box 可能启动失败，可用 sb log 查看"
+            # 只有确认进程不在，才说启动失败，并给出确定性更强的排查入口
+            yellow "⚠ sing-box 未在运行，可用 sb log_stop 查看停止原因"
         fi
     fi
 }
