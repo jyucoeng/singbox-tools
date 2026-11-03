@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.41(2026-11-02)"
+VERSION="3.2.42(2026-11-03)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -10232,6 +10232,25 @@ SUBMERGE_DEFAULT_BASE=""
 SUBMERGE_CONF="$SINGBOX_FOLDER_PATH/submerge.conf"
 SUBMERGE_STATE="$SINGBOX_FOLDER_PATH/submerge.state"
 
+# 规范化上报地址（REPORT_BASE / SUBMERGE_BASE）
+#   1) 去掉首尾空白与结尾所有斜杠
+#   2) 没写协议 → 自动补 https://
+#   3) 自己写了 http:// 就照原样用，不强行升级（自建反代 / 内网 http 环境要能跑）
+# 原因：上报固定用 `curl -sS -m 20 -X POST`（不带 -L，因为 -L 会把 POST 降级成 GET）。
+#      地址写成裸域名时 curl 按 http:// 发，服务端 301 跳 https 后脚本拿到 301 直接判失败，
+#      所以「什么都没写」时必须补 https；但写全了协议的一律尊重用户选择。
+submerge_norm_base() {
+    local _b
+    _b="$(printf '%s' "${1:-}" | tr -d '\r\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    [ -n "$_b" ] || return 0
+    while [ "${_b%/}" != "$_b" ]; do _b="${_b%/}"; done
+    case "$_b" in
+        *://*) ;;
+        *) _b="https://$_b" ;;
+    esac
+    printf '%s' "$_b"
+}
+
 # 读取上报配置（地址 / 凭证 / 机器名 / 来源 / 自动开关），缺省给默认值
 # 环境变量优先并自动落盘：REPORT_BASE / REPORT_TOKEN / REPORT_MACHINE / REPORT_SOURCE / REPORT_FLAG
 submerge_load() {
@@ -10244,6 +10263,8 @@ submerge_load() {
     if [ -s "$SUBMERGE_CONF" ]; then
         . "$SUBMERGE_CONF" 2> /dev/null || true
     fi
+    # 老版本配置里可能存着裸域名，这里统一补协议（不立刻改写文件，等下次落盘覆盖）
+    SUBMERGE_BASE="$(submerge_norm_base "${SUBMERGE_BASE:-}")"
     # 显式清除本机上报配置：REPORT_CLEAR=1
     #   与「传空字符串」区分开 —— REPORT_TOKEN="" 在 CI 里往往只是 secret 没配，
     #   语义不稳定，不能拿它表达「我要清掉」。清除后仍可带 REPORT_* 重新填。
@@ -10254,20 +10275,20 @@ submerge_load() {
         SUBMERGE_TOKEN=""
         SUBMERGE_MACHINE=""
         SUBMERGE_SOURCE=""
-        # 排除项回到默认 socks5：不能留空，否则后面「conf 里已有 SUBMERGE_EXCLUDE 行
-        # 就不再注入默认值」的判断会让本次运行拿到空值 = 不过滤
-        SUBMERGE_EXCLUDE="socks5"
+        # 排除项清空 = 不过滤（不填就是不拦截任何协议）
+        SUBMERGE_EXCLUDE=""
         SUBMERGE_AUTO="0"
         : > "$SUBMERGE_CONF" 2> /dev/null || true
-        submerge_conf_set SUBMERGE_EXCLUDE "socks5"
+        submerge_conf_set SUBMERGE_EXCLUDE ""
         submerge_conf_set SUBMERGE_AUTO "0"
         yellow "  已清除本机上报配置（REPORT_CLEAR=1），回到未配置状态"
         REPORT_CLEAR=0
     fi
     # 环境变量给了值就覆盖并持久化（下次不带环境变量也还在）
     if [ -n "${REPORT_BASE:-}" ]; then
-        SUBMERGE_BASE="$REPORT_BASE"
-        submerge_conf_set SUBMERGE_BASE "$REPORT_BASE"
+        _rb="$(submerge_norm_base "$REPORT_BASE")"
+        SUBMERGE_BASE="$_rb"
+        submerge_conf_set SUBMERGE_BASE "$_rb"
     fi
     if [ -n "${REPORT_TOKEN:-}" ]; then
         SUBMERGE_TOKEN="$REPORT_TOKEN"
@@ -10307,11 +10328,7 @@ submerge_load() {
         [ -n "$SUBMERGE_MACHINE" ] || SUBMERGE_MACHINE="$(hostname 2> /dev/null | tr -cd 'A-Za-z0-9._-' 2> /dev/null)"
         [ -n "$SUBMERGE_MACHINE" ] || SUBMERGE_MACHINE="sb-node"
     fi
-    # 没有任何配置时的默认排除项：socks5（多数客户端不吃，默认不报）
-    # 判断依据：环境变量没给、conf 里也没有 SUBMERGE_EXCLUDE 这一行
-    if [ -z "${REPORT_EXCLUDE:-}" ] && ! grep -q '^SUBMERGE_EXCLUDE=' "$SUBMERGE_CONF" 2> /dev/null; then
-        SUBMERGE_EXCLUDE="socks5"
-    fi
+    # 排除项「不填 = 不过滤」：没有任何配置时不注入任何默认协议，全部上报
     # 来源留空即只上 default 一个来源，URL 不带 ?source=（服务端本来就按 default 存）
     # 配过凭证就把「地址 + 自动开关」也固化下来，下次不用再带环境变量
     if [ -n "$SUBMERGE_TOKEN" ]; then
@@ -10359,6 +10376,7 @@ submerge_auto_report() {
     _out="$(submerge_report 2>&1)"
     _rc=$?
     if [ "$_rc" -eq 0 ]; then
+        echo
         green "📤 已自动上报到 sub-merge（自动上报已开启）"
         printf '%s\n' "$_out" | grep -E '上报成功|内容与' | sed 's/^[[:space:]]*/   /'
     else
@@ -10784,7 +10802,11 @@ submerge_configure() {
         green "✅ 已清除上报配置与上报状态"
         return 0
     fi
-    [ -n "$_in" ] && submerge_conf_set SUBMERGE_BASE "$_in"
+    if [ -n "$_in" ]; then
+        _in="$(submerge_norm_base "$_in")"
+        SUBMERGE_BASE="$_in"
+        submerge_conf_set SUBMERGE_BASE "$_in"
+    fi
     reading "  上报凭证 [$( [ -n "$SUBMERGE_TOKEN" ] && echo 已配置 || echo 未配置 )]: " _in
     [ -n "$_in" ] && submerge_conf_set SUBMERGE_TOKEN "$_in"
     yellow "  机器名默认取全局配置里的 name（当前：${SUBMERGE_MACHINE}），一般不用改"

@@ -985,6 +985,29 @@ bash <(curl -Ls ...)    # 或 sb report 里手工配置
 - 也可以不设环境变量，进 `sb report` 子菜单选 `2) 打开自动上报`，开关写在配置文件里
 - 每次上报（手动 / 自动）都会把结果记到 `/root/doraemon/submerge.state`，用 `sb report status` 或子菜单 `1)` 随时查
 
+#### 一份可直接抄的完整写法（四个变量 + 逐行含义）
+
+```bash
+REPORT_FLAG='1' \
+REPORT_BASE='sub.******.de5.net' \
+REPORT_TOKEN='6a4a254255397ced700008cc9fd7df958035be1df0000ad' \
+REPORT_EXCLUDE='socks5' \
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
+```
+
+| 变量 | 含义 |
+| --- | --- |
+| `REPORT_FLAG='1'` | **自动上报总开关**，`1`=开、`0`/不传=关（默认）。开启后每次 `sb ins` / `sb rep` / `sb sub` 生成完节点都会自动往 sub-merge 推一次；推送失败只在末尾黄字提示，不影响节点生成。 |
+| `REPORT_BASE='sub.******.de5.net'` | **你自己的 sub-merge 域名**（不是 sing-box 节点域名，是那个聚合订阅站）。脚本里没有任何默认值，不填就跳过上报。**写不写 `https://` 都行**：脚本会先规范化再落盘——去首尾空白与结尾斜杠；**什么都没写协议**时自动补 `https://`；**自己写了 `http://` 就照原样用，不强行升级**（自建反代、内网 http 环境能跑；但 Cloudflare Workers 上的 sub-merge 只认 https，写 `http://` 会被 301 拒掉，脚本不会替你改，需自己写对）。之所以要补：上报固定用 `curl -sS -m 20 -X POST`，没带 `-L`（`-L` 会把 POST 降级成 GET），裸域名会被 curl 当 `http://` 发、服务端 301 跳到 https 后脚本只拿到 301，就判 `❌ 上报失败（HTTP 301）` 了。 |
+| `REPORT_TOKEN='6a4a…0000ad'` | **上报凭证**，取 sub-merge 里给你的 `REPORT_TOKEN`。注意：**别用主订阅 token**，那个调上报接口会返回 401。凭证会以 600 权限落盘到 `/root/doraemon/submerge.conf`，之后 `sb report status` 只显示打码后的前几位。 |
+| `REPORT_EXCLUDE='socks5'` | **不参与上报的节点类型**，英文逗号分隔。**不填 = 不拦截任何协议，全部上报**（脚本不做任何默认排除）。上面示例写 `socks5` 只是拿它举例——多数客户端不吃 socks5 节点，混在订阅里会刷客户端报错，你可以按需勾掉。可选值：`vless` `vmess` `trojan` `hysteria2`（可写 `hy2`/`hy`/`hysteria`）`tuic` `anytls` `socks5`，以及按脚本生成形态细分的 `vless-reality` `vless-argo` `vless-cdn` `vmess-argo` `vmess-cdn` `trojan-argo` `trojan-cdn`；写 `vless` 等于把三种 vless 一起排掉。要恢复「全部上报」：不传这个变量、或在 `sb report` 菜单里把排除项清空，都行——传空字符串 `` 也行，脚本按「没填」处理。 |
+
+几点补充：
+
+- 四个值都建议用单引号包起来：token 里若出现 `#` `?` `&` 之类字符才不会被 shell 提前截断。注意空串 `REPORT_XXX=''` 等于「没传」——脚本用 `-n` 判空，空值不会写进配置文件（正因如此，想清空排除项才要用 `-` 占位，见上）。
+- 这条命令只跑一次即可：`REPORT_*` 只要非空就会写进 `/root/doraemon/submerge.conf`（root:root、600），下次直接 `sb rep` 不用再带；要改就再带一次新值，或进 `sb report` 子菜单选 `3)`。
+- 顺序无关、也不要求和 `bash <(...)` 写在同一行（`\` 续行只是便于阅读）；但用 `sudo` 执行时环境变量会被 sudo 丢掉，所以直接在 root 下跑，或写成 `sudo REPORT_FLAG=1 … bash <(...)`。
+
 子菜单：
 
 ```
@@ -1046,10 +1069,10 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 | 环境变量 | 落盘键 | 说明 |
 | --- | --- | --- |
 | `REPORT_FLAG` | `SUBMERGE_AUTO` | `1` 才自动上报，默认 `0` |
-| `REPORT_BASE` | `SUBMERGE_BASE` | 你自己的 sub-merge 域名（必填，无默认值） |
+| `REPORT_BASE` | `SUBMERGE_BASE` | 你自己的 sub-merge 域名（必填，无默认值；`https://` 可省略，脚本自动补） |
 | `REPORT_TOKEN` | `SUBMERGE_TOKEN` | 上报凭证（只认 `REPORT_TOKEN`，主 token 会 401） |
 | `REPORT_MACHINE` | `SUBMERGE_MACHINE` | 机器名；界面会把 ④ 的 `name` 作为它下发。不传/为空才回落到 `name`，再退到 hostname |
-| `REPORT_EXCLUDE` | `SUBMERGE_EXCLUDE` | 不上报的协议（默认 `socks5`），英文逗号分隔；可选 `hysteria2 tuic anytls socks5 vless-reality vless-argo vmess-argo trojan-argo vless-cdn vmess-cdn trojan-cdn`（也接受 `vless`/`trojan` 这类前缀，等于把该协议所有形态一起排掉），空=全部上报 |
+| `REPORT_EXCLUDE` | `SUBMERGE_EXCLUDE` | 不上报的协议（**不填 = 不过滤，全部上报**），英文逗号分隔；可选 `hysteria2 tuic anytls socks5 vless-reality vless-argo vmess-argo trojan-argo vless-cdn vmess-cdn trojan-cdn`（也接受 `vless`/`trojan` 这类前缀，等于把该协议所有形态一起排掉），空=全部上报 |
 | `REPORT_SOURCE` | `SUBMERGE_SOURCE` | 来源名，默认 `default` |
 | `REPORT_CLEAR` | — | `1` 时先把 `submerge.conf` 清空回默认（地址/凭证/机器名/来源清空、排除项回 `socks5`、自动上报关），再走上面的覆盖逻辑。要「清掉」就用它，不要靠传空字符串。**别把它写进常驻环境变量**（如 workflow 的 `env:`）——那样每次运行都会先清一次，配置存不住；它在一次进程内只生效一次 |
 
@@ -1067,6 +1090,13 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 - **失败提示**：401 凭证错、400 机器名/内容不合规、413 超过 512KB、连不上域名，都会给对应的中文提示
 
 ## 2.7 版本变更信息
+
+v3.2.42 (2026-11-03)
+ > 上报地址自动补 https；排除项改为「不填=不过滤」。
+
+- **`REPORT_BASE` 可省略 `https://`**：新增 `submerge_norm_base()`，配置读入 / 环境变量 / 菜单输入 / 落盘四处统一规范化——去首尾空白与结尾斜杠、没写协议自动补 `https://`、写了 `http://` 就照原样用、不强行升级（自建反代 / 内网 http 环境要能跑），只有「什么协议都没写」时才补 `https://`。原因：上报固定用 `curl -sS -m 20 -X POST` 且不带 `-L`（`-L` 会把 POST 降级成 GET），裸域名会被 curl 按 `http://` 发，服务端 301 跳 https 后脚本只拿到 301，直接判「上报失败（HTTP 301）」——所以裸域名必须补 https；但用户显式写了协议就得尊重
+- **`REPORT_EXCLUDE` 不填 = 不拦截任何协议**：删掉「未配置时默认 socks5」的注入，`REPORT_CLEAR` 分支也改为把排除项置空（原来置回 socks5）。要排掉某类协议就显式写 `REPORT_EXCLUDE='socks5'`，不写就全部上报 —— v3.2.41 说明里的默认值行为作废
+- **「已自动上报到 sub-merge」前加一个空行**：这条提示紧贴节点链接输出，挤在一起不好读
 
 v3.2.41 (2026-11-02)
  > 卸载保留上报配置；新增 REPORT_CLEAR 显式清除；配置文件展示取值优先级。
