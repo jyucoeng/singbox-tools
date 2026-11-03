@@ -1000,7 +1000,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 | `REPORT_FLAG='1'` | **自动上报总开关**，`1`=开、`0`/不传=关（默认）。开启后每次 `sb ins` / `sb rep` / `sb sub` 生成完节点都会自动往 sub-merge 推一次；推送失败只在末尾黄字提示，不影响节点生成。 |
 | `REPORT_BASE='sub.******.de5.net'` | **你自己的 sub-merge 域名**（不是 sing-box 节点域名，是那个聚合订阅站）。脚本里没有任何默认值，不填就跳过上报。**写不写 `https://` 都行**：脚本会先规范化再落盘——去首尾空白与结尾斜杠；**什么都没写协议**时自动补 `https://`；**自己写了 `http://` 就照原样用，不强行升级**（自建反代、内网 http 环境能跑；但 Cloudflare Workers 上的 sub-merge 只认 https，写 `http://` 会被 301 拒掉，脚本不会替你改，需自己写对）。之所以要补：上报固定用 `curl -sS -m 20 -X POST`，没带 `-L`（`-L` 会把 POST 降级成 GET），裸域名会被 curl 当 `http://` 发、服务端 301 跳到 https 后脚本只拿到 301，就判 `❌ 上报失败（HTTP 301）` 了。 |
 | `REPORT_TOKEN='6a4a…0000ad'` | **上报凭证**，取 sub-merge 里给你的 `REPORT_TOKEN`。注意：**别用主订阅 token**，那个调上报接口会返回 401。凭证会以 600 权限落盘到 `/root/doraemon/submerge.conf`，之后 `sb report status` 只显示打码后的前几位。 |
-| `REPORT_EXCLUDE='socks5'` | **不参与上报的节点类型**，英文逗号分隔。**不填 = 不拦截任何协议，全部上报**（脚本不做任何默认排除）。上面示例写 `socks5` 只是拿它举例——多数客户端不吃 socks5 节点，混在订阅里会刷客户端报错，你可以按需勾掉。可选值：`vless` `vmess` `trojan` `hysteria2`（可写 `hy2`/`hy`/`hysteria`）`tuic` `anytls` `socks5`，以及按脚本生成形态细分的 `vless-reality` `vless-argo` `vless-cdn` `vmess-argo` `vmess-cdn` `trojan-argo` `trojan-cdn`；写 `vless` 等于把三种 vless 一起排掉。要恢复「全部上报」：不传这个变量、或在 `sb report` 菜单里把排除项清空，都行——传空字符串 `` 也行，脚本按「没填」处理。 |
+| `REPORT_EXCLUDE='socks5'` | **不参与上报的节点类型**，英文逗号分隔。**不填 = 不拦截任何协议，全部上报**（脚本不做任何默认排除；但**界面生成命令时会默认勾上 Socks5**，据此显式下发 `REPORT_EXCLUDE='socks5'`——过滤范围以界面勾选为准，手工跑脚本不传就完全不过滤）。上面示例写 `socks5` 只是拿它举例——多数客户端不吃 socks5 节点，混在订阅里会刷客户端报错，你可以按需勾掉。可选值：`vless` `vmess` `trojan` `hysteria2`（可写 `hy2`/`hy`/`hysteria`）`tuic` `anytls` `socks5`，以及按脚本生成形态细分的 `vless-reality` `vless-argo` `vless-cdn` `vmess-argo` `vmess-cdn` `trojan-argo` `trojan-cdn`；写 `vless` 等于把三种 vless 一起排掉。要恢复「全部上报」：不传这个变量、或在 `sb report` 菜单里把排除项清空，都行——传空字符串 `` 也行，脚本按「没填」处理。 |
 
 几点补充：
 
@@ -1072,7 +1072,7 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 | `REPORT_BASE` | `SUBMERGE_BASE` | 你自己的 sub-merge 域名（必填，无默认值；`https://` 可省略，脚本自动补） |
 | `REPORT_TOKEN` | `SUBMERGE_TOKEN` | 上报凭证（只认 `REPORT_TOKEN`，主 token 会 401） |
 | `REPORT_MACHINE` | `SUBMERGE_MACHINE` | 机器名；界面会把 ④ 的 `name` 作为它下发。不传/为空才回落到 `name`，再退到 hostname |
-| `REPORT_EXCLUDE` | `SUBMERGE_EXCLUDE` | 不上报的协议（**不填 = 不过滤，全部上报**），英文逗号分隔；可选 `hysteria2 tuic anytls socks5 vless-reality vless-argo vmess-argo trojan-argo vless-cdn vmess-cdn trojan-cdn`（也接受 `vless`/`trojan` 这类前缀，等于把该协议所有形态一起排掉），空=全部上报 |
+| `REPORT_EXCLUDE` | `SUBMERGE_EXCLUDE` | 不上报的协议（**脚本不填 = 不过滤，全部上报**；界面默认勾选 Socks5 并显式下发），英文逗号分隔；可选 `hysteria2 tuic anytls socks5 vless-reality vless-argo vmess-argo trojan-argo vless-cdn vmess-cdn trojan-cdn`（也接受 `vless`/`trojan` 这类前缀，等于把该协议所有形态一起排掉），空=全部上报 |
 | `REPORT_SOURCE` | `SUBMERGE_SOURCE` | 来源名，默认 `default` |
 | `REPORT_CLEAR` | — | `1` 时先把 `submerge.conf` 清空回默认（地址/凭证/机器名/来源清空、排除项回 `socks5`、自动上报关），再走上面的覆盖逻辑。要「清掉」就用它，不要靠传空字符串。**别把它写进常驻环境变量**（如 workflow 的 `env:`）——那样每次运行都会先清一次，配置存不住；它在一次进程内只生效一次 |
 
