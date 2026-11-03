@@ -1199,6 +1199,7 @@ v3.2.36 (2026-11-02)
  > 机器名统一由 `REPORT_MACHINE` 下发，脚本只在它为空时才取 `name`。
 
  - **取值链**：`REPORT_MACHINE`（环境变量） > `SUBMERGE_MACHINE`（`submerge.conf`） > `$SINGBOX_FOLDER_PATH/name` > `hostname` > `sb-node`
+ - **名字怎么写**：建议 `<地区>-<序号>`，比如 `hk-1`、`圣何塞-1`、`jp-osaka`。`sub_merge` 会从机器名里认地区（中文地区词或两字母国家码都行）来决定默认排序，认不出来的机器会被排到最后，界面上标「无地区」。机器名跟节点名是两回事：它只是上报标识，改它不会影响客户端里显示的节点名。
  - **空白容错**：`REPORT_MACHINE="   "` 以前会被当成「有值」写进 conf（机器名却回落成 name，两边不一致），现在先 trim，只有非空白才落盘；`REPORT_MACHINE=`（空串）同理
  - **界面配套**：`singbox-tools-interface` 的第 ⑧ 张卡片会把机器名（跟随 ④ 的 `name`）作为 `REPORT_MACHINE=…` 一起下发，两边值永远一致
  - 实测：不传 → `小叮当-淡-美国北卡莱罗纳`；`REPORT_MACHINE=HK-2` → `HK-2` 且写入 conf；空白 → 回落 `name` 且不写 conf；name 也没有 → `hostname`
