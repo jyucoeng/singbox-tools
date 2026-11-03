@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.48(2026-11-03)"
+VERSION="3.2.49(2026-11-03)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -2214,21 +2214,22 @@ v4v6() {
 #      所以在这里和端口、口令一起展示一次；凭证只显示首尾，避免整段泄露到日志。
 submerge_install_summary() {
     submerge_load
-    local _flag _base_disp _mask
+    local _mask _mach_disp _ex_disp
     # 完全没配过（无地址、无凭证、未开自动上报）→ 只说一句，不占版面
     if [ -z "$SUBMERGE_BASE" ] && [ -z "$SUBMERGE_TOKEN" ] && ! submerge_auto_enabled; then
-        yellow "节点上报：未配置（如需汇总到自己的 sub-merge，见 sb report）"
+        yellow "  节点上报: 未配置（如需汇总到自己的 sub-merge，见 sb report）"
         return 0
     fi
+    # 与「安装参数」其它行保持一致：两空格缩进 + 半角冒号 + 值；异常项才用黄色
     if submerge_auto_enabled; then
-        _flag="已开启"
+        green "  节点上报: 已开启"
     else
-        _flag="未开启"
+        yellow "  节点上报: 未开启（本次装完不会自动上报）"
     fi
     if [ -n "$SUBMERGE_BASE" ]; then
-        _base_disp="$SUBMERGE_BASE"
+        green "  上报域名: ${SUBMERGE_BASE}"
     else
-        _base_disp="（未配置，装完不会上报）"
+        yellow "  上报域名: 未配置（装完不会上报）"
     fi
     if [ -n "$SUBMERGE_TOKEN" ]; then
         if [ ${#SUBMERGE_TOKEN} -gt 12 ]; then
@@ -2236,25 +2237,22 @@ submerge_install_summary() {
         else
             _mask="已配置 ****"
         fi
+        green "  上报凭证: ${_mask}"
     else
-        _mask="未配置"
+        yellow "  上报凭证: 未配置"
     fi
-    yellow "节点上报：${_flag}"
-    yellow "上报域名：${_base_disp}"
-    yellow "上报凭证：${_mask}"
     # 安装参数阶段 name 文件还没落盘，优先用本次传入的节点名前缀，显示与最终一致
-    local _mach_disp="${SUBMERGE_MACHINE:-}"
+    _mach_disp="${SUBMERGE_MACHINE:-}"
     if [ -z "${REPORT_MACHINE:-}" ] && [ -n "${name:-}" ]; then
         _mach_disp="$name"
     fi
-    yellow "上报机器名：${_mach_disp:-（未设置）}"
+    green "  上报机器名: ${_mach_disp:-未设置}"
     # 排除项：留空表示什么都上报（v3.2.42 起脚本不再默认塞 socks5）
-    local _ex_disp
     _ex_disp="$(submerge_exclude_list)"
     if [ -n "$_ex_disp" ]; then
-        yellow "排除协议：${_ex_disp}（这几类不上报，其余照常）"
+        green "  排除协议: ${_ex_disp}（这几类不上报，其余照常）"
     else
-        yellow "排除协议：无（全部上报）"
+        green "  排除协议: 无（全部上报）"
     fi
 }
 
