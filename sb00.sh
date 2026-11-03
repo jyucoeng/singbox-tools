@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.51(2026-11-03)"
+VERSION="3.2.52(2026-11-03)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -3560,6 +3560,56 @@ if [ "\$_ngx_managed" = "0" ] && [ -x "\$NGINX_BIN" ] && [ -f "\$NGINX_PID" ]; t
         rm -f "\$NGINX_PID" 2>/dev/null
         "\$NGINX_BIN" -p "\$NGINX_DIR/" -c conf/nginx.conf >/dev/null 2>&1
         say "nginx: pid 文件存在但进程已消失，已重新启动"
+    fi
+fi
+
+# ---------- 临时 argo 隧道：自启 + 域名跟随 ----------
+# 临时隧道（trycloudflare）每次启动都会换一个域名，旧域名永久失效，重启后
+# 光把进程拉起来没用，jh.txt 里的 argo 节点已经指向死域名了，必须重新生成
+# 节点并重新上报。固定隧道由 argo.service 托管、域名不变，这里完全不碰。
+if [ -s "$SINGBOX_FOLDER_PATH/argoport" ] \
+    && [ ! -f "$SINGBOX_FOLDER_PATH/tunnel.yml" ] \
+    && [ ! -f "$SINGBOX_FOLDER_PATH/sbargotoken" ]; then
+    _adom=$(cat "$SINGBOX_FOLDER_PATH/argo_domain" 2>/dev/null | tr -d '\r\n')
+    case "$_adom" in
+        "" | *.trycloudflare.com) _atmp=1 ;;
+        *) _atmp=0 ;;
+    esac
+    if [ "$_atmp" = "1" ]; then
+        if ! pgrep -f "cloudflared tunnel --url" >/dev/null 2>&1; then
+            _aport=$(cat "$SINGBOX_FOLDER_PATH/argoport" 2>/dev/null)
+            [ -n "$_aport" ] || _aport=8001
+            : > "$LOGS_DIR/argo.log" 2>/dev/null
+            nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel --url "http://localhost:$_aport" \
+                --edge-ip-version auto --no-autoupdate >> "$LOGS_DIR/argo.log" 2>&1 &
+            say "argo: 临时隧道未运行，已拉起（localhost:$_aport）"
+            _ai=0
+            while [ "$_ai" -lt 30 ]; do
+                sleep 2
+                grep -qE 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOGS_DIR/argo.log" 2>/dev/null && break
+                _ai=$((_ai + 1))
+            done
+        fi
+        _anew=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOGS_DIR/argo.log" 2>/dev/null | head -1 | sed 's#https://##')
+        if [ -n "$_anew" ] && [ "$_anew" != "$_adom" ]; then
+            # 域名变了才动，两个 cron 撞上时用 mkdir 抢锁，抢不到说明对方正在处理
+            if mkdir "$LOGS_DIR/.argo-regen.lock" 2>/dev/null; then
+                printf '%s\n' "$_anew" > "$SINGBOX_FOLDER_PATH/argo_domain"
+                chmod 600 "$SINGBOX_FOLDER_PATH/argo_domain" 2>/dev/null
+                say "argo: 域名变化 ${_adom:-<空>} -> $_anew，重新生成节点"
+                if [ -x "$SINGBOX_FOLDER_PATH/sb-cmd" ]; then
+                    bash "$SINGBOX_FOLDER_PATH/sb-cmd" sub > "$LOGS_DIR/argo-regen.log" 2>&1 \
+                        && say "argo: jh.txt 已重新生成" \
+                        || say "argo: 重新生成失败，见 logs/argo-regen.log"
+                    bash "$SINGBOX_FOLDER_PATH/sb-cmd" report >> "$LOGS_DIR/argo-regen.log" 2>&1 \
+                        && say "argo: 已重新上报" \
+                        || say "argo: 上报失败，见 logs/argo-regen.log"
+                fi
+                rmdir "$LOGS_DIR/.argo-regen.lock" 2>/dev/null
+            else
+                say "argo: 域名换成了 $_anew，另一条看门狗正在处理，跳过"
+            fi
+        fi
     fi
 fi
 
