@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.52(2026-11-03)"
+VERSION="3.2.53(2026-11-04)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -10741,7 +10741,8 @@ submerge_state_get() {
 # 记录一次上报结果：$1=ok|fail $2=HTTP码 $3=结果说明 $4=节点数
 submerge_record() {
     local _now
-    _now="$(date '+%Y-%m-%d %H:%M:%S' 2> /dev/null)"
+    # 统一按 UTC 记录（服务器时区各不相同，展示时会标注 UTC）
+    _now="$(date -u '+%Y-%m-%d %H:%M:%S' 2> /dev/null)"
     submerge_state_set LAST_TIME "$_now"
     submerge_state_set LAST_RESULT "${1:-fail}"
     submerge_state_set LAST_HTTP "${2:-}"
@@ -11060,14 +11061,14 @@ submerge_status_show() {
     echo ""
     if [ -n "$_lt" ]; then
         if [ "$_lr" = "ok" ]; then
-            green "  最近一次：${_lt}  成功${_lhttp:+ (HTTP $_lhttp)}"
+            green "  最近一次：${_lt}（UTC）  成功${_lhttp:+ (HTTP $_lhttp)}"
         else
-            red "  最近一次：${_lt}  失败${_lhttp:+ (HTTP $_lhttp)}"
+            red "  最近一次：${_lt}（UTC）  失败${_lhttp:+ (HTTP $_lhttp)}"
         fi
         purple "    结果：${_lmsg:-（无详细说明）}"
         [ -n "$_lnodes" ] && purple "    节点：${_lnodes} 条"
         [ -n "$_lasturl" ] && purple "    目标：${_lasturl}"
-        [ -n "$_lok" ] && green "  最近成功：${_lok}"
+        [ -n "$_lok" ] && green "  最近成功：${_lok}（UTC）"
     else
         yellow "  还没有上报记录（手动 sb report 或开启自动上报后生成节点会记录下来）"
     fi
@@ -11100,9 +11101,9 @@ interactive_submerge_menu() {
         fi
         if [ -n "$(submerge_state_get LAST_TIME)" ]; then
             if [ "$(submerge_state_get LAST_RESULT)" = "ok" ]; then
-                green "  最近上报：$(submerge_state_get LAST_TIME) 成功"
+                green "  最近上报：$(submerge_state_get LAST_TIME)（UTC） 成功"
             else
-                red "  最近上报：$(submerge_state_get LAST_TIME) 失败"
+                red "  最近上报：$(submerge_state_get LAST_TIME)（UTC） 失败"
             fi
         else
             purple "  最近上报：暂无记录"
