@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.53(2026-11-04)"
+VERSION="3.2.54(2026-11-04)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -10738,11 +10738,16 @@ submerge_state_get() {
     sed -n "s/^$1=//p" "$SUBMERGE_STATE" 2> /dev/null | tail -n1
 }
 
-# 记录一次上报结果：$1=ok|fail $2=HTTP码 $3=结果说明 $4=节点数
+# 统一取 UTC 时间戳：展示与落盘共用同一个值，保证「控制台时间」=「菜单里的最近上报」
+submerge_now_utc() {
+    date -u '+%Y-%m-%d %H:%M:%S' 2> /dev/null
+}
+
+# 记录一次上报结果：$1=ok|fail $2=HTTP码 $3=结果说明 $4=节点数 $5=时间(可省，默认取当前 UTC)
 submerge_record() {
     local _now
     # 统一按 UTC 记录（服务器时区各不相同，展示时会标注 UTC）
-    _now="$(date -u '+%Y-%m-%d %H:%M:%S' 2> /dev/null)"
+    _now="${5:-$(submerge_now_utc)}"
     submerge_state_set LAST_TIME "$_now"
     submerge_state_set LAST_RESULT "${1:-fail}"
     submerge_state_set LAST_HTTP "${2:-}"
@@ -10764,18 +10769,20 @@ _submerge_jbool() { grep -oE "\"$1\":(true|false)" "$2" 2> /dev/null | head -n1 
 submerge_report() {
     submerge_load
 
-    local _base _tok _mach _src _srcjf _b64 _body _code _url _cnt _ex _srcfile _tmpf
+    local _base _tok _mach _src _srcjf _b64 _body _code _url _cnt _ex _srcfile _tmpf _now
     _base="${SUBMERGE_BASE%/}"
     _tok="$SUBMERGE_TOKEN"
     _mach="$SUBMERGE_MACHINE"
     _src="$SUBMERGE_SOURCE"
+    # 本次上报的 UTC 时间戳：控制台输出与状态文件用同一个值
+    _now="$(submerge_now_utc)"
 
     if [ -z "$_base" ]; then
         red "❌ 还没有配置上报地址（每个人的 sub-merge 域名不同，需要你填自己的）"
         yellow "   填法：sb report 菜单选 3 填写上报地址，或写进 $SUBMERGE_CONF"
         echo "   SUBMERGE_BASE=https://你的-sub-merge-域名"
         echo "   SUBMERGE_TOKEN=<上报凭证 REPORT_TOKEN>"
-        submerge_record fail "" "未配置上报地址"
+        submerge_record fail "" "未配置上报地址" "" "" "$_now"
         return 1
     fi
 
@@ -10797,7 +10804,7 @@ submerge_report() {
     fi
     if [ ! -s "$SINGBOX_FOLDER_PATH/jh.txt" ]; then
         red "❌ 节点文件为空：$SINGBOX_FOLDER_PATH/jh.txt"
-        submerge_record fail "" "节点文件为空"
+        submerge_record fail "" "节点文件为空" "" "" "$_now"
         yellow "   先装好节点（sb ins）或执行 sb sub 生成节点链接再上报"
         return 1
     fi
@@ -10813,7 +10820,7 @@ submerge_report() {
             rm -f "$_tmpf" 2> /dev/null
             red "❌ 排除协议（${_ex}）后没有可上报的节点"
             yellow "   要改排除项：sb report 菜单选 3，或改 $SUBMERGE_CONF 里的 SUBMERGE_EXCLUDE"
-            submerge_record fail "" "排除协议后没有节点（${_ex}）"
+            submerge_record fail "" "排除协议后没有节点（${_ex}）" "" "" "$_now"
             return 1
         fi
         _srcfile="$_tmpf"
@@ -10823,7 +10830,7 @@ submerge_report() {
     if [ -z "$_b64" ]; then
         [ -n "$_tmpf" ] && rm -f "$_tmpf" 2> /dev/null
         red "❌ base64 编码失败（缺 openssl / base64？）"
-        submerge_record fail "" "base64 编码失败"
+        submerge_record fail "" "base64 编码失败" "" "" "$_now"
         return 1
     fi
 
@@ -10853,17 +10860,17 @@ submerge_report() {
         _manual="$(_submerge_jnum manual_nodes "$_body")"
         _when="$(_submerge_jstr updated_at "$_body")"
         if [ "$_changed" = "true" ]; then
-            green "✅ 上报成功：节点 ${_nodes} 条（自动 ${_auto} + 手动 ${_manual}）"
+            green "✅ 上报成功：节点 ${_nodes} 条（自动 ${_auto} + 手动 ${_manual}）  ${_now}（UTC）"
             purple "   内容已更新，更新时间 ${_when}"
-            submerge_record ok "$_code" "内容已更新，节点 ${_nodes} 条（自动 ${_auto} + 手动 ${_manual}）" "${_nodes:-$_cnt}"
+            submerge_record ok "$_code" "内容已更新，节点 ${_nodes} 条（自动 ${_auto} + 手动 ${_manual}）" "${_nodes:-$_cnt}" "$_now"
         elif [ "$_changed" = "false" ]; then
-            green "✅ 上报成功，但内容与上次完全一致（服务端未重复写入）"
+            green "✅ 上报成功，但内容与上次完全一致（服务端未重复写入）  ${_now}（UTC）"
             purple "   当前节点 ${_nodes} 条（自动 ${_auto} + 手动 ${_manual}），最近更新 ${_when}"
-            submerge_record ok "$_code" "内容未变，节点 ${_nodes} 条（自动 ${_auto} + 手动 ${_manual}）" "${_nodes:-$_cnt}"
+            submerge_record ok "$_code" "内容未变，节点 ${_nodes} 条（自动 ${_auto} + 手动 ${_manual}）" "${_nodes:-$_cnt}" "$_now"
         else
-            green "✅ 上报成功"
+            green "✅ 上报成功  ${_now}（UTC）"
             sed -n '1,3p' "$_body" 2> /dev/null
-            submerge_record ok "$_code" "上报成功" "${_cnt}"
+            submerge_record ok "$_code" "上报成功" "${_cnt}" "$_now"
         fi
         rm -f "$_body" 2> /dev/null
         return 0
@@ -10874,11 +10881,11 @@ submerge_report() {
     _msg="$(_submerge_jstr message "$_body")"
     _hint="$(_submerge_jstr hint "$_body")"
     if [ -z "$_err" ]; then _err="$(cat "$_body" 2> /dev/null | head -c 200)"; fi
-    red "❌ 上报失败（HTTP ${_code}）：${_err}"
+    red "❌ 上报失败（HTTP ${_code}）：${_err}  ${_now}（UTC）"
     # 服务端的 message/hint 才是能动手的信息，只印 error 等于什么都没说
     if [ -n "$_msg" ] && [ "$_msg" != "$_err" ]; then red "   服务端说明：${_msg}"; fi
     if [ -n "$_hint" ]; then yellow "   处理建议：${_hint}"; fi
-    submerge_record fail "$_code" "HTTP ${_code}：${_err}" ""
+    submerge_record fail "$_code" "HTTP ${_code}：${_err}" "" "$_now"
     case "$_code" in
         401) yellow "   凭证不对：上报只认 REPORT_TOKEN，不能用主订阅 token" ;;
         400) yellow "   参数问题：检查机器名（首字符字母/数字，可含中文、空格、_ . -，≤64 字符）" ;;
