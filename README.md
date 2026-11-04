@@ -1,6 +1,7 @@
 #  singbox一键安装脚本、socks5一键脚本、mtp一键脚本
 
 > 命令生成界面：见 [singbox-tools-interface](https://github.com/jyucoeng/singbox-tools-interface)，部署后用自己的域名访问。
+
 > 节点汇聚项目：见 [sub_merge](https://github.com/jyucoeng/sub_merge)，部署后用自己的域名汇聚所有机器的节点
 
 ## 请点击跳转对应的readme
