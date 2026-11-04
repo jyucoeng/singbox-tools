@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.54(2026-11-04)"
+VERSION="3.2.56(2026-11-04)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -10540,10 +10540,10 @@ submerge_auto_report() {
     if [ "$_rc" -eq 0 ]; then
         echo
         green "📤 已自动上报到 sub-merge（自动上报已开启）"
-        printf '%s\n' "$_out" | grep -E '上报成功|内容与' | sed 's/^[[:space:]]*/   /'
+        printf '%s\n' "$_out" | grep -E '上报成功|内容与|上报时间' | sed 's/^[[:space:]]*/   /'
     else
         yellow "⚠️ 自动上报失败（REPORT_FLAG=1），节点已正常生成："
-        printf '%s\n' "$_out" | tail -n 4 | sed 's/^/   /'
+        printf '%s\n' "$_out" | tail -n 6 | sed 's/^/   /'
     fi
     return 0
 }
@@ -10860,15 +10860,18 @@ submerge_report() {
         _manual="$(_submerge_jnum manual_nodes "$_body")"
         _when="$(_submerge_jstr updated_at "$_body")"
         if [ "$_changed" = "true" ]; then
-            green "✅ 上报成功：节点 ${_nodes} 条（自动 ${_auto} + 手动 ${_manual}）  ${_now}（UTC）"
+            green "✅ 上报成功：节点 ${_nodes} 条（自动 ${_auto} + 手动 ${_manual}）"
+            purple "   上报时间：${_now}（UTC）"
             purple "   内容已更新，更新时间 ${_when}"
             submerge_record ok "$_code" "内容已更新，节点 ${_nodes} 条（自动 ${_auto} + 手动 ${_manual}）" "${_nodes:-$_cnt}" "$_now"
         elif [ "$_changed" = "false" ]; then
-            green "✅ 上报成功，但内容与上次完全一致（服务端未重复写入）  ${_now}（UTC）"
+            green "✅ 上报成功，但内容与上次完全一致（服务端未重复写入）"
+            purple "   上报时间：${_now}（UTC）"
             purple "   当前节点 ${_nodes} 条（自动 ${_auto} + 手动 ${_manual}），最近更新 ${_when}"
             submerge_record ok "$_code" "内容未变，节点 ${_nodes} 条（自动 ${_auto} + 手动 ${_manual}）" "${_nodes:-$_cnt}" "$_now"
         else
-            green "✅ 上报成功  ${_now}（UTC）"
+            green "✅ 上报成功"
+            purple "   上报时间：${_now}（UTC）"
             sed -n '1,3p' "$_body" 2> /dev/null
             submerge_record ok "$_code" "上报成功" "${_cnt}" "$_now"
         fi
@@ -10881,7 +10884,8 @@ submerge_report() {
     _msg="$(_submerge_jstr message "$_body")"
     _hint="$(_submerge_jstr hint "$_body")"
     if [ -z "$_err" ]; then _err="$(cat "$_body" 2> /dev/null | head -c 200)"; fi
-    red "❌ 上报失败（HTTP ${_code}）：${_err}  ${_now}（UTC）"
+    red "❌ 上报失败（HTTP ${_code}）：${_err}"
+    purple "   上报时间：${_now}（UTC）"
     # 服务端的 message/hint 才是能动手的信息，只印 error 等于什么都没说
     if [ -n "$_msg" ] && [ "$_msg" != "$_err" ]; then red "   服务端说明：${_msg}"; fi
     if [ -n "$_hint" ]; then yellow "   处理建议：${_hint}"; fi
@@ -10926,9 +10930,10 @@ submerge_preview() {
     purple "  来源　　：${SUBMERGE_SOURCE:-默认}"
     purple "  不上报　：${_ex:-（不过滤，全部上报）}"
     echo ""
-    sed -n '1,5p' "$_view" 2> /dev/null | while IFS= read -r _l; do
-        [ -n "$_l" ] && printf '  %s...\n' "$(printf '%s' "$_l" | cut -c1-72)"
-    done
+    # 原串完整打印：预览就是要核对真正要上报的内容，不截断、不限条数
+    while IFS= read -r _l; do
+        [ -n "$_l" ] && printf '  %s\n' "$_l"
+    done < "$_view"
     [ -n "$_tmpf" ] && rm -f "$_tmpf" 2> /dev/null
     return 0
 }
