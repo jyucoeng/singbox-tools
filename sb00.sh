@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.59(2026-11-04)"
+VERSION="3.2.60(2026-11-04)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -6077,6 +6077,8 @@ regenerate_links_and_sub() {
             append_jh "$_argo_link"
             _argo_printed=true
         done
+        # Argo 段整体结束后补一个空行，避免最后一条节点链接和后面的日志粘在一起
+        [ "$_argo_printed" = "true" ] && echo
         unset _argo_link _ah _apt _argo_printed
     fi
 
