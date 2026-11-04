@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.56(2026-11-04)"
+VERSION="3.2.59(2026-11-04)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -10904,7 +10904,7 @@ submerge_report() {
 # 上传前预览：节点条数 + base64 长度 + 目标地址
 submerge_preview() {
     submerge_load
-    local _b64 _purl _ex _total _view _tmpf
+    local _b64 _purl _ex _total _view _tmpf _n _l
     if [ ! -s "$SINGBOX_FOLDER_PATH/jh.txt" ]; then
         red "❌ 节点文件不存在：$SINGBOX_FOLDER_PATH/jh.txt（先 sb sub 生成）"
         return 1
@@ -10919,20 +10919,24 @@ submerge_preview() {
         _view="$_tmpf"
     fi
     _b64="$(submerge_b64_file "$_view")"
-    green "节点文件：$SINGBOX_FOLDER_PATH/jh.txt"
+    echo "--------- 上报预览 ---------"
+    green "  节点文件：$SINGBOX_FOLDER_PATH/jh.txt"
     purple "  节点条数：$(grep -c . "$_view" 2> /dev/null) 条$([ -n "$_ex" ] && printf '（原始 %s 条，已排除 %s）' "$_total" "$_ex")"
     purple "  base64 长度：${#_b64} 字节（上限 524288）"
     _purl="${SUBMERGE_BASE%/}/api/v1/report/$(submerge_urlencode "$SUBMERGE_MACHINE")"
     if [ -n "${SUBMERGE_SOURCE:-}" ] && [ "$SUBMERGE_SOURCE" != "default" ]; then
         _purl="${_purl}?source=$(submerge_urlencode "$SUBMERGE_SOURCE")"
     fi
-    purple "  上报地址：${_purl}"
-    purple "  来源　　：${SUBMERGE_SOURCE:-默认}"
+    purple "  上报 URL：${_purl}"
     purple "  不上报　：${_ex:-（不过滤，全部上报）}"
     echo ""
     # 原串完整打印：预览就是要核对真正要上报的内容，不截断、不限条数
+    # 每条前面加序号、后面空一行，长链接之间不至于糊成一片
+    _n=0
     while IFS= read -r _l; do
-        [ -n "$_l" ] && printf '  %s\n' "$_l"
+        [ -n "$_l" ] || continue
+        _n=$((_n + 1))
+        printf '  %d) %s\n\n' "$_n" "$_l"
     done < "$_view"
     [ -n "$_tmpf" ] && rm -f "$_tmpf" 2> /dev/null
     return 0
@@ -10941,7 +10945,7 @@ submerge_preview() {
 # 查看当前上报配置（凭证打码）
 submerge_conf_show() {
     submerge_load
-    local _mask
+    local _mask _src_disp
     if [ -n "$SUBMERGE_TOKEN" ]; then
         if [ ${#SUBMERGE_TOKEN} -gt 12 ]; then
             _mask="$(printf '%s' "$SUBMERGE_TOKEN" | cut -c1-6)****$(printf '%s' "$SUBMERGE_TOKEN" | rev | cut -c1-4 | rev)"
@@ -10953,63 +10957,179 @@ submerge_conf_show() {
     fi
     if [ -n "$SUBMERGE_BASE" ]; then
         green "  上报地址：${SUBMERGE_BASE%/}"
+        purple "  上报 URL：$(submerge_target_url)"
     else
         yellow "  上报地址：（未配置——每个人的 sub-merge 域名不同，需要你填自己的）"
     fi
     green "  上报凭证：${_mask}"
     green "  机器名　：${SUBMERGE_MACHINE}"
-    green "  来源　　：${SUBMERGE_SOURCE:-默认}"
+    case "${SUBMERGE_SOURCE:-}" in
+        "" | default) _src_disp="（默认）" ;;
+        *) _src_disp="$SUBMERGE_SOURCE" ;;
+    esac
+    green "  来源　　：${_src_disp}"
     green "  不上报　：$(submerge_exclude_list_show)"
     green "  会上报　：$(submerge_kinds_to_report)"
-    if submerge_auto_enabled; then
-        green "  自动上报：已开启（$(submerge_auto_flag)）"
-    else
-        yellow "  自动上报：已关闭（默认，只有 REPORT_FLAG=1 才自动上报）"
-    fi
-    purple "  配置文件：${SUBMERGE_CONF}（$(submerge_conf_perm)）"
     purple "  取值顺序：环境变量 REPORT_* > 配置文件 > 默认值（传参会写回配置文件）"
     purple "  清除配置：REPORT_CLEAR=1 重装一次，或 sb report → 3) 地址处填 - "
 }
 
-# 交互式修改配置（回车保持原值）
+# 交互输入是否表示「取消返回」：q / quit / exit / b / back / 0
+submerge_cancel_word() {
+    case "${1:-}" in
+        q | Q | quit | QUIT | exit | EXIT | b | B | back | BACK | 0) return 0 ;;
+    esac
+    return 1
+}
+
+# 交互式修改配置：二级菜单，逐项修改，改完回本级，0 返回上级菜单
 submerge_configure() {
-    submerge_load
-    local _in
-    echo ""
-    yellow "  直接回车表示保持当前值；地址处输入 - 清除全部配置"
-    reading "  上报地址（你的 sub-merge 域名，如 https://sub.你的域名） [${SUBMERGE_BASE:-未配置}]: " _in
-    if [ "$_in" = "-" ]; then
-        rm -f "$SUBMERGE_CONF" "$SUBMERGE_STATE" 2> /dev/null
-        green "✅ 已清除上报配置与上报状态"
-        return 0
-    fi
-    if [ -n "$_in" ]; then
-        _in="$(submerge_norm_base "$_in")"
-        SUBMERGE_BASE="$_in"
-        submerge_conf_set SUBMERGE_BASE "$_in"
-    fi
-    reading "  上报凭证 [$( [ -n "$SUBMERGE_TOKEN" ] && echo 已配置 || echo 未配置 )]: " _in
-    [ -n "$_in" ] && submerge_conf_set SUBMERGE_TOKEN "$_in"
-    yellow "  机器名默认取全局配置里的 name（当前：${SUBMERGE_MACHINE}），一般不用改"
-    reading "  机器名 [${SUBMERGE_MACHINE}]: " _in
-    [ -n "$_in" ] && submerge_conf_set SUBMERGE_MACHINE "$_in"
-    yellow "  来源留空即可（同一台机器要分多份数据时才填，比如 hk2）"
-    reading "  来源 [${SUBMERGE_SOURCE:-默认}]: " _in
-    [ -n "$_in" ] && submerge_conf_set SUBMERGE_SOURCE "$_in"
-    yellow "  不上报的协议：英文逗号分隔；输入 - 清空，回车保持"
-    purple "    协议　：vless vmess trojan hysteria2 tuic anytls socks5（填协议名自动含它的细分形态）"
-    purple "    细分　：vless-reality vless-argo vless-cdn vmess-argo vmess-cdn trojan-argo trojan-cdn"
-    purple "    当前会上报：$(submerge_kinds_to_report)"
-    reading "  不上报的协议 [$(submerge_exclude_list_show)]: " _in
-    if [ "$_in" = "-" ]; then
-        SUBMERGE_EXCLUDE=""
-        submerge_conf_set SUBMERGE_EXCLUDE ""
-    elif [ -n "$_in" ]; then
-        SUBMERGE_EXCLUDE="$_in"
-        submerge_conf_set SUBMERGE_EXCLUDE "$(printf '%s' "$_in" | tr -d '[:space:]')"
-    fi
-    green "✅ 已保存到 $SUBMERGE_CONF"
-    submerge_conf_show
+    local _ch _in _mask _src_disp
+    while true; do
+        submerge_load
+        if [ -n "$SUBMERGE_TOKEN" ]; then
+            if [ ${#SUBMERGE_TOKEN} -gt 12 ]; then
+                _mask="$(printf '%s' "$SUBMERGE_TOKEN" | cut -c1-6)****$(printf '%s' "$SUBMERGE_TOKEN" | rev | cut -c1-4 | rev)"
+            else
+                _mask="****"
+            fi
+        else
+            _mask="（未配置）"
+        fi
+        case "${SUBMERGE_SOURCE:-}" in
+            "" | default) _src_disp="（默认）" ;;
+            *) _src_disp="$SUBMERGE_SOURCE" ;;
+        esac
+        clear
+        green "========= 修改上报配置 ========="
+        echo ""
+        if [ -n "$SUBMERGE_BASE" ]; then
+            green "  1) 上报地址　　：${SUBMERGE_BASE%/}"
+        else
+            yellow "  1) 上报地址　　：（未配置）"
+        fi
+        green "  2) 上报凭证　　：${_mask}"
+        green "  3) 机器名　　　：${SUBMERGE_MACHINE}"
+        green "  4) 来源　　　　：${_src_disp}"
+        green "  5) 不上报的协议：$(submerge_exclude_list_show)"
+        yellow "  6) 清空全部配置（含上报状态）"
+        purple "  0) 返回上级菜单"
+        echo ""
+        reading "请输入选项: " _ch
+        case "$_ch" in
+            1)
+                reading "  新的上报地址（回车保持；输入 - 清空全部配置）[${SUBMERGE_BASE:-未配置}]: " _in
+                if [ "$_in" = "-" ]; then
+                    rm -f "$SUBMERGE_CONF" "$SUBMERGE_STATE" 2> /dev/null
+                    green "✅ 已清除上报配置与上报状态"
+                    menu_pause
+                    continue
+                fi
+                if submerge_cancel_word "$_in"; then
+                    purple "  已取消，未修改"
+                    menu_pause
+                    continue
+                fi
+                if [ -n "$_in" ]; then
+                    SUBMERGE_BASE="$(submerge_norm_base "$_in")"
+                    submerge_conf_set SUBMERGE_BASE "$SUBMERGE_BASE"
+                    green "✅ 上报地址已更新：${SUBMERGE_BASE}"
+                else
+                    purple "  未修改"
+                fi
+                menu_pause
+                ;;
+            2)
+                reading "  新的上报凭证（回车保持；只认 sub-merge 的 REPORT_TOKEN，不是主订阅 token）: " _in
+                if submerge_cancel_word "$_in"; then
+                    purple "  已取消，未修改"
+                    menu_pause
+                    continue
+                fi
+                if [ -n "$_in" ]; then
+                    SUBMERGE_TOKEN="$_in"
+                    submerge_conf_set SUBMERGE_TOKEN "$_in"
+                    green "✅ 上报凭证已更新"
+                else
+                    purple "  未修改"
+                fi
+                menu_pause
+                ;;
+            3)
+                reading "  新的机器名（回车保持；首字符字母/数字，可含中文、空格、_ . -，≤64 字符）[${SUBMERGE_MACHINE}]: " _in
+                if submerge_cancel_word "$_in"; then
+                    purple "  已取消，未修改"
+                    menu_pause
+                    continue
+                fi
+                if [ -n "$_in" ]; then
+                    SUBMERGE_MACHINE="$_in"
+                    submerge_conf_set SUBMERGE_MACHINE "$_in"
+                    green "✅ 机器名已更新：${_in}"
+                else
+                    purple "  未修改"
+                fi
+                menu_pause
+                ;;
+            4)
+                reading "  新的来源（回车保持；留空即默认，同一台机器分多份数据时才填，如 hk2）[${_src_disp}]: " _in
+                if submerge_cancel_word "$_in"; then
+                    purple "  已取消，未修改"
+                    menu_pause
+                    continue
+                fi
+                if [ -n "$_in" ]; then
+                    SUBMERGE_SOURCE="$_in"
+                    submerge_conf_set SUBMERGE_SOURCE "$_in"
+                    green "✅ 来源已更新：${_in}"
+                else
+                    purple "  未修改"
+                fi
+                menu_pause
+                ;;
+            5)
+                yellow "  不上报的协议：英文逗号分隔；输入 - 清空，回车保持"
+                purple "    协议　：vless vmess trojan hysteria2 tuic anytls socks5（填协议名自动含它的细分形态）"
+                purple "    细分　：vless-reality vless-argo vless-cdn vmess-argo vmess-cdn trojan-argo trojan-cdn"
+                purple "    当前会上报：$(submerge_kinds_to_report)"
+                reading "  不上报的协议 [$(submerge_exclude_list_show)]: " _in
+                if submerge_cancel_word "$_in"; then
+                    purple "  已取消，未修改"
+                    menu_pause
+                    continue
+                fi
+                if [ "$_in" = "-" ]; then
+                    SUBMERGE_EXCLUDE=""
+                    submerge_conf_set SUBMERGE_EXCLUDE ""
+                    green "✅ 已清空排除协议（改为全部上报）"
+                elif [ -n "$_in" ]; then
+                    SUBMERGE_EXCLUDE="$(printf '%s' "$_in" | tr -d '[:space:]')"
+                    submerge_conf_set SUBMERGE_EXCLUDE "$SUBMERGE_EXCLUDE"
+                    green "✅ 不上报的协议已更新：${SUBMERGE_EXCLUDE}"
+                else
+                    purple "  未修改"
+                fi
+                menu_pause
+                ;;
+            6)
+                reading "  确认清空全部上报配置与上报状态？(y/N): " _in
+                case "$_in" in
+                    y | Y | yes | YES)
+                        rm -f "$SUBMERGE_CONF" "$SUBMERGE_STATE" 2> /dev/null
+                        green "✅ 已清除上报配置与上报状态"
+                        ;;
+                    *) purple "  已取消" ;;
+                esac
+                menu_pause
+                ;;
+            0 | q | Q | b | B | back | BACK | exit | EXIT) return 0 ;;
+            "") : ;;
+            *)
+                yellow "  无效选项：${_ch}"
+                menu_pause
+                ;;
+        esac
+    done
 }
 
 # 配置文件实际权限（3600 = rw-------），拿不到就报「未知」
@@ -11026,7 +11146,7 @@ submerge_conf_perm() {
 # 上报状态查询：开关 / 最近一次时间与结果 / 地址与凭证
 submerge_status_show() {
     submerge_load
-    local _mask _flag _lt _lr _lmsg _lhttp _lnodes _lasturl _lok
+    local _flag _lt _lr _lmsg _lhttp _lnodes _lasturl _lok
     green "========= 上报状态 ========="
     _flag="$(submerge_auto_flag)"
     if submerge_auto_enabled; then
@@ -11038,28 +11158,6 @@ submerge_status_show() {
         purple "    开关来源：环境变量 REPORT_FLAG=${REPORT_FLAG}（覆盖配置文件）"
     else
         purple "    开关来源：$SUBMERGE_CONF 里的 SUBMERGE_AUTO"
-    fi
-
-    if [ -n "$SUBMERGE_TOKEN" ]; then
-        if [ ${#SUBMERGE_TOKEN} -gt 12 ]; then
-            _mask="$(printf '%s' "$SUBMERGE_TOKEN" | cut -c1-6)****$(printf '%s' "$SUBMERGE_TOKEN" | rev | cut -c1-4 | rev)"
-        else
-            _mask="****"
-        fi
-    else
-        _mask="（未配置）"
-    fi
-    if [ -n "$SUBMERGE_BASE" ]; then
-        green "  上报地址：$(submerge_target_url)"
-    else
-        yellow "  上报地址：（未配置）需要填你自己的 sub-merge 域名"
-    fi
-    green "  上报凭证：${_mask}"
-    green "  机器名　：${SUBMERGE_MACHINE}    来源：${SUBMERGE_SOURCE:-（默认）}"
-    green "  不上报　：$(submerge_exclude_list_show)"
-    green "  会上报　：$(submerge_kinds_to_report)"
-    if [ -s "$SINGBOX_FOLDER_PATH/jh.txt" ]; then
-        purple "  节点分布：$(submerge_kind_counts "$SINGBOX_FOLDER_PATH/jh.txt" "$(submerge_exclude_list)")"
     fi
 
     _lt="$(submerge_state_get LAST_TIME)"
@@ -11152,6 +11250,8 @@ interactive_submerge_menu() {
             3) submerge_configure; menu_pause ;;
             4)
                 submerge_status_show
+                echo ""
+                submerge_conf_show
                 echo ""
                 submerge_preview
                 menu_pause ;;
