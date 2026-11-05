@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.61(2026-11-05)"
+VERSION="3.2.62(2026-11-05)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -1200,12 +1200,66 @@ rss_kb_by_comm() {
     return 0
 }
 
+# 列出「属于本项目 prefix」的 nginx master（只认 exe 精确路径 + cmdline 里的 master process）
+#   ⚠️ 不用 pgrep -f：busybox 下语义不同；只看 exe 可以保证宝塔/系统 nginx 绝不会被误认
+_sb_nginx_master_pids() {
+    local pid exe cmd
+    for pid in /proc/[0-9]*; do
+        pid="${pid#/proc/}"
+        [ -n "$pid" ] || continue
+        exe="$(readlink "/proc/${pid}/exe" 2> /dev/null)" || continue
+        case "$exe" in
+            "$SB_NGINX_BIN"*) ;;
+            *) continue ;;
+        esac
+        cmd="$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2> /dev/null)"
+        case "$cmd" in
+            *"master process"*) printf '%s\n' "$pid" ;;
+        esac
+    done
+}
+
+# 服务管理器 stop 之后再收一次尾。
+#   历史现场：openrc 的 supervise-daemon 起第二份 nginx 时因端口被占失败退出，
+#   openrc 按自己 init 脚本里的 pidfile= 把「共用的那个 pid 文件」删了；
+#   而真正在服务的那份进程没被碰 → 面板从此永久显示「已停止」。
+#   这里只认 exe 精确路径，确认还活着就 TERM→KILL，并清掉 pid 文件。
+_sb_nginx_reap_stray() {
+    local pid hit
+    hit="$(_sb_nginx_master_pids | tr '\n' ' ')"
+    if [ -z "${hit// /}" ]; then
+        rm -f "$SB_NGINX_PID" 2> /dev/null
+        return 0
+    fi
+    debug_log "【调试】nginx_stop：服务已停，仍发现残留 master（pid:${hit}），清理"
+    for pid in $hit; do
+        kill -TERM "$pid" 2> /dev/null || true
+    done
+    sleep 1
+    for pid in $hit; do
+        kill -0 "$pid" 2> /dev/null && kill -KILL "$pid" 2> /dev/null || true
+    done
+    rm -f "$SB_NGINX_PID" 2> /dev/null
+    return 0
+}
+
 sb_nginx_running() {
     local pid
-    [ -s "$SB_NGINX_PID" ] || return 1
-    pid="$(cat "$SB_NGINX_PID" 2> /dev/null | tr -d ' \r\n')"
+    if [ -s "$SB_NGINX_PID" ]; then
+        pid="$(cat "$SB_NGINX_PID" 2> /dev/null | tr -d ' \r\n')"
+        if [ -n "$pid" ] && _pid_is_sb_nginx "$pid"; then
+            return 0
+        fi
+    fi
+    # 兜底：pid 文件可能被删（服务管理器失败退出时会删、旧版清理也会删），
+    # 但进程其实还活着在正常服务。按 exe 认领并把 pid 写回，面板/watchdog/停止流程
+    # 立刻恢复对得上号，不至于「明明在跑却显示已停止」。
+    pid="$(_sb_nginx_master_pids | head -n1)"
     [ -n "$pid" ] || return 1
-    _pid_is_sb_nginx "$pid"
+    printf '%s\n' "$pid" > "$SB_NGINX_PID" 2> /dev/null
+    chmod 600 "$SB_NGINX_PID" 2> /dev/null
+    debug_log "【调试】sb_nginx_running：pid 文件缺失/失效，已按 exe 认领存活实例（pid=${pid}）"
+    return 0
 }
 
 # 写沙箱主配置（daemon/pid/include 全在 prefix 内，不依赖 mime.types）
@@ -1482,6 +1536,7 @@ _sb_nginx_stop_raw() {
             case "$(systemctl is-active "$SB_NGINX_SVC" 2> /dev/null)" in
                 active | activating | reloading)
                     systemctl stop "$SB_NGINX_SVC" > /dev/null 2>&1
+                    _sb_nginx_reap_stray
                     return 0
                     ;;
             esac
@@ -1490,6 +1545,7 @@ _sb_nginx_stop_raw() {
         if command -v rc-service > /dev/null 2>&1; then
             if rc-service "$SB_NGINX_SVC" status > /dev/null 2>&1; then
                 rc-service "$SB_NGINX_SVC" stop > /dev/null 2>&1
+                _sb_nginx_reap_stray
                 return 0
             fi
             return 1
@@ -3544,22 +3600,39 @@ _ngx_managed=0
 [ -f "/etc/init.d/$SB_NGINX_SVC" ] && _ngx_managed=1
 
 # 未托管时（老安装 / 无 systemd 环境）：靠 pid 文件判断
-#   没有 pid 文件 = 用户主动停的（nginx_stop 会删），不碰
 #   有 pid 文件但进程没了 = 被 OOM 杀了，重启
-if [ "\$_ngx_managed" = "0" ] && [ -x "\$NGINX_BIN" ] && [ -f "\$NGINX_PID" ]; then
-    _pid=\$(cat "\$NGINX_PID" 2>/dev/null | tr -d ' \r\n')
-    _alive=0
-    if [ -n "\$_pid" ] && kill -0 "\$_pid" 2>/dev/null; then
-        _alive=1
-        # pid 可能被系统复用给别的进程，确认一下确实是 nginx
-        if [ -r "/proc/\$_pid/comm" ] && ! grep -qi nginx "/proc/\$_pid/comm" 2>/dev/null; then
-            _alive=0
+#   没有 pid 文件 = 先按 exe 认领一遍再下结论：openrc 的 supervise-daemon 起失败退出时
+#     会把共享的 pid 文件删掉，而真正在服务的进程还活着；认领到就写回 pid，别让状态永久错位。
+if [ "\$_ngx_managed" = "0" ] && [ -x "\$NGINX_BIN" ]; then
+    if [ ! -f "\$NGINX_PID" ]; then
+        _m=""
+        for _q in /proc/[0-9]*; do
+            _q=\${_q#/proc/}
+            [ -n "\$_q" ] || continue
+            _e=\$(readlink "/proc/\$_q/exe" 2>/dev/null) || continue
+            case "\$_e" in "\$NGINX_BIN"*) ;; *) continue ;; esac
+            _c=\$(tr '\0' ' ' < "/proc/\$_q/cmdline" 2>/dev/null)
+            case "\$_c" in *"master process"*) _m=\$_q; break ;; esac
+        done
+        if [ -n "\$_m" ]; then
+            printf '%s\n' "\$_m" > "\$NGINX_PID" 2>/dev/null && chmod 600 "\$NGINX_PID" 2>/dev/null
+            say "nginx: pid 文件丢失但进程在跑（pid=\$_m），已写回 pid 文件"
         fi
-    fi
-    if [ "\$_alive" = "0" ]; then
-        rm -f "\$NGINX_PID" 2>/dev/null
-        "\$NGINX_BIN" -p "\$NGINX_DIR/" -c conf/nginx.conf >/dev/null 2>&1
-        say "nginx: pid 文件存在但进程已消失，已重新启动"
+    else
+        _pid=\$(cat "\$NGINX_PID" 2>/dev/null | tr -d ' \r\n')
+        _alive=0
+        if [ -n "\$_pid" ] && kill -0 "\$_pid" 2>/dev/null; then
+            _alive=1
+            # pid 可能被系统复用给别的进程，确认一下确实是 nginx
+            if [ -r "/proc/\$_pid/comm" ] && ! grep -qi nginx "/proc/\$_pid/comm" 2>/dev/null; then
+                _alive=0
+            fi
+        fi
+        if [ "\$_alive" = "0" ]; then
+            rm -f "\$NGINX_PID" 2>/dev/null
+            "\$NGINX_BIN" -p "\$NGINX_DIR/" -c conf/nginx.conf >/dev/null 2>&1
+            say "nginx: pid 文件存在但进程已消失，已重新启动"
+        fi
     fi
 fi
 
@@ -4340,6 +4413,9 @@ nginx_stop() {
         fi
     fi
     rm -f "$SB_NGINX_PID" 2> /dev/null
+    # 最后再兜一遍：pid 文件可能早就对不上真实进程（服务管理器删过/换过），
+    # 只要还有本项目的 master 活着就说明没停干净，直接收掉，避免「说已停止其实还在跑」。
+    _sb_nginx_reap_stray
     debug_log "【调试】nginx_stop：沙箱 Nginx 服务已停止"
     return 0
 }

@@ -1091,6 +1091,17 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 
 ## 2.7 版本变更信息
 
+v3.2.62 (2026-11-05)
+ > 修「nginx 进程明明在跑、订阅也正常，面板却显示 ■ 已停止」：pid 文件被服务管理器删掉后，脚本会按 exe 认领存活实例并把 pid 写回。
+
+- 现场成因：安装既直跑 `nginx -p … -c conf/nginx.conf`，又启用了 openrc 的 `sb-nginx`（`supervise-daemon`）；服务那份起第二个实例时端口已被占 → `bind() failed (98: Address in use)` → 重试到 `respawn_max` 放弃、服务转 stopped，openrc 按 init 脚本里的 `pidfile=` 把**两边共用的 pid 文件**删了，而在服务的那份 master 没被碰
+- `sb_nginx_running()` 原来第一行就是 `[ -s "$SB_NGINX_PID" ] || return 1`，文件一没就永久判「已停止」；`singbox-watchdog.sh` 又写死「没有 pid 文件 = 用户主动停的，不碰」→ 谁都救不回来
+- 新增 `_sb_nginx_master_pids()`：只认 `/proc/<pid>/exe` 等于 `$SB_NGINX_BIN` 且 cmdline 含 `master process` 的进程（宝塔/系统 nginx 的 exe 不是这个二进制，绝不会误伤）
+- `sb_nginx_running()` 改为：pid 文件有效就用；缺失/失效时按上面的方法认领，**顺手把 pid 写回** `$SB_NGINX_PID`，面板 / watchdog / `nginx_stop` 立刻恢复对得上号
+- 新增 `_sb_nginx_reap_stray()`：`nginx_stop()` 与 `_sb_nginx_stop_raw()`（systemd / openrc 两条分支）停完之后再收一次尾，仍活着的本项目 master 一律 TERM→KILL，杜绝「提示已停止、进程还在跑」
+- watchdog 模板同步：pid 文件不存在时先按 exe 认领一遍，认到就写回并记一行 `nginx: pid 文件丢失但进程在跑（pid=…），已写回 pid 文件`，不再直接当成用户手动停
+- 真机验证（Alpine + openrc）：`stop` → 实例 0 / 端口 0；`start` → 实例 2（master+worker）/ pid 文件正确；`restart` → 只 reload，`error.log` 零新增行，订阅 200
+
 v3.2.61 (2026-11-05)
  > v4 / v6 都有效时，直连节点里额外多打印一条"另一地址族"节点；同一台机器换个地址族也能连。
 
