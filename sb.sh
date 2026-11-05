@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.60(2026-11-04)"
+VERSION="3.2.61(2026-11-05)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -5033,6 +5033,18 @@ EOF
 
     debug_log "【调试】pick_server_ip_for_install：已写入 $SINGBOX_FOLDER_PATH/server_ip, ip_final=$ip_final"
 
+    # 10-1) 记录本次检测到的 v4 / v6（各写一个文件，供打印"另一地址族"节点时取用）
+    #       只存合法且族别正确的地址；拿不到就不写，避免留下过期值
+    local _v4s _v6s
+    _v4s="$(strip_ip_brackets_all "${v4_local:-}")"
+    _v6s="$(strip_ip_brackets_all "${v6_local:-}")"
+    if is_valid_ip_simple "$_v4s" && ! printf '%s' "$_v4s" | grep -q ':'; then
+        printf '%s\n' "$_v4s" > "$SINGBOX_FOLDER_PATH/ip_v4"
+    fi
+    if is_valid_ip_simple "$_v6s" && printf '%s' "$_v6s" | grep -q ':'; then
+        printf '%s\n' "$_v6s" > "$SINGBOX_FOLDER_PATH/ip_v6"
+    fi
+
 }
 
 # =========================
@@ -5725,6 +5737,22 @@ append_jh() {
     printf '%s\n' "$1" >> "$SINGBOX_FOLDER_PATH/jh.txt"
 }
 
+# 插到聚合文件最开头：用于"另一地址族"节点，让客户端列表里它排第一
+#   与 append_jh 保持同样的空行规则（条目之间留一行，文件头/连续空行不会出现）
+prepend_jh() {
+    local _f="$SINGBOX_FOLDER_PATH/jh.txt" _tmp
+    _tmp="${_f}.prepend.$$"
+    {
+        printf '%s\n' "$1"
+        if [ -s "$_f" ] && [ -n "$(tail -n1 "$_f" 2> /dev/null)" ]; then
+            printf '\n'
+        fi
+        if [ -s "$_f" ]; then
+            cat "$_f"
+        fi
+    } > "$_tmp" 2> /dev/null && mv -f "$_tmp" "$_f" || rm -f "$_tmp"
+}
+
 # 节点名称片段统一做 URL 编码（防空格/#/?/& 等特殊字符破坏链接，同时防换行污染订阅）
 node_frag() { url_encode_component "$1"; }
 
@@ -6028,6 +6056,45 @@ regenerate_links_and_sub() {
 
     # 直连块（hy2/tuic/vless-reality/anytls）结束：若设置了 direct_host（对外域名），提醒 Cloudflare DNS 绑定 + 关小黄云（仅直连协议受影响，显示一次）
     print_direct_host_dns_hint
+
+    # >>> alt-family >>>
+    # 另一地址族节点：v4 / v6 同时有效时，额外输出一条"换个地址族也能连"的节点。
+    #   主节点用的是其中一族地址，这里用另一族地址生成同一协议的链接，便于客户端对比/切换。
+    #   仅当直连地址是 IP（未用 direct_host 掩码）时才补——掩码时地址是域名，不存在"另一族"。
+    if [ -z "$(cat "$SINGBOX_FOLDER_PATH/direct_host" 2> /dev/null | tr -d '\r\n')" ]; then
+        local _ip4d _ip6d _alt_addr _alt_tag _alt_link _alt_proto=""
+        _ip4d="$(cat "$SINGBOX_FOLDER_PATH/ip_v4" 2> /dev/null | tr -d '\r\n')"
+        _ip6d="$(cat "$SINGBOX_FOLDER_PATH/ip_v6" 2> /dev/null | tr -d '\r\n')"
+        if [ -n "$_ip4d" ] && [ -n "$_ip6d" ]; then
+            case "$(strip_ip_brackets_all "$server_ip")" in
+                *:*) _alt_addr="[$_ip4d]"; _alt_tag="IPv4" ;;
+                *) _alt_addr="[$_ip6d]"; _alt_tag="IPv6" ;;
+            esac
+            # 只挑一个协议：hy2 → vless-reality → tuic → anytls（哪一个在用就用哪一个）
+            if grep -q "hy2-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
+                _alt_proto="Hysteria2"
+                _alt_link="hysteria2://$uuid@$_alt_addr:$port_hy2/?sni=${hy_sni}&insecure=1${_hy2_pin}&alpn=h3&obfs=none#$(node_frag "${sxname}hy2-${_alt_tag}")"
+            elif grep -q "vless-reality-vision-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
+                _alt_proto="VLESS-Reality-Vision"
+                _alt_link="vless://${uuid}@${_alt_addr}:${port_vlr}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${vl_sni}&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#$(node_frag "${sxname}vless-reality-${_alt_tag}")"
+            elif grep -q "tuic-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
+                _alt_proto="TUIC"
+                _alt_link="tuic://${uuid}:${uuid}@${_alt_addr}:${port_tu}?sni=${tu_sni}&congestion_control=bbr&security=tls&udp_relay_mode=native&alpn=h3&allow_insecure=1#$(node_frag "${sxname}tuic-${_alt_tag}")"
+            elif grep -q "anytls-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
+                _alt_proto="AnyTLS"
+                _alt_link="anytls://${uuid}@${_alt_addr}:${port_any}?security=tls&sni=${any_sni}&fp=firefox&insecure=1&allowInsecure=1&type=tcp#$(node_frag "${sxname}anytls-${_alt_tag}")"
+            fi
+            if [ -n "$_alt_proto" ]; then
+                _hdr alt "另一地址族节点（同一协议，换 ${_alt_tag} 地址连；两族都不通时可互换）"
+                yellow "🎯【 ${_alt_proto} - ${_alt_tag} 】(直连协议)"
+                green "$_alt_link"
+                # 这条要排在订阅最前面：客户端里一眼能看到"另一地址族"的备用入口
+                prepend_jh "$_alt_link"
+                echo
+            fi
+        fi
+    fi
+    # <<< alt-family <<<
 
     argodomain=$(cat "$SINGBOX_FOLDER_PATH/argo_domain" 2> /dev/null)
 
