@@ -5958,11 +5958,67 @@ cip() {
 
 }
 
+# =========================
+# 另一地址族节点：v4 / v6 同时有效时，给"第一个打印出来的直连协议"再补一条同协议节点
+#   - 只补一条（_ALT_DONE 标记，后续协议调用直接返回）
+#   - 直连地址是域名（direct_host 掩码）时不补：地址是域名就不存在"另一族"
+#   - 拿不到两族地址时不补
+# =========================
+alt_family_addr() {
+    local _main="${1:-}" _ip4d _ip6d
+    [ -n "$(cat "$SINGBOX_FOLDER_PATH/direct_host" 2> /dev/null | tr -d '\r\n')" ] && return 0
+    _ip4d="$(cat "$SINGBOX_FOLDER_PATH/ip_v4" 2> /dev/null | tr -d '\r\n')"
+    _ip6d="$(cat "$SINGBOX_FOLDER_PATH/ip_v6" 2> /dev/null | tr -d '\r\n')"
+    [ -n "$_ip4d" ] && [ -n "$_ip6d" ] || return 0
+    case "$(strip_ip_brackets_all "$_main")" in
+        *:*) printf '[%s]' "$_ip4d" ;;
+        *) printf '[%s]' "$_ip6d" ;;
+    esac
+}
+
+# $1=协议(hy2|tuic|vless|anytls) $2=端口 $3=sni
+alt_family_emit() {
+    local _proto="$1" _port="$2" _sni="$3" _addr_alt _tag _link _lname
+    [ -n "${_ALT_DONE:-}" ] && return 0
+    _addr_alt="$(alt_family_addr "$addr")"
+    [ -n "$_addr_alt" ] || return 0
+    _ALT_DONE=1
+    case "$(strip_ip_brackets_all "$addr")" in
+        *:*) _tag="IPv4" ;;
+        *) _tag="IPv6" ;;
+    esac
+    case "$_proto" in
+        hy2)
+            _lname="Hysteria2"
+            _link="hysteria2://$uuid@${_addr_alt}:${_port}/?sni=${_sni}&insecure=1${_hy2_pin}&alpn=h3&obfs=none#$(node_frag "${sxname}hy2-${_tag}")"
+            ;;
+        tuic)
+            _lname="TUIC"
+            _link="tuic://${uuid}:${uuid}@${_addr_alt}:${_port}?sni=${_sni}&congestion_control=bbr&security=tls&udp_relay_mode=native&alpn=h3&allow_insecure=1#$(node_frag "${sxname}tuic-${_tag}")"
+            ;;
+        vless)
+            _lname="VLESS-Reality-Vision"
+            _link="vless://${uuid}@${_addr_alt}:${_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${_sni}&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#$(node_frag "${sxname}vless-reality-${_tag}")"
+            ;;
+        anytls)
+            _lname="AnyTLS"
+            _link="anytls://${uuid}@${_addr_alt}:${_port}?security=tls&sni=${_sni}&fp=firefox&insecure=1&allowInsecure=1&type=tcp#$(node_frag "${sxname}anytls-${_tag}")"
+            ;;
+        *) return 0 ;;
+    esac
+    yellow "🎯【 ${_lname} - ${_tag} 】(直连协议，另一地址族)"
+    green "$_link"
+    # 这条要排在订阅最前面：客户端里一眼能看到"另一地址族"的备用入口
+    prepend_jh "$_link"
+    echo
+}
+
 # 根据当前配置文件重新生成 jh.txt 并刷新订阅（SNI/端口/Argo 等变更后调用）
 regenerate_links_and_sub() {
     local _cip_arg="${1:-}"
     local uuid server_ip sxname port_hy2 hy_sni SHA256_hy2 port_tu tu_sni password
     local port_vlr public_key short_id vl_sni port_any any_sni
+    local _ALT_DONE=""
     local argodomain sbtk
     local _ap _ah _apt _argo_link _argo_printed
     local hy2_link tuic_link vless_link anytls_link
@@ -6010,6 +6066,7 @@ regenerate_links_and_sub() {
         green "$hy2_link"
         append_jh "$hy2_link"
         echo
+        alt_family_emit hy2 "$port_hy2" "$hy_sni"
     fi
 
     # TUIC protocol (tuic or tupt)
@@ -6023,6 +6080,7 @@ regenerate_links_and_sub() {
         green "$tuic_link"
         append_jh "$tuic_link"
         echo
+        alt_family_emit tuic "$port_tu" "$tu_sni"
     fi
     # VLESS-Reality-Vision protocol (vless-reality-vision)
     if grep -q "vless-reality-vision-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
@@ -6038,6 +6096,7 @@ regenerate_links_and_sub() {
         green "$vless_link"
         append_jh "$vless_link"
         echo
+        alt_family_emit vless "$port_vlr" "$vl_sni"
 
         # 查看节点时提示用户保存私钥（方便下次保持节点一致）,一般这里的$1值为"key"
         print_reality_key "$_cip_arg"
@@ -6052,49 +6111,11 @@ regenerate_links_and_sub() {
         green "$anytls_link"
         append_jh "$anytls_link"
         echo
+        alt_family_emit anytls "$port_any" "$any_sni"
     fi
 
     # 直连块（hy2/tuic/vless-reality/anytls）结束：若设置了 direct_host（对外域名），提醒 Cloudflare DNS 绑定 + 关小黄云（仅直连协议受影响，显示一次）
     print_direct_host_dns_hint
-
-    # >>> alt-family >>>
-    # 另一地址族节点：v4 / v6 同时有效时，额外输出一条"换个地址族也能连"的节点。
-    #   主节点用的是其中一族地址，这里用另一族地址生成同一协议的链接，便于客户端对比/切换。
-    #   仅当直连地址是 IP（未用 direct_host 掩码）时才补——掩码时地址是域名，不存在"另一族"。
-    if [ -z "$(cat "$SINGBOX_FOLDER_PATH/direct_host" 2> /dev/null | tr -d '\r\n')" ]; then
-        local _ip4d _ip6d _alt_addr _alt_tag _alt_link _alt_proto=""
-        _ip4d="$(cat "$SINGBOX_FOLDER_PATH/ip_v4" 2> /dev/null | tr -d '\r\n')"
-        _ip6d="$(cat "$SINGBOX_FOLDER_PATH/ip_v6" 2> /dev/null | tr -d '\r\n')"
-        if [ -n "$_ip4d" ] && [ -n "$_ip6d" ]; then
-            case "$(strip_ip_brackets_all "$server_ip")" in
-                *:*) _alt_addr="[$_ip4d]"; _alt_tag="IPv4" ;;
-                *) _alt_addr="[$_ip6d]"; _alt_tag="IPv6" ;;
-            esac
-            # 只挑一个协议：hy2 → vless-reality → tuic → anytls（哪一个在用就用哪一个）
-            if grep -q "hy2-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
-                _alt_proto="Hysteria2"
-                _alt_link="hysteria2://$uuid@$_alt_addr:$port_hy2/?sni=${hy_sni}&insecure=1${_hy2_pin}&alpn=h3&obfs=none#$(node_frag "${sxname}hy2-${_alt_tag}")"
-            elif grep -q "vless-reality-vision-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
-                _alt_proto="VLESS-Reality-Vision"
-                _alt_link="vless://${uuid}@${_alt_addr}:${port_vlr}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${vl_sni}&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#$(node_frag "${sxname}vless-reality-${_alt_tag}")"
-            elif grep -q "tuic-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
-                _alt_proto="TUIC"
-                _alt_link="tuic://${uuid}:${uuid}@${_alt_addr}:${port_tu}?sni=${tu_sni}&congestion_control=bbr&security=tls&udp_relay_mode=native&alpn=h3&allow_insecure=1#$(node_frag "${sxname}tuic-${_alt_tag}")"
-            elif grep -q "anytls-sb" "$SINGBOX_FOLDER_PATH/sb.json"; then
-                _alt_proto="AnyTLS"
-                _alt_link="anytls://${uuid}@${_alt_addr}:${port_any}?security=tls&sni=${any_sni}&fp=firefox&insecure=1&allowInsecure=1&type=tcp#$(node_frag "${sxname}anytls-${_alt_tag}")"
-            fi
-            if [ -n "$_alt_proto" ]; then
-                _hdr alt "另一地址族节点（同一协议，换 ${_alt_tag} 地址连；两族都不通时可互换）"
-                yellow "🎯【 ${_alt_proto} - ${_alt_tag} 】(直连协议)"
-                green "$_alt_link"
-                # 这条要排在订阅最前面：客户端里一眼能看到"另一地址族"的备用入口
-                prepend_jh "$_alt_link"
-                echo
-            fi
-        fi
-    fi
-    # <<< alt-family <<<
 
     argodomain=$(cat "$SINGBOX_FOLDER_PATH/argo_domain" 2> /dev/null)
 

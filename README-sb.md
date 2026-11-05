@@ -1096,7 +1096,9 @@ v3.2.61 (2026-11-05)
 
 - 主节点链接里只能放一个地址，IPv6 机器连 v4 地址、或客户端所在网络只有单栈时，往往要手工改链接才能用
 - 安装时把本次探测到的公网 v4 / v6 分别落到 `ip_v4`、`ip_v6`；打印节点时若两族都有值，就用**另一族**再生成一条同协议的节点，名字带 `-IPv4` / `-IPv6` 后缀
-- 优先级 `Hysteria2 → VLESS-Reality-Vision → TUIC → AnyTLS`，只补一条，参数（端口/sni/pinSHA256/pbk/sid）与主节点完全一致，客户端里可直接互相替换
+- 这条紧跟在**它所属协议**的输出之后打印（补的 Hysteria2 就排在 Hysteria2 下面），标签是 `🎯【 Hysteria2 - IPv6 】(直连协议，另一地址族)`
+- 优先级按打印顺序 `Hysteria2 → TUIC → VLESS-Reality-Vision → AnyTLS`，**只补一条**（`_ALT_DONE` 标记），参数（端口/sni/pinSHA256/pbk/sid）与主节点完全一致，客户端里可直接互换
+- 写入 `jh.txt` 时用 `prepend_jh` 放到**第一行**，nginx 订阅（`sub.txt` 由 jh.txt base64 而来）同样排最前，客户端列表里一眼可见
 - 以下几种情况不补：只探测到一族地址、设置了 `direct_host`（对外域名掩码，地址不是 IP 也就没有"另一族"）、当前没有直连协议（纯 socks5）
 
 v3.2.60 (2026-11-04)
