@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.27(2026-10-31)"
+VERSION="3.2.60(2026-11-04)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -1071,6 +1071,9 @@ print_sb_shortcut_help() {
     green "    sb rt              分流管理"
     green "    sb node            节点配置修改 (端口/订阅/SNI/Argo)"
     green "    sb sub             订阅管理"
+    green "    sb report          上报节点到 sub-merge（自动上报层）"
+    green "    sb report status   查看上报状态（开关/最近一次时间与结果/地址/凭证）"
+    green "    sb report on|off   开关自动上报"
     green "    sb del             卸载（保留二进制）"
     green "    sb delall          卸载全部并清理"
     green "    sb ups             更新 sing-box 内核"
@@ -2204,6 +2207,53 @@ v4v6() {
     debug_log "【调试】 IPv6 connectivity check completed. ipv6=$v6"
     debug_log "【调试】 IP connectivity check completed. ipv4=$v4, ipv6=$v6"
 
+}
+
+# 安装参数区打印上报（sub-merge）配置摘要
+#   —— 装完才发现「没开上报 / 域名没填 / token 没配」是最常见的返工原因，
+#      所以在这里和端口、口令一起展示一次；凭证只显示首尾，避免整段泄露到日志。
+submerge_install_summary() {
+    submerge_load
+    local _mask _mach_disp _ex_disp
+    # 完全没配过（无地址、无凭证、未开自动上报）→ 只说一句，不占版面
+    if [ -z "$SUBMERGE_BASE" ] && [ -z "$SUBMERGE_TOKEN" ] && ! submerge_auto_enabled; then
+        yellow "  节点上报: 未配置（如需汇总到自己的 sub-merge，见 sb report）"
+        return 0
+    fi
+    # 与「安装参数」其它行保持一致：两空格缩进 + 半角冒号 + 值；异常项才用黄色
+    if submerge_auto_enabled; then
+        green "  节点上报: 已开启"
+    else
+        yellow "  节点上报: 未开启（本次装完不会自动上报）"
+    fi
+    if [ -n "$SUBMERGE_BASE" ]; then
+        green "  上报域名: ${SUBMERGE_BASE}"
+    else
+        yellow "  上报域名: 未配置（装完不会上报）"
+    fi
+    if [ -n "$SUBMERGE_TOKEN" ]; then
+        if [ ${#SUBMERGE_TOKEN} -gt 12 ]; then
+            _mask="已配置 $(printf '%s' "$SUBMERGE_TOKEN" | cut -c1-6)****$(printf '%s' "$SUBMERGE_TOKEN" | rev | cut -c1-4 | rev)"
+        else
+            _mask="已配置 ****"
+        fi
+        green "  上报凭证: ${_mask}"
+    else
+        yellow "  上报凭证: 未配置"
+    fi
+    # 安装参数阶段 name 文件还没落盘，优先用本次传入的节点名前缀，显示与最终一致
+    _mach_disp="${SUBMERGE_MACHINE:-}"
+    if [ -z "${REPORT_MACHINE:-}" ] && [ -n "${name:-}" ]; then
+        _mach_disp="$name"
+    fi
+    green "  上报机器名: ${_mach_disp:-未设置}"
+    # 排除项：留空表示什么都上报（v3.2.42 起脚本不再默认塞 socks5）
+    _ex_disp="$(submerge_exclude_list)"
+    if [ -n "$_ex_disp" ]; then
+        green "  排除协议: ${_ex_disp}（这几类不上报，其余照常）"
+    else
+        green "  排除协议: 无（全部上报）"
+    fi
 }
 
 # Set up name for nodes and IP version preference
@@ -3513,6 +3563,56 @@ if [ "\$_ngx_managed" = "0" ] && [ -x "\$NGINX_BIN" ] && [ -f "\$NGINX_PID" ]; t
     fi
 fi
 
+# ---------- 临时 argo 隧道：自启 + 域名跟随 ----------
+# 临时隧道（trycloudflare）每次启动都会换一个域名，旧域名永久失效，重启后
+# 光把进程拉起来没用，jh.txt 里的 argo 节点已经指向死域名了，必须重新生成
+# 节点并重新上报。固定隧道由 argo.service 托管、域名不变，这里完全不碰。
+if [ -s "$SINGBOX_FOLDER_PATH/argoport" ] \\
+    && [ ! -f "$SINGBOX_FOLDER_PATH/tunnel.yml" ] \\
+    && [ ! -f "$SINGBOX_FOLDER_PATH/sbargotoken" ]; then
+    _adom=\$(cat "$SINGBOX_FOLDER_PATH/argo_domain" 2>/dev/null | tr -d '\r\n')
+    case "\$_adom" in
+        "" | *.trycloudflare.com) _atmp=1 ;;
+        *) _atmp=0 ;;
+    esac
+    if [ "\$_atmp" = "1" ]; then
+        if ! pgrep -f "cloudflared tunnel --url" >/dev/null 2>&1; then
+            _aport=\$(cat "$SINGBOX_FOLDER_PATH/argoport" 2>/dev/null)
+            [ -n "\$_aport" ] || _aport=8001
+            : > "$LOGS_DIR/argo.log" 2>/dev/null
+            nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel --url "http://localhost:\$_aport" \\
+                --edge-ip-version auto --no-autoupdate >> "$LOGS_DIR/argo.log" 2>&1 &
+            say "argo: 临时隧道未运行，已拉起（localhost:\$_aport）"
+            _ai=0
+            while [ "\$_ai" -lt 30 ]; do
+                sleep 2
+                grep -qE 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOGS_DIR/argo.log" 2>/dev/null && break
+                _ai=\$((_ai + 1))
+            done
+        fi
+        _anew=\$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOGS_DIR/argo.log" 2>/dev/null | head -1 | sed 's#https://##')
+        if [ -n "\$_anew" ] && [ "\$_anew" != "\$_adom" ]; then
+            # 域名变了才动，两条 cron 撞上时用 mkdir 抢锁，抢不到说明对方正在处理
+            if mkdir "$LOGS_DIR/.argo-regen.lock" 2>/dev/null; then
+                printf '%s\n' "\$_anew" > "$SINGBOX_FOLDER_PATH/argo_domain"
+                chmod 600 "$SINGBOX_FOLDER_PATH/argo_domain" 2>/dev/null
+                say "argo: 域名变化 \${_adom:-<空>} -> \$_anew，重新生成节点"
+                if [ -x "$SINGBOX_FOLDER_PATH/sb-cmd" ]; then
+                    bash "$SINGBOX_FOLDER_PATH/sb-cmd" sub > "$LOGS_DIR/argo-regen.log" 2>&1 \\
+                        && say "argo: jh.txt 已重新生成" \\
+                        || say "argo: 重新生成失败，见 logs/argo-regen.log"
+                    bash "$SINGBOX_FOLDER_PATH/sb-cmd" report >> "$LOGS_DIR/argo-regen.log" 2>&1 \\
+                        && say "argo: 已重新上报" \\
+                        || say "argo: 上报失败，见 logs/argo-regen.log"
+                fi
+                rmdir "$LOGS_DIR/.argo-regen.lock" 2>/dev/null
+            else
+                say "argo: 域名换成了 \$_anew，另一条看门狗正在处理，跳过"
+            fi
+        fi
+    fi
+fi
+
 exit 0
 EOF
     chmod 700 "$WATCHDOG_SCRIPT" 2> /dev/null || true
@@ -3637,8 +3737,13 @@ sbbout() {
         sleep 3
         if [ -s "$LOGS_DIR/singbox.log" ]; then
             debug_print green "✓ singbox.log 已生成"
+        elif pgrep -f "$SINGBOX_FOLDER_PATH/sing-box" > /dev/null 2>&1; then
+            # 进程在跑、日志暂时为空是正常现象（openrc/supervise 有缓冲，sing-box 也常在
+            # 首个连接后才写第一行）。这种情况不能报警，否则用户会以为装坏了。
+            debug_print green "✓ sing-box 已在运行（日志暂无内容，属正常）"
         else
-            yellow "⚠ singbox.log 为空，sing-box 可能启动失败，可用 sb log 查看"
+            # 只有确认进程不在，才说启动失败，并给出确定性更强的排查入口
+            yellow "⚠ sing-box 未在运行，可用 sb log_stop 查看停止原因"
         fi
     fi
 }
@@ -4112,6 +4217,8 @@ start_nginx_service() {
         debug_print green "✅ 沙箱 Nginx 已在运行"
         return 0
     fi
+    # pid 文件说「没在跑」，但进程可能还活着（孤儿 master 占着端口）→ 先清掉
+    sb_nginx_kill_orphan
     rm -f "$SB_NGINX_PID" 2> /dev/null
 
     # 启动前先查端口占用：把「系统/宝塔 Nginx 抢端口」这件事直接说清楚，
@@ -4155,6 +4262,43 @@ start_nginx_service() {
 
 nginx_start() {
     start_nginx_service
+}
+
+# 清理「不受 pid 文件管理」的沙箱 Nginx 残留（孤儿 master）
+#   触发场景：旧版卸载只按 pid 文件停进程，而 pid 文件在更早的清理里已被删，
+#             于是 master 变成孤儿继续占着 nginx_pt / argo_pt；下次安装要 bind 同一端口
+#             → 启动即失败，且状态判断也看不见它（没有 pid 文件）。
+#   判定只看 exe 真实路径是否等于本项目 prefix 下的 nginx：
+#     系统 / 宝塔 nginx 的 exe 是 /usr/sbin/nginx 等，绝不会被误杀。
+sb_nginx_kill_orphan() {
+    local pid exe hit="" _managed=""
+    [ -s "$SB_NGINX_PID" ] && _managed="$(cat "$SB_NGINX_PID" 2> /dev/null | tr -d ' \r\n')"
+    for pid in /proc/[0-9]*; do
+        pid="${pid#/proc/}"
+        [ -n "$pid" ] || continue
+        exe="$(readlink "/proc/${pid}/exe" 2> /dev/null)" || continue
+        case "$exe" in
+            "$SB_NGINX_BIN"*) ;;
+            *) continue ;;
+        esac
+        # 受管实例（pid 文件正指向它）交给 nginx_stop 处理，这里不动
+        if [ -n "$_managed" ] && [ "$pid" = "$_managed" ]; then
+            continue
+        fi
+        hit="${hit} ${pid}"
+    done
+    [ -n "${hit// /}" ] || return 0
+    # 自家的孤儿 nginx 属正常清理对象，只在调试日志里留痕；
+    # 卸载/重装时把内部步骤打成黄字会让用户以为出了问题。
+    debug_log "  ↳ 发现不受 pid 文件管理的沙箱 Nginx 残留（pid:${hit}），静默清理"
+    for pid in $hit; do
+        kill -15 "$pid" 2> /dev/null || true
+    done
+    sleep 1
+    for pid in $hit; do
+        kill -0 "$pid" 2> /dev/null && kill -9 "$pid" 2> /dev/null || true
+    done
+    return 0
 }
 
 nginx_stop() {
@@ -5158,6 +5302,11 @@ ins() {
     green "  订阅: ${_sub_txt}"
     [ -n "$vlr" ] && green "  reality_private: ${reality_private:-自动生成}"
     green "  节点名称前缀: ${name:-跳过}"
+    # ---- 上报（sub-merge）块：装完是否上报、报到哪、凭证有没有、报哪些协议 ----
+    if [ -n "${SUBMERGE_BASE:-}${SUBMERGE_TOKEN:-}${REPORT_BASE:-}${REPORT_TOKEN:-}" ] \
+        || [ -n "${REPORT_FLAG:-}" ] || [ -s "$SUBMERGE_CONF" ]; then
+        submerge_install_summary
+    fi
     green "============================"
     echo
     fi
@@ -5828,7 +5977,7 @@ regenerate_links_and_sub() {
         # 这种情况宁可不带 pinSHA256
         _hy2_pin=""
         [ -n "$SHA256_hy2" ] && _hy2_pin="&pinSHA256=${SHA256_hy2}"
-        hy2_link="hysteria2://$uuid@$addr:$port_hy2/?sni=${hy_sni}&insecure=1${_hy2_pin}&alpn=h3&obfs=none#$(node_frag "${sxname}hy2-${hostname}")"
+        hy2_link="hysteria2://$uuid@$addr:$port_hy2/?sni=${hy_sni}&insecure=1${_hy2_pin}&alpn=h3&obfs=none#$(node_frag "${sxname}hy2")"
         yellow "🎯【 Hysteria2 】(直连协议)"
         green "$hy2_link"
         append_jh "$hy2_link"
@@ -5841,7 +5990,7 @@ regenerate_links_and_sub() {
         tu_sni=$(cat "$SINGBOX_FOLDER_PATH/tu_sni")
         password=$uuid
 
-        tuic_link="tuic://${uuid}:${password}@${addr}:${port_tu}?sni=${tu_sni}&congestion_control=bbr&security=tls&udp_relay_mode=native&alpn=h3&allow_insecure=1#$(node_frag "${sxname}tuic-${hostname}")"
+        tuic_link="tuic://${uuid}:${password}@${addr}:${port_tu}?sni=${tu_sni}&congestion_control=bbr&security=tls&udp_relay_mode=native&alpn=h3&allow_insecure=1#$(node_frag "${sxname}tuic")"
         yellow "🎯【 TUIC 】(直连协议)"
         green "$tuic_link"
         append_jh "$tuic_link"
@@ -5856,7 +6005,7 @@ regenerate_links_and_sub() {
 
         debug_log "【调试】regenerate_links_and_sub函数中的short_id,值为:$short_id"
 
-        vless_link="vless://${uuid}@${addr}:${port_vlr}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${vl_sni}&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#$(node_frag "${sxname}vless-reality-${hostname}")"
+        vless_link="vless://${uuid}@${addr}:${port_vlr}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${vl_sni}&fp=chrome&pbk=${public_key}&sid=${short_id}&type=tcp&headerType=none#$(node_frag "${sxname}vless-reality")"
         yellow "🎯【 VLESS-Reality-Vision 】(直连协议)"
         green "$vless_link"
         append_jh "$vless_link"
@@ -5870,7 +6019,7 @@ regenerate_links_and_sub() {
         port_any=$(cat "$SINGBOX_FOLDER_PATH/port_any")
         any_sni=$(cat "$SINGBOX_FOLDER_PATH/any_sni")
 
-        anytls_link="anytls://${uuid}@${addr}:${port_any}?security=tls&sni=${any_sni}&fp=firefox&insecure=1&allowInsecure=1&type=tcp#$(node_frag "${sxname}anytls-${hostname}")"
+        anytls_link="anytls://${uuid}@${addr}:${port_any}?security=tls&sni=${any_sni}&fp=firefox&insecure=1&allowInsecure=1&type=tcp#$(node_frag "${sxname}anytls")"
         yellow "🔐【 AnyTLS 】(直连协议)"
         green "$anytls_link"
         append_jh "$anytls_link"
@@ -5913,13 +6062,13 @@ regenerate_links_and_sub() {
             _apt="$(argo_eff_pt "$_ap")"
             case "$_ap" in
                 vmess)
-                    _argo_link="vmess://$(printf '%s' "{\"v\":\"2\",\"ps\":$(json_escape_string "${sxname}vmess-ws-tls-argo-${hostname}-${_apt}"),\"add\":$(json_escape_string "${_ah}"),\"port\":\"${_apt}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":$(json_escape_string "${argodomain}"),\"path\":\"/${uuid}-vm\",\"tls\":\"tls\",\"sni\":$(json_escape_string "${argodomain}")}" | base64 | tr -d '\n\r')"
+                    _argo_link="vmess://$(printf '%s' "{\"v\":\"2\",\"ps\":$(json_escape_string "${sxname}vmess-ws-tls-argo"),\"add\":$(json_escape_string "${_ah}"),\"port\":\"${_apt}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":$(json_escape_string "${argodomain}"),\"path\":\"/${uuid}-vm\",\"tls\":\"tls\",\"sni\":$(json_escape_string "${argodomain}")}" | base64 | tr -d '\n\r')"
                     ;;
                 trojan)
-                    _argo_link="trojan://${uuid}@${_ah}:${_apt}?security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-tr&sni=${argodomain}&fp=chrome#$(node_frag "${sxname}trojan-ws-tls-argo-${hostname}-${_apt}")"
+                    _argo_link="trojan://${uuid}@${_ah}:${_apt}?security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-tr&sni=${argodomain}&fp=chrome#$(node_frag "${sxname}trojan-ws-tls-argo")"
                     ;;
                 vless)
-                    _argo_link="vless://${uuid}@${_ah}:${_apt}?encryption=none&security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-vl&sni=${argodomain}&fp=chrome#$(node_frag "${sxname}vless-ws-tls-argo-${hostname}-${_apt}")"
+                    _argo_link="vless://${uuid}@${_ah}:${_apt}?encryption=none&security=tls&type=ws&host=${argodomain}&path=%2F${uuid}-vl&sni=${argodomain}&fp=chrome#$(node_frag "${sxname}vless-ws-tls-argo")"
                     ;;
             esac
             green ""
@@ -5928,6 +6077,8 @@ regenerate_links_and_sub() {
             append_jh "$_argo_link"
             _argo_printed=true
         done
+        # Argo 段整体结束后补一个空行，避免最后一条节点链接和后面的日志粘在一起
+        [ "$_argo_printed" = "true" ] && echo
         unset _argo_link _ah _apt _argo_printed
     fi
 
@@ -5954,15 +6105,15 @@ regenerate_links_and_sub() {
         case "$_p" in
             vless)
                 # add/host 连接地址用 _ws_h（CF 优选域名/优选IP），host 头与 SNI 用真实回源域名 _ws_s
-                _ws_link="vless://${uuid}@${_ws_h}:${_ws_p}?encryption=none&security=tls&type=ws&host=${_ws_s}&path=%2F${uuid}-vl-cdn&sni=${_ws_s}&fp=chrome#$(node_frag "${sxname}vless-ws-cdn-${hostname}")"
+                _ws_link="vless://${uuid}@${_ws_h}:${_ws_p}?encryption=none&security=tls&type=ws&host=${_ws_s}&path=%2F${uuid}-vl-cdn&sni=${_ws_s}&fp=chrome#$(node_frag "${sxname}vless-ws-cdn")"
                 ;;
             vmess)
                 # add 连接地址用 _ws_h（优选域名/优选IP），host 头与 SNI 用真实回源域名 _ws_s
-                _ws_link="vmess://$(printf '%s' "{\"v\":\"2\",\"ps\":$(json_escape_string "${sxname}vmess-ws-cdn-${hostname}"),\"add\":$(json_escape_string "${_ws_h}"),\"port\":\"${_ws_p}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":$(json_escape_string "${_ws_s}"),\"path\":\"/${uuid}-vm-cdn\",\"tls\":\"tls\",\"sni\":$(json_escape_string "${_ws_s}")}" | base64 | tr -d '\n\r')"
+                _ws_link="vmess://$(printf '%s' "{\"v\":\"2\",\"ps\":$(json_escape_string "${sxname}vmess-ws-cdn"),\"add\":$(json_escape_string "${_ws_h}"),\"port\":\"${_ws_p}\",\"id\":\"$uuid\",\"aid\":\"0\",\"net\":\"ws\",\"host\":$(json_escape_string "${_ws_s}"),\"path\":\"/${uuid}-vm-cdn\",\"tls\":\"tls\",\"sni\":$(json_escape_string "${_ws_s}")}" | base64 | tr -d '\n\r')"
                 ;;
             trojan)
                 # add/host 连接地址用 _ws_h，host 头与 SNI 用真实回源域名 _ws_s
-                _ws_link="trojan://${uuid}@${_ws_h}:${_ws_p}?security=tls&type=ws&host=${_ws_s}&path=%2F${uuid}-tr-cdn&sni=${_ws_s}&fp=chrome#$(node_frag "${sxname}trojan-ws-cdn-${hostname}")"
+                _ws_link="trojan://${uuid}@${_ws_h}:${_ws_p}?security=tls&type=ws&host=${_ws_s}&path=%2F${uuid}-tr-cdn&sni=${_ws_s}&fp=chrome#$(node_frag "${sxname}trojan-ws-cdn")"
                 ;;
         esac
         if [ "$_ws_cdn_printed" = "false" ]; then
@@ -5987,7 +6138,7 @@ regenerate_links_and_sub() {
 
         socks5_user_enc=$(url_encode_component "$socks5_username")
         socks5_pass_enc=$(url_encode_component "$socks5_password")
-        socks5_link="socks5://${socks5_user_enc}:${socks5_pass_enc}@${addr}:${port_socks5}#$(node_frag "${sxname}socks5-${hostname}")"
+        socks5_link="socks5://${socks5_user_enc}:${socks5_pass_enc}@${addr}:${port_socks5}#$(node_frag "${sxname}socks5")"
         yellow "🧦【 Socks5 】(此协议请不要直接在客户端里直连使用)"
         green "$socks5_link"
         local _wl_flag_val=""
@@ -6011,6 +6162,9 @@ regenerate_links_and_sub() {
 
     # jh.txt 内含全部节点口令，收紧权限
     chmod 600 "$SINGBOX_FOLDER_PATH/jh.txt" 2>/dev/null || true
+
+    # 自动上报（默认关闭）：只有 REPORT_FLAG=1 才把节点推到 sub-merge
+    submerge_auto_report || true
 }
 
 # SNI/端口等配置修改后统一调用：先刷新订阅，最后重启 sing-box 使新配置生效
@@ -6029,6 +6183,8 @@ cleanup_nginx() {
 
     # 停沙箱进程（按 pid 文件）
     nginx_stop
+    # pid 文件丢了 / 手动拉起过的孤儿：按 exe 路径兜底清掉，否则下次安装抢不到端口
+    sb_nginx_kill_orphan
 
     # 清理沙箱配置/日志
     rm -f "$SB_NGINX_SUB_CONF" "$SB_NGINX_PID" 2> /dev/null
@@ -6063,6 +6219,8 @@ cleandel() {
     pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null
     pkill -15 -f "$OLD_SINGBOX_FOLDER/sing-box" 2> /dev/null
     pkill -15 -f "$OLD_SINGBOX_FOLDER/cloudflared" 2> /dev/null
+    # 沙箱 nginx 也要杀：只按 pid 文件停的方式在 pid 文件丢失时会留下孤儿（占 nginx_pt/argo_pt）
+    sb_nginx_kill_orphan
     green "  ✓ 进程已终止"
 
     # 处理 crontab，兼容 Debian 和 Alpine
@@ -6140,6 +6298,9 @@ cleandel() {
                     [ -e "$item" ] || continue
                     case "$(basename "$item")" in
                         sing-box|cloudflared|logs|nginx) continue ;;
+                        # 上报地址/凭证/排除偏好属于长期配置（token 只能去 sub-merge
+                        # 后台重新拿），重装后还要用；要彻底清干净用 delall
+                        submerge.conf) continue ;;
                         *) rm -rf "$item" 2>/dev/null ;;
                     esac
                 done
@@ -6539,6 +6700,18 @@ check_port_conflicts_or_exit() {
             # 通道2：pid 属于本脚本栈
             if printf '%s\n' "$own_pids" | grep -qx "$pid"; then
                 echo OWN; return
+            fi
+            # 通道2.5：pid 的可执行文件就是本脚本自己的沙箱 nginx
+            #   pid 文件丢失后 master 变孤儿，pgrep 白名单与 pid 文件都认不出它，
+            #   安装前的端口占用体检就会把它当"外部进程"报警（用户会以为被人占了）。
+            #   这里按 /proc/<pid>/exe 的真实路径判断：只认 $SB_NGINX_BIN 开头，
+            #   宝塔/系统 nginx（/usr/sbin/nginx）绝不会命中；rep 的清理阶段会把它杀掉。
+            if [ -x "$SB_NGINX_BIN" ]; then
+                local _exe_path
+                _exe_path="$(readlink "/proc/$pid/exe" 2> /dev/null)"
+                case "$_exe_path" in
+                    "$SB_NGINX_BIN"*) echo OWN; return ;;
+                esac
             fi
             # 通道3：该 pid 是 sh/nohup/singbox 等包装进程，从 /proc 还原真实命令
             if [ -r "/proc/$pid/comm" ]; then
@@ -10215,6 +10388,881 @@ restore_direct_outbound() {
     menu_pause
 }
 
+# ================== 上报到 sub-merge ==================
+# 把本机 jh.txt（全部节点链接）整段 base64 后 POST 到 sub-merge，
+# 服务端存成这台机器的「自动上报」层，立刻进合并订阅；本机手动层不受影响。
+# 上报地址没有默认值：每个人的 sub-merge 域名不同，必须由使用方自己填
+SUBMERGE_DEFAULT_BASE=""
+SUBMERGE_CONF="$SINGBOX_FOLDER_PATH/submerge.conf"
+SUBMERGE_STATE="$SINGBOX_FOLDER_PATH/submerge.state"
+
+# 规范化上报地址（REPORT_BASE / SUBMERGE_BASE）
+#   1) 去掉首尾空白与结尾所有斜杠
+#   2) 没写协议 → 自动补 https://
+#   3) 自己写了 http:// 就照原样用，不强行升级（自建反代 / 内网 http 环境要能跑）
+# 原因：上报固定用 `curl -sS -m 20 -X POST`（不带 -L，因为 -L 会把 POST 降级成 GET）。
+#      地址写成裸域名时 curl 按 http:// 发，服务端 301 跳 https 后脚本拿到 301 直接判失败，
+#      所以「什么都没写」时必须补 https；但写全了协议的一律尊重用户选择。
+submerge_norm_base() {
+    local _b
+    _b="$(printf '%s' "${1:-}" | tr -d '\r\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    [ -n "$_b" ] || return 0
+    while [ "${_b%/}" != "$_b" ]; do _b="${_b%/}"; done
+    case "$_b" in
+        *://*) ;;
+        *) _b="https://$_b" ;;
+    esac
+    printf '%s' "$_b"
+}
+
+# 读取上报配置（地址 / 凭证 / 机器名 / 来源 / 自动开关），缺省给默认值
+# 环境变量优先并自动落盘：REPORT_BASE / REPORT_TOKEN / REPORT_MACHINE / REPORT_SOURCE / REPORT_FLAG
+submerge_load() {
+    SUBMERGE_BASE=""
+    SUBMERGE_TOKEN=""
+    SUBMERGE_MACHINE=""
+    SUBMERGE_SOURCE=""
+    SUBMERGE_EXCLUDE=""
+    SUBMERGE_AUTO=""
+    if [ -s "$SUBMERGE_CONF" ]; then
+        . "$SUBMERGE_CONF" 2> /dev/null || true
+    fi
+    # 老版本配置里可能存着裸域名，这里统一补协议（不立刻改写文件，等下次落盘覆盖）
+    SUBMERGE_BASE="$(submerge_norm_base "${SUBMERGE_BASE:-}")"
+    # 显式清除本机上报配置：REPORT_CLEAR=1
+    #   与「传空字符串」区分开 —— REPORT_TOKEN="" 在 CI 里往往只是 secret 没配，
+    #   语义不稳定，不能拿它表达「我要清掉」。清除后仍可带 REPORT_* 重新填。
+    #   清完立刻把开关置 0：submerge_load 在一次安装里会被调很多次，
+    #   如果开关一直亮着，刚写进去的新值下一轮就被自己清掉。
+    if [ "${REPORT_CLEAR:-0}" = "1" ]; then
+        SUBMERGE_BASE=""
+        SUBMERGE_TOKEN=""
+        SUBMERGE_MACHINE=""
+        SUBMERGE_SOURCE=""
+        # 排除项清空 = 不过滤（不填就是不拦截任何协议）
+        SUBMERGE_EXCLUDE=""
+        SUBMERGE_AUTO="0"
+        : > "$SUBMERGE_CONF" 2> /dev/null || true
+        submerge_conf_set SUBMERGE_EXCLUDE ""
+        submerge_conf_set SUBMERGE_AUTO "0"
+        yellow "  已清除本机上报配置（REPORT_CLEAR=1），回到未配置状态"
+        REPORT_CLEAR=0
+    fi
+    # 环境变量给了值就覆盖并持久化（下次不带环境变量也还在）
+    if [ -n "${REPORT_BASE:-}" ]; then
+        _rb="$(submerge_norm_base "$REPORT_BASE")"
+        SUBMERGE_BASE="$_rb"
+        submerge_conf_set SUBMERGE_BASE "$_rb"
+    fi
+    if [ -n "${REPORT_TOKEN:-}" ]; then
+        SUBMERGE_TOKEN="$REPORT_TOKEN"
+        submerge_conf_set SUBMERGE_TOKEN "$REPORT_TOKEN"
+    fi
+    if [ -n "${REPORT_MACHINE:-}" ]; then
+        # 只有非空白才落盘；空白视为「没传」，交给后面的 name 回落逻辑
+        _rm="$(printf '%s' "$REPORT_MACHINE" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+        if [ -n "$_rm" ]; then
+            SUBMERGE_MACHINE="$_rm"
+            submerge_conf_set SUBMERGE_MACHINE "$_rm"
+        fi
+    fi
+    if [ -n "${REPORT_SOURCE:-}" ]; then
+        SUBMERGE_SOURCE="$REPORT_SOURCE"
+        submerge_conf_set SUBMERGE_SOURCE "$REPORT_SOURCE"
+    fi
+    if [ -n "${REPORT_EXCLUDE:-}" ]; then
+        _re="$(printf '%s' "$REPORT_EXCLUDE" | tr -d '[:space:]')"
+        if [ -n "$_re" ]; then
+            SUBMERGE_EXCLUDE="$_re"
+            submerge_conf_set SUBMERGE_EXCLUDE "$_re"
+        fi
+    fi
+    if [ -n "${REPORT_FLAG:-}" ]; then
+        SUBMERGE_AUTO="$REPORT_FLAG"
+        submerge_conf_set SUBMERGE_AUTO "$REPORT_FLAG"
+    fi
+    [ -n "$SUBMERGE_AUTO" ] || SUBMERGE_AUTO="0"
+    # 机器名取值优先级：REPORT_MACHINE（界面会下发的那个）> 配置文件里的 SUBMERGE_MACHINE
+    #   > 全局配置里的 name（$SINGBOX_FOLDER_PATH/name，安装时填的节点名前缀，结尾带 -）
+    #   > 主机名 > sb-node
+    # 也就是说：只有 REPORT_MACHINE 没传或为空时，才回落到 name
+    SUBMERGE_MACHINE="$(printf '%s' "$SUBMERGE_MACHINE" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    if [ -z "$SUBMERGE_MACHINE" ]; then
+        SUBMERGE_MACHINE="$(cat "$SINGBOX_FOLDER_PATH/name" 2> /dev/null | tr -d '\r\n' | sed 's/-*$//')"
+        [ -n "$SUBMERGE_MACHINE" ] || SUBMERGE_MACHINE="$(hostname 2> /dev/null | tr -cd 'A-Za-z0-9._-' 2> /dev/null)"
+        [ -n "$SUBMERGE_MACHINE" ] || SUBMERGE_MACHINE="sb-node"
+    fi
+    # 排除项「不填 = 不过滤」：没有任何配置时不注入任何默认协议，全部上报
+    # 来源留空即只上 default 一个来源，URL 不带 ?source=（服务端本来就按 default 存）
+    # 配过凭证就把「地址 + 自动开关」也固化下来，下次不用再带环境变量
+    if [ -n "$SUBMERGE_TOKEN" ]; then
+        grep -q '^SUBMERGE_BASE=' "$SUBMERGE_CONF" 2> /dev/null || submerge_conf_set SUBMERGE_BASE "$SUBMERGE_BASE"
+        grep -q '^SUBMERGE_AUTO=' "$SUBMERGE_CONF" 2> /dev/null || submerge_conf_set SUBMERGE_AUTO "$SUBMERGE_AUTO"
+    fi
+}
+
+# 自动上报开关：环境变量 REPORT_FLAG 优先，其次配置文件里的 SUBMERGE_AUTO
+# 默认 0 = 不上报；只有 1/true/yes/on 才算开启
+submerge_auto_flag() {
+    if [ -n "${REPORT_FLAG:-}" ]; then
+        printf '%s' "$REPORT_FLAG"
+    elif [ -n "${SUBMERGE_AUTO:-}" ]; then
+        printf '%s' "$SUBMERGE_AUTO"
+    elif [ -s "$SUBMERGE_CONF" ]; then
+        sed -n 's/^SUBMERGE_AUTO=//p' "$SUBMERGE_CONF" 2> /dev/null | tail -n1 | tr -d '\r'
+    else
+        printf '0'
+    fi
+}
+
+submerge_auto_enabled() {
+    local _f
+    _f="$(submerge_auto_flag)"
+    [ -n "$_f" ] || return 1
+    is_true "$_f"
+}
+
+# 生成节点后自动上报（REPORT_FLAG=1 才动作；失败只提示，绝不影响节点生成）
+submerge_auto_report() {
+    submerge_auto_enabled || return 0
+    submerge_load
+    if [ -z "$SUBMERGE_BASE" ]; then
+        yellow "⚠️ 已开启自动上报，但还没配置上报地址（每个人的 sub-merge 域名不同），本次跳过"
+        yellow "   配置：sb report → 3) 修改上报配置，或 REPORT_BASE=<你的域名> 跑一次"
+        return 0
+    fi
+    if [ -z "$SUBMERGE_TOKEN" ]; then
+        yellow "⚠️ 已开启自动上报（REPORT_FLAG=1），但还没配置上报凭证，本次跳过"
+        yellow "   配置：sb report → 3) 修改上报配置，或 REPORT_TOKEN=<凭证> 跑一次"
+        return 0
+    fi
+    local _out _rc
+    _out="$(submerge_report 2>&1)"
+    _rc=$?
+    if [ "$_rc" -eq 0 ]; then
+        echo
+        green "📤 已自动上报到 sub-merge（自动上报已开启）"
+        printf '%s\n' "$_out" | grep -E '上报成功|内容与|上报时间' | sed 's/^[[:space:]]*/   /'
+    else
+        yellow "⚠️ 自动上报失败（REPORT_FLAG=1），节点已正常生成："
+        printf '%s\n' "$_out" | tail -n 6 | sed 's/^/   /'
+    fi
+    return 0
+}
+
+# 写一条配置（不覆盖其它键）
+submerge_conf_set() {
+    local _k="$1" _v="$2" _tmp="$SUBMERGE_CONF.tmp"
+    mkdir -p "$SINGBOX_FOLDER_PATH" 2> /dev/null || true
+    [ -f "$SUBMERGE_CONF" ] || : > "$SUBMERGE_CONF"
+    grep -v "^${_k}=" "$SUBMERGE_CONF" > "$_tmp" 2> /dev/null || : > "$_tmp"
+    printf '%s=%s\n' "$_k" "$_v" >> "$_tmp"
+    mv "$_tmp" "$SUBMERGE_CONF" 2> /dev/null || true
+    chmod 600 "$SUBMERGE_CONF" 2> /dev/null || true
+}
+
+# 文件 → 单行 base64（openssl 优先，busybox/GNU base64 兜底）
+# 可排除上报的协议：前 5 个是 scheme（粗粒度），后面是按脚本节点形态细分的类型
+SUBMERGE_PROTOCOLS="vless vmess trojan hysteria2 tuic anytls socks5 vless-reality vless-argo vless-cdn vmess-argo vmess-cdn trojan-argo trojan-cdn"
+
+# 规范化排除列表：小写、去空格、只留已知协议、去重，英文逗号拼接
+submerge_exclude_list() {
+    local _in _out _p
+    _in="$(printf '%s' "${SUBMERGE_EXCLUDE:-}" | tr 'A-Z' 'a-z' | tr ',' ' ')"
+    _out=""
+    for _p in $_in; do
+        case "$_p" in hy2 | hy | hysteria) _p="hysteria2" ;; esac
+        case " $SUBMERGE_PROTOCOLS " in *" $_p "*) ;; *) continue ;; esac
+        case ",$_out," in *",$_p,"*) continue ;; esac
+        _out="${_out:+$_out,}$_p"
+    done
+    printf '%s' "$_out"
+}
+
+# 给人看的排除项文案
+submerge_exclude_list_show() {
+    local _ex
+    _ex="$(submerge_exclude_list)"
+    if [ -n "$_ex" ]; then
+        printf '%s' "$_ex"
+    else
+        printf '%s' "（不过滤，全部上报）"
+    fi
+}
+
+# 判断一条节点链接属于哪种形态（与 sb00.sh 生成时的命名/参数一致）
+# 直连：vless-reality / hysteria2 / tuic / anytls / socks5
+# Argo：vless-argo / vmess-argo / trojan-argo（path 里带 <uuid>-vl|-vm|-tr）
+# CDN 回源：vless-cdn / vmess-cdn / trojan-cdn（path 里带 -vl-cdn|-vm-cdn|-tr-cdn）
+submerge_kind_of() {
+    local _l="$1" _scheme _json _path
+    _scheme="$(printf '%s' "$_l" | sed -n 's#^\([A-Za-z0-9]*\)://.*#\1#p' | tr 'A-Z' 'a-z')"
+    case "$_scheme" in
+        hysteria2 | hy2) printf '%s' "hysteria2"; return 0 ;;
+        tuic | anytls | socks5) printf '%s' "$_scheme"; return 0 ;;
+        vless | vmess | trojan) ;;
+        *) printf '%s' "$_scheme"; return 0 ;;
+    esac
+    if [ "$_scheme" = "vmess" ]; then
+        # vmess 是 base64 JSON，path 只能解出来看
+        _json="$(printf '%s' "${_l%%#*}" | sed 's#^vmess://##' | tr -d ' \r\n' | base64 -d 2> /dev/null || true)"
+        case "$_json" in
+            *-vm-cdn*) printf '%s' "vmess-cdn"; return 0 ;;
+            *-vm*) printf '%s' "vmess-argo"; return 0 ;;
+        esac
+        printf '%s' "vmess"; return 0
+    fi
+    case "$_l" in
+        *security=reality*) printf '%s' "vless-reality"; return 0 ;;
+    esac
+    # 形态标记只认 path 参数：早先对整条 URL 做 *-tr* 匹配，
+    # 用户把 SNI/host 填成 xxx-tr.example.com 时会被误判成 trojan-argo。
+    _path="$(printf '%s' "${_l%%#*}" | sed -n 's/.*[?&]path=\([^&#]*\).*/\1/p')"
+    [ -n "$_path" ] || _path="${_l%%#*}"
+    case "$_path" in
+        *-vl-cdn* | *-tr-cdn*) printf '%s' "$_scheme-cdn"; return 0 ;;
+        *-vl*) printf '%s' "vless-argo"; return 0 ;;
+        *-tr*) printf '%s' "trojan-argo"; return 0 ;;
+    esac
+    printf '%s' "$_scheme"
+}
+
+# 命中排除列表？支持前缀：填 vless 等于 vless-reality / vless-argo / vless-cdn 全排除
+submerge_kind_excluded() {
+    local _k="$1" _t
+    for _t in $(printf '%s' "$2" | tr ',' ' '); do
+        [ -n "$_t" ] || continue
+        [ "$_k" = "$_t" ] && return 0
+        case "$_k" in "$_t"-*) return 0 ;; esac
+    done
+    return 1
+}
+
+# 当前会上报的协议形态（全集减去排除项，空格分隔）
+submerge_kinds_to_report() {
+    local _ex _k _out
+    _ex="$(submerge_exclude_list)"
+    _out=""
+    for _k in $SUBMERGE_PROTOCOLS; do
+        submerge_kind_excluded "$_k" "$_ex" && continue
+        _out="${_out:+$_out }$_k"
+    done
+    printf '%s' "${_out:-（无，全被排除了）}"
+}
+
+# 统计节点文件里各形态的条数 → 「vless-argo×2 trojan-argo×1」，第 2 个参数是排除列表
+submerge_kind_counts() {
+    local _f="$1" _ex="$2" _line _k _all _kept _total
+    [ -s "$_f" ] || return 1
+    _all=""
+    _kept=0
+    _total=0
+    while IFS= read -r _line; do
+        [ -n "$_line" ] || continue
+        _total=$((_total + 1))
+        _k="$(submerge_kind_of "$_line")"
+        _all="${_all}${_k}"$'
+'
+        submerge_kind_excluded "$_k" "$_ex" || _kept=$((_kept + 1))
+    done < "$_f"
+    [ -n "$_all" ] || return 1
+    _all="$(printf '%s' "$_all" | sed '/^$/d' | sort | uniq -c | awk '{printf "%s%s×%s", (NR>1?" ":""), $2, $1}')"
+    printf '%s（共 %s 条，排除后上报 %s 条）' "$_all" "$_total" "$_kept"
+}
+
+# 按排除列表过滤节点文件 → stdout（空行自动丢掉，方便客户端解析）
+submerge_filter_nodes() {
+    local _f="$1" _ex="$2" _line _kind
+    [ -s "$_f" ] || return 1
+    if [ -z "$_ex" ]; then
+        cat "$_f"
+        return 0
+    fi
+    while IFS= read -r _line; do
+        [ -n "$_line" ] || continue
+        _kind="$(submerge_kind_of "$_line")"
+        submerge_kind_excluded "$_kind" "$_ex" && continue
+        printf '%s\n' "$_line"
+    done < "$_f"
+}
+
+submerge_b64_file() {
+    local _f="$1" _out
+    [ -s "$_f" ] || return 1
+    if command -v openssl > /dev/null 2>&1; then
+        _out="$(openssl base64 -A -in "$_f" 2> /dev/null)" && [ -n "$_out" ] && {
+            printf '%s' "$_out"
+            return 0
+        }
+    fi
+    if command -v base64 > /dev/null 2>&1; then
+        _out="$(base64 -w 0 "$_f" 2> /dev/null)"
+        if [ -z "$_out" ]; then
+            _out="$(base64 "$_f" 2> /dev/null | tr -d '\n')"
+        fi
+        [ -n "$_out" ] && {
+            printf '%s' "$_out"
+            return 0
+        }
+    fi
+    return 1
+}
+
+# 机器名百分号编码（中文也能用）
+submerge_urlencode() {
+    printf '%s' "${1:-}" | od -An -tx1 -v 2> /dev/null | tr -d ' \n' | tr 'a-f' 'A-F' | sed 's/../%&/g'
+}
+
+# 完整上报地址（含 ?source=），状态页与提示共用
+submerge_target_url() {
+    local _u _b
+    _b="${SUBMERGE_BASE:-$SUBMERGE_DEFAULT_BASE}"
+    [ -n "$_b" ] || { printf '%s' "（未配置上报地址）"; return 0; }
+    _b="${_b%/}"
+    _u="${_b}/api/v1/report/$(submerge_urlencode "${SUBMERGE_MACHINE:-}")"
+    if [ -n "${SUBMERGE_SOURCE:-}" ] && [ "$SUBMERGE_SOURCE" != "default" ]; then
+        _u="${_u}?source=$(submerge_urlencode "$SUBMERGE_SOURCE")"
+    fi
+    printf '%s' "$_u"
+}
+
+# 上报状态落盘（/root/doraemon/submerge.state，600）
+submerge_state_set() {
+    local _k="$1" _v="$2" _tmp="$SUBMERGE_STATE.tmp"
+    [ -f "$SUBMERGE_STATE" ] || : > "$SUBMERGE_STATE"
+    grep -v "^${_k}=" "$SUBMERGE_STATE" > "$_tmp" 2> /dev/null || : > "$_tmp"
+    printf '%s=%s\n' "$_k" "$_v" >> "$_tmp"
+    mv "$_tmp" "$SUBMERGE_STATE" 2> /dev/null || true
+    chmod 600 "$SUBMERGE_STATE" 2> /dev/null || true
+}
+submerge_state_get() {
+    [ -s "$SUBMERGE_STATE" ] || return 0
+    sed -n "s/^$1=//p" "$SUBMERGE_STATE" 2> /dev/null | tail -n1
+}
+
+# 统一取 UTC 时间戳：展示与落盘共用同一个值，保证「控制台时间」=「菜单里的最近上报」
+submerge_now_utc() {
+    date -u '+%Y-%m-%d %H:%M:%S' 2> /dev/null
+}
+
+# 记录一次上报结果：$1=ok|fail $2=HTTP码 $3=结果说明 $4=节点数 $5=时间(可省，默认取当前 UTC)
+submerge_record() {
+    local _now
+    # 统一按 UTC 记录（服务器时区各不相同，展示时会标注 UTC）
+    _now="${5:-$(submerge_now_utc)}"
+    submerge_state_set LAST_TIME "$_now"
+    submerge_state_set LAST_RESULT "${1:-fail}"
+    submerge_state_set LAST_HTTP "${2:-}"
+    submerge_state_set LAST_MSG "${3:-}"
+    submerge_state_set LAST_NODES "${4:-}"
+    submerge_state_set LAST_MACHINE "${SUBMERGE_MACHINE:-}"
+    submerge_state_set LAST_SOURCE "${SUBMERGE_SOURCE:-}"
+    submerge_state_set LAST_URL "$(submerge_target_url)"
+    [ "${1:-}" = "ok" ] && submerge_state_set LAST_OK_TIME "$_now"
+    return 0
+}
+
+# 从 JSON 里取字段（不依赖 jq，grep -oE 兼容 BSD/GNU/busybox）
+_submerge_jstr() { grep -oE "\"$1\":\"[^\"]*\"" "$2" 2> /dev/null | head -n1 | sed 's/^[^:]*:"//; s/"$//'; }
+_submerge_jnum() { grep -oE "\"$1\":[0-9]+" "$2" 2> /dev/null | head -n1 | sed 's/.*://'; }
+_submerge_jbool() { grep -oE "\"$1\":(true|false)" "$2" 2> /dev/null | head -n1 | sed 's/.*://'; }
+
+# 上报当前节点（jh.txt）
+submerge_report() {
+    submerge_load
+
+    local _base _tok _mach _src _srcjf _b64 _body _code _url _cnt _ex _srcfile _tmpf _now
+    _base="${SUBMERGE_BASE%/}"
+    _tok="$SUBMERGE_TOKEN"
+    _mach="$SUBMERGE_MACHINE"
+    _src="$SUBMERGE_SOURCE"
+    # 本次上报的 UTC 时间戳：控制台输出与状态文件用同一个值
+    _now="$(submerge_now_utc)"
+
+    if [ -z "$_base" ]; then
+        red "❌ 还没有配置上报地址（每个人的 sub-merge 域名不同，需要你填自己的）"
+        yellow "   填法：sb report 菜单选 3 填写上报地址，或写进 $SUBMERGE_CONF"
+        echo "   SUBMERGE_BASE=https://你的-sub-merge-域名"
+        echo "   SUBMERGE_TOKEN=<上报凭证 REPORT_TOKEN>"
+        submerge_record fail "" "未配置上报地址" "" "" "$_now"
+        return 1
+    fi
+
+    if [ -z "$_tok" ]; then
+        red "❌ 还没有配置上报凭证"
+        submerge_record fail "" "未配置上报凭证"
+        yellow "   填法：sb report 菜单选 3 填写上报凭证，或写进 $SUBMERGE_CONF"
+        echo "   SUBMERGE_BASE=${_base}"
+        echo "   SUBMERGE_TOKEN=<上报凭证 REPORT_TOKEN>"
+        echo "   SUBMERGE_MACHINE=<机器名，如 hk-1>"
+        echo "   SUBMERGE_SOURCE=default"
+        return 1
+    fi
+
+    # 节点文件不存在就先按当前配置重新生成一次
+    if [ ! -s "$SINGBOX_FOLDER_PATH/jh.txt" ]; then
+        yellow "未找到节点文件，正在按当前配置重新生成 jh.txt ..."
+        regenerate_links_and_sub > /dev/null 2>&1 || true
+    fi
+    if [ ! -s "$SINGBOX_FOLDER_PATH/jh.txt" ]; then
+        red "❌ 节点文件为空：$SINGBOX_FOLDER_PATH/jh.txt"
+        submerge_record fail "" "节点文件为空" "" "" "$_now"
+        yellow "   先装好节点（sb ins）或执行 sb sub 生成节点链接再上报"
+        return 1
+    fi
+
+    # 按「不上报的协议」过滤后再编码
+    _ex="$(submerge_exclude_list)"
+    _srcfile="$SINGBOX_FOLDER_PATH/jh.txt"
+    _tmpf=""
+    if [ -n "$_ex" ]; then
+        _tmpf="$(mktemp 2> /dev/null || echo "/tmp/submerge.nodes.$$")"
+        submerge_filter_nodes "$SINGBOX_FOLDER_PATH/jh.txt" "$_ex" > "$_tmpf" 2> /dev/null || true
+        if [ ! -s "$_tmpf" ]; then
+            rm -f "$_tmpf" 2> /dev/null
+            red "❌ 排除协议（${_ex}）后没有可上报的节点"
+            yellow "   要改排除项：sb report 菜单选 3，或改 $SUBMERGE_CONF 里的 SUBMERGE_EXCLUDE"
+            submerge_record fail "" "排除协议后没有节点（${_ex}）" "" "" "$_now"
+            return 1
+        fi
+        _srcfile="$_tmpf"
+    fi
+
+    _b64="$(submerge_b64_file "$_srcfile")"
+    if [ -z "$_b64" ]; then
+        [ -n "$_tmpf" ] && rm -f "$_tmpf" 2> /dev/null
+        red "❌ base64 编码失败（缺 openssl / base64？）"
+        submerge_record fail "" "base64 编码失败" "" "" "$_now"
+        return 1
+    fi
+
+    _cnt="$(grep -c . "$_srcfile" 2> /dev/null)"
+    [ -n "$_tmpf" ] && rm -f "$_tmpf" 2> /dev/null
+    _url="${_base}/api/v1/report/$(submerge_urlencode "$_mach")"
+    if [ -n "$_src" ] && [ "$_src" != "default" ]; then
+        _url="${_url}?source=$(submerge_urlencode "$_src")"
+    fi
+
+    _body="$(mktemp 2> /dev/null || echo "/tmp/submerge.$$")"
+    if [ -n "$_ex" ]; then
+        green "📤 正在上报：机器=${_mach} 来源=${_src} 节点=${_cnt} 条（已排除 ${_ex}）"
+    else
+        green "📤 正在上报：机器=${_mach} 来源=${_src} 节点=${_cnt} 条"
+    fi
+    _code="$(curl -sS -m 20 -o "$_body" -w '%{http_code}' -X POST "$_url" \
+        -H "Authorization: Bearer ${_tok}" \
+        -H "Content-Type: text/plain" \
+        --data-binary "$_b64" 2> /dev/null)"
+
+    if [ "$_code" = "200" ]; then
+        local _changed _nodes _auto _manual _when
+        _changed="$(_submerge_jbool changed "$_body")"
+        _nodes="$(_submerge_jnum nodes "$_body")"
+        _auto="$(_submerge_jnum auto_nodes "$_body")"
+        _manual="$(_submerge_jnum manual_nodes "$_body")"
+        _when="$(_submerge_jstr updated_at "$_body")"
+        if [ "$_changed" = "true" ]; then
+            green "✅ 上报成功：节点 ${_nodes} 条（自动 ${_auto} + 手动 ${_manual}）"
+            purple "   上报时间：${_now}（UTC）"
+            purple "   内容已更新，更新时间 ${_when}"
+            submerge_record ok "$_code" "内容已更新，节点 ${_nodes} 条（自动 ${_auto} + 手动 ${_manual}）" "${_nodes:-$_cnt}" "$_now"
+        elif [ "$_changed" = "false" ]; then
+            green "✅ 上报成功，但内容与上次完全一致（服务端未重复写入）"
+            purple "   上报时间：${_now}（UTC）"
+            purple "   当前节点 ${_nodes} 条（自动 ${_auto} + 手动 ${_manual}），最近更新 ${_when}"
+            submerge_record ok "$_code" "内容未变，节点 ${_nodes} 条（自动 ${_auto} + 手动 ${_manual}）" "${_nodes:-$_cnt}" "$_now"
+        else
+            green "✅ 上报成功"
+            purple "   上报时间：${_now}（UTC）"
+            sed -n '1,3p' "$_body" 2> /dev/null
+            submerge_record ok "$_code" "上报成功" "${_cnt}" "$_now"
+        fi
+        rm -f "$_body" 2> /dev/null
+        return 0
+    fi
+
+    local _err _msg _hint
+    _err="$(_submerge_jstr error "$_body")"
+    _msg="$(_submerge_jstr message "$_body")"
+    _hint="$(_submerge_jstr hint "$_body")"
+    if [ -z "$_err" ]; then _err="$(cat "$_body" 2> /dev/null | head -c 200)"; fi
+    red "❌ 上报失败（HTTP ${_code}）：${_err}"
+    purple "   上报时间：${_now}（UTC）"
+    # 服务端的 message/hint 才是能动手的信息，只印 error 等于什么都没说
+    if [ -n "$_msg" ] && [ "$_msg" != "$_err" ]; then red "   服务端说明：${_msg}"; fi
+    if [ -n "$_hint" ]; then yellow "   处理建议：${_hint}"; fi
+    submerge_record fail "$_code" "HTTP ${_code}：${_err}" "" "$_now"
+    case "$_code" in
+        401) yellow "   凭证不对：上报只认 REPORT_TOKEN，不能用主订阅 token" ;;
+        400) yellow "   参数问题：检查机器名（首字符字母/数字，可含中文、空格、_ . -，≤64 字符）" ;;
+        413) yellow "   内容太大：base64 后超过 512KB，先精简节点" ;;
+        500) if [ -z "$_hint" ]; then yellow "   服务端内部错误：多半是 D1 还没建表，重跑一次上报即可（新版会自动补建），或登进 WebUI 的 /api/v1/admin/schema"; fi ;;
+        000|"") yellow "   连不上服务端：检查网络/域名是否可解析" ;;
+    esac
+    rm -f "$_body" 2> /dev/null
+    return 1
+}
+
+# 上传前预览：节点条数 + base64 长度 + 目标地址
+submerge_preview() {
+    submerge_load
+    local _b64 _purl _ex _total _view _tmpf _n _l
+    if [ ! -s "$SINGBOX_FOLDER_PATH/jh.txt" ]; then
+        red "❌ 节点文件不存在：$SINGBOX_FOLDER_PATH/jh.txt（先 sb sub 生成）"
+        return 1
+    fi
+    _ex="$(submerge_exclude_list)"
+    _total="$(grep -c . "$SINGBOX_FOLDER_PATH/jh.txt" 2> /dev/null)"
+    _view="$SINGBOX_FOLDER_PATH/jh.txt"
+    _tmpf=""
+    if [ -n "$_ex" ]; then
+        _tmpf="$(mktemp 2> /dev/null || echo "/tmp/submerge.preview.$$")"
+        submerge_filter_nodes "$SINGBOX_FOLDER_PATH/jh.txt" "$_ex" > "$_tmpf" 2> /dev/null || true
+        _view="$_tmpf"
+    fi
+    _b64="$(submerge_b64_file "$_view")"
+    echo "--------- 上报预览 ---------"
+    green "  节点文件：$SINGBOX_FOLDER_PATH/jh.txt"
+    purple "  节点条数：$(grep -c . "$_view" 2> /dev/null) 条$([ -n "$_ex" ] && printf '（原始 %s 条，已排除 %s）' "$_total" "$_ex")"
+    purple "  base64 长度：${#_b64} 字节（上限 524288）"
+    _purl="${SUBMERGE_BASE%/}/api/v1/report/$(submerge_urlencode "$SUBMERGE_MACHINE")"
+    if [ -n "${SUBMERGE_SOURCE:-}" ] && [ "$SUBMERGE_SOURCE" != "default" ]; then
+        _purl="${_purl}?source=$(submerge_urlencode "$SUBMERGE_SOURCE")"
+    fi
+    purple "  上报 URL：${_purl}"
+    purple "  不上报　：${_ex:-（不过滤，全部上报）}"
+    echo ""
+    # 原串完整打印：预览就是要核对真正要上报的内容，不截断、不限条数
+    # 每条前面加序号、后面空一行，长链接之间不至于糊成一片
+    _n=0
+    while IFS= read -r _l; do
+        [ -n "$_l" ] || continue
+        _n=$((_n + 1))
+        printf '  %d) %s\n\n' "$_n" "$_l"
+    done < "$_view"
+    [ -n "$_tmpf" ] && rm -f "$_tmpf" 2> /dev/null
+    return 0
+}
+
+# 查看当前上报配置（凭证打码）
+submerge_conf_show() {
+    submerge_load
+    local _mask _src_disp
+    if [ -n "$SUBMERGE_TOKEN" ]; then
+        if [ ${#SUBMERGE_TOKEN} -gt 12 ]; then
+            _mask="$(printf '%s' "$SUBMERGE_TOKEN" | cut -c1-6)****$(printf '%s' "$SUBMERGE_TOKEN" | rev | cut -c1-4 | rev)"
+        else
+            _mask="****"
+        fi
+    else
+        _mask="（未配置）"
+    fi
+    if [ -n "$SUBMERGE_BASE" ]; then
+        green "  上报地址：${SUBMERGE_BASE%/}"
+        purple "  上报 URL：$(submerge_target_url)"
+    else
+        yellow "  上报地址：（未配置——每个人的 sub-merge 域名不同，需要你填自己的）"
+    fi
+    green "  上报凭证：${_mask}"
+    green "  机器名　：${SUBMERGE_MACHINE}"
+    case "${SUBMERGE_SOURCE:-}" in
+        "" | default) _src_disp="（默认）" ;;
+        *) _src_disp="$SUBMERGE_SOURCE" ;;
+    esac
+    green "  来源　　：${_src_disp}"
+    green "  不上报　：$(submerge_exclude_list_show)"
+    green "  会上报　：$(submerge_kinds_to_report)"
+    purple "  取值顺序：环境变量 REPORT_* > 配置文件 > 默认值（传参会写回配置文件）"
+    purple "  清除配置：REPORT_CLEAR=1 重装一次，或 sb report → 3) 地址处填 - "
+}
+
+# 交互输入是否表示「取消返回」：q / quit / exit / b / back / 0
+submerge_cancel_word() {
+    case "${1:-}" in
+        q | Q | quit | QUIT | exit | EXIT | b | B | back | BACK | 0) return 0 ;;
+    esac
+    return 1
+}
+
+# 交互式修改配置：二级菜单，逐项修改，改完回本级，0 返回上级菜单
+submerge_configure() {
+    local _ch _in _mask _src_disp
+    while true; do
+        submerge_load
+        if [ -n "$SUBMERGE_TOKEN" ]; then
+            if [ ${#SUBMERGE_TOKEN} -gt 12 ]; then
+                _mask="$(printf '%s' "$SUBMERGE_TOKEN" | cut -c1-6)****$(printf '%s' "$SUBMERGE_TOKEN" | rev | cut -c1-4 | rev)"
+            else
+                _mask="****"
+            fi
+        else
+            _mask="（未配置）"
+        fi
+        case "${SUBMERGE_SOURCE:-}" in
+            "" | default) _src_disp="（默认）" ;;
+            *) _src_disp="$SUBMERGE_SOURCE" ;;
+        esac
+        clear
+        green "========= 修改上报配置 ========="
+        echo ""
+        if [ -n "$SUBMERGE_BASE" ]; then
+            green "  1) 上报地址　　：${SUBMERGE_BASE%/}"
+        else
+            yellow "  1) 上报地址　　：（未配置）"
+        fi
+        green "  2) 上报凭证　　：${_mask}"
+        green "  3) 机器名　　　：${SUBMERGE_MACHINE}"
+        green "  4) 来源　　　　：${_src_disp}"
+        green "  5) 不上报的协议：$(submerge_exclude_list_show)"
+        yellow "  6) 清空全部配置（含上报状态）"
+        purple "  0) 返回上级菜单"
+        echo ""
+        reading "请输入选项: " _ch
+        case "$_ch" in
+            1)
+                reading "  新的上报地址（回车保持；输入 - 清空全部配置）[${SUBMERGE_BASE:-未配置}]: " _in
+                if [ "$_in" = "-" ]; then
+                    rm -f "$SUBMERGE_CONF" "$SUBMERGE_STATE" 2> /dev/null
+                    green "✅ 已清除上报配置与上报状态"
+                    menu_pause
+                    continue
+                fi
+                if submerge_cancel_word "$_in"; then
+                    purple "  已取消，未修改"
+                    menu_pause
+                    continue
+                fi
+                if [ -n "$_in" ]; then
+                    SUBMERGE_BASE="$(submerge_norm_base "$_in")"
+                    submerge_conf_set SUBMERGE_BASE "$SUBMERGE_BASE"
+                    green "✅ 上报地址已更新：${SUBMERGE_BASE}"
+                else
+                    purple "  未修改"
+                fi
+                menu_pause
+                ;;
+            2)
+                reading "  新的上报凭证（回车保持；只认 sub-merge 的 REPORT_TOKEN，不是主订阅 token）: " _in
+                if submerge_cancel_word "$_in"; then
+                    purple "  已取消，未修改"
+                    menu_pause
+                    continue
+                fi
+                if [ -n "$_in" ]; then
+                    SUBMERGE_TOKEN="$_in"
+                    submerge_conf_set SUBMERGE_TOKEN "$_in"
+                    green "✅ 上报凭证已更新"
+                else
+                    purple "  未修改"
+                fi
+                menu_pause
+                ;;
+            3)
+                reading "  新的机器名（回车保持；首字符字母/数字，可含中文、空格、_ . -，≤64 字符）[${SUBMERGE_MACHINE}]: " _in
+                if submerge_cancel_word "$_in"; then
+                    purple "  已取消，未修改"
+                    menu_pause
+                    continue
+                fi
+                if [ -n "$_in" ]; then
+                    SUBMERGE_MACHINE="$_in"
+                    submerge_conf_set SUBMERGE_MACHINE "$_in"
+                    green "✅ 机器名已更新：${_in}"
+                else
+                    purple "  未修改"
+                fi
+                menu_pause
+                ;;
+            4)
+                reading "  新的来源（回车保持；留空即默认，同一台机器分多份数据时才填，如 hk2）[${_src_disp}]: " _in
+                if submerge_cancel_word "$_in"; then
+                    purple "  已取消，未修改"
+                    menu_pause
+                    continue
+                fi
+                if [ -n "$_in" ]; then
+                    SUBMERGE_SOURCE="$_in"
+                    submerge_conf_set SUBMERGE_SOURCE "$_in"
+                    green "✅ 来源已更新：${_in}"
+                else
+                    purple "  未修改"
+                fi
+                menu_pause
+                ;;
+            5)
+                yellow "  不上报的协议：英文逗号分隔；输入 - 清空，回车保持"
+                purple "    协议　：vless vmess trojan hysteria2 tuic anytls socks5（填协议名自动含它的细分形态）"
+                purple "    细分　：vless-reality vless-argo vless-cdn vmess-argo vmess-cdn trojan-argo trojan-cdn"
+                purple "    当前会上报：$(submerge_kinds_to_report)"
+                reading "  不上报的协议 [$(submerge_exclude_list_show)]: " _in
+                if submerge_cancel_word "$_in"; then
+                    purple "  已取消，未修改"
+                    menu_pause
+                    continue
+                fi
+                if [ "$_in" = "-" ]; then
+                    SUBMERGE_EXCLUDE=""
+                    submerge_conf_set SUBMERGE_EXCLUDE ""
+                    green "✅ 已清空排除协议（改为全部上报）"
+                elif [ -n "$_in" ]; then
+                    SUBMERGE_EXCLUDE="$(printf '%s' "$_in" | tr -d '[:space:]')"
+                    submerge_conf_set SUBMERGE_EXCLUDE "$SUBMERGE_EXCLUDE"
+                    green "✅ 不上报的协议已更新：${SUBMERGE_EXCLUDE}"
+                else
+                    purple "  未修改"
+                fi
+                menu_pause
+                ;;
+            6)
+                reading "  确认清空全部上报配置与上报状态？(y/N): " _in
+                case "$_in" in
+                    y | Y | yes | YES)
+                        rm -f "$SUBMERGE_CONF" "$SUBMERGE_STATE" 2> /dev/null
+                        green "✅ 已清除上报配置与上报状态"
+                        ;;
+                    *) purple "  已取消" ;;
+                esac
+                menu_pause
+                ;;
+            0 | q | Q | b | B | back | BACK | exit | EXIT) return 0 ;;
+            "") : ;;
+            *)
+                yellow "  无效选项：${_ch}"
+                menu_pause
+                ;;
+        esac
+    done
+}
+
+# 配置文件实际权限（3600 = rw-------），拿不到就报「未知」
+submerge_conf_perm() {
+    local _p
+    _p="$(ls -l "$SUBMERGE_CONF" 2> /dev/null | awk '{print $1}')"
+    [ -n "$_p" ] || { printf '%s' "未创建"; return 0; }
+    case "$_p" in
+        -rw-------) printf '%s' "600，仅 root 可读写" ;;
+        *) printf '%s' "$_p" ;;
+    esac
+}
+
+# 上报状态查询：开关 / 最近一次时间与结果 / 地址与凭证
+submerge_status_show() {
+    submerge_load
+    local _flag _lt _lr _lmsg _lhttp _lnodes _lasturl _lok
+    green "========= 上报状态 ========="
+    _flag="$(submerge_auto_flag)"
+    if submerge_auto_enabled; then
+        green "  自动上报：已开启（${_flag}）"
+    else
+        yellow "  自动上报：已关闭（${_flag:-0}）—— 装完不会推送，手动上报不受影响"
+    fi
+    if [ -n "${REPORT_FLAG:-}" ]; then
+        purple "    开关来源：环境变量 REPORT_FLAG=${REPORT_FLAG}（覆盖配置文件）"
+    else
+        purple "    开关来源：$SUBMERGE_CONF 里的 SUBMERGE_AUTO"
+    fi
+
+    _lt="$(submerge_state_get LAST_TIME)"
+    _lr="$(submerge_state_get LAST_RESULT)"
+    _lmsg="$(submerge_state_get LAST_MSG)"
+    _lhttp="$(submerge_state_get LAST_HTTP)"
+    _lnodes="$(submerge_state_get LAST_NODES)"
+    _lasturl="$(submerge_state_get LAST_URL)"
+    _lok="$(submerge_state_get LAST_OK_TIME)"
+
+    echo ""
+    if [ -n "$_lt" ]; then
+        if [ "$_lr" = "ok" ]; then
+            green "  最近一次：${_lt}（UTC）  成功${_lhttp:+ (HTTP $_lhttp)}"
+        else
+            red "  最近一次：${_lt}（UTC）  失败${_lhttp:+ (HTTP $_lhttp)}"
+        fi
+        purple "    结果：${_lmsg:-（无详细说明）}"
+        [ -n "$_lnodes" ] && purple "    节点：${_lnodes} 条"
+        [ -n "$_lasturl" ] && purple "    目标：${_lasturl}"
+        [ -n "$_lok" ] && green "  最近成功：${_lok}（UTC）"
+    else
+        yellow "  还没有上报记录（手动 sb report 或开启自动上报后生成节点会记录下来）"
+    fi
+    purple "  状态文件：${SUBMERGE_STATE}（600）"
+    purple "  配置文件：${SUBMERGE_CONF}（$(submerge_conf_perm)）"
+}
+
+interactive_submerge_menu() {
+    local _ch _cred
+    while true; do
+        clear
+        submerge_load
+        [ -n "$SUBMERGE_TOKEN" ] && _cred="已配置" || _cred="未配置"
+        green "========= 上报到 sub-merge ========="
+        echo ""
+        if submerge_auto_enabled; then
+            green "  自动上报：已开启（生成节点后自动推送）"
+        else
+            purple "  自动上报：已关闭（默认，不推送）"
+        fi
+        if [ -n "$SUBMERGE_BASE" ]; then
+            green "  服务端：${SUBMERGE_BASE%/}    凭证：${_cred}"
+        else
+            yellow "  服务端：未配置（选 3 填你自己的 sub-merge 域名）    凭证：${_cred}"
+        fi
+        green "  不上报：$(submerge_exclude_list_show)"
+        purple "  会上报：$(submerge_kinds_to_report)"
+        if [ -s "$SINGBOX_FOLDER_PATH/jh.txt" ]; then
+            purple "  当前节点：$(submerge_kind_counts "$SINGBOX_FOLDER_PATH/jh.txt" "$(submerge_exclude_list)")"
+        fi
+        if [ -n "$(submerge_state_get LAST_TIME)" ]; then
+            if [ "$(submerge_state_get LAST_RESULT)" = "ok" ]; then
+                green "  最近上报：$(submerge_state_get LAST_TIME)（UTC） 成功"
+            else
+                red "  最近上报：$(submerge_state_get LAST_TIME)（UTC） 失败"
+            fi
+        else
+            purple "  最近上报：暂无记录"
+        fi
+        echo ""
+        purple "  1) 立即上报一次"
+        if submerge_auto_enabled; then
+            purple "  2) 关掉自动上报"
+        else
+            purple "  2) 打开自动上报"
+        fi
+        purple "  3) 修改配置（地址 / 凭证 / 机器名 / 来源 / 清除）"
+        purple "  4) 查看详情（状态 / 配置 / 预览）"
+        purple "  0) 返回"
+        echo ""
+        reading "  请输入选项: " _ch
+        case "$_ch" in
+            0|q|Q) return 0 ;;
+            1) submerge_report; menu_pause ;;
+            2)
+                if submerge_auto_enabled; then
+                    submerge_conf_set SUBMERGE_AUTO 0
+                    green "✅ 已关掉自动上报（生成节点后不再推送）"
+                else
+                    submerge_conf_set SUBMERGE_AUTO 1
+                    if [ -n "$SUBMERGE_BASE" ]; then
+                        green "✅ 已打开自动上报（生成节点后推到 ${SUBMERGE_BASE%/}）"
+                    else
+                        green "✅ 已打开自动上报（还没填上报地址，选 3 补上之后才会真正推送）"
+                    fi
+                    [ -n "${REPORT_FLAG:-}" ] && yellow "   注意：当前 shell 里 REPORT_FLAG=$REPORT_FLAG，它会覆盖配置文件"
+                fi
+                menu_pause ;;
+            3) submerge_configure; menu_pause ;;
+            4)
+                submerge_status_show
+                echo ""
+                submerge_conf_show
+                echo ""
+                submerge_preview
+                menu_pause ;;
+            *) yellow "无效选项"; sleep 1 ;;
+        esac
+    done
+}
+# ================== 上报到 sub-merge END ==================
+
 interactive_main() {
     local _ch
     geo_prefetch
@@ -10241,6 +11289,9 @@ interactive_main() {
         yellow "  【日 志】"
         green "    [10] 查看日志 (logs)"
         echo ""
+        yellow "  【上 报】"
+        green "    [13] 上报到 sub-merge (report)"
+        echo ""
         red   "  【危险操作】"
         red   "    [11] 卸载 (del, 保留二进制)"
         red   "    [12] 卸载全部并清理 (delall)"
@@ -10259,8 +11310,11 @@ interactive_main() {
             7) cip; menu_pause ;;
             8) menu_status_block; show_local_ip_info_with_out_ip_hint; menu_pause ;;
             9) interactive_sub_menu ;;
+            13) interactive_submerge_menu ;;
             10) interactive_log_menu ;;
             11)
+                yellow "  将删除：节点配置、uuid、reality 密钥、argo 凭证、上报状态记录"
+                yellow "  将保留：sing-box / cloudflared / 沙箱 nginx 二进制、logs、上报配置（submerge.conf）"
                 reading "确认卸载? (y/N): " _ch
                 if [ "$_ch" = "y" ] || [ "$_ch" = "Y" ]; then
                     cleandel
@@ -10268,6 +11322,7 @@ interactive_main() {
                 fi
                 menu_pause ;;
             12)
+                red "  将删除：整个 $SINGBOX_FOLDER_PATH（二进制、配置、日志、上报配置全部）"
                 reading "确认卸载全部并清理? (y/N): " _ch
                 if [ "$_ch" = "y" ] || [ "$_ch" = "Y" ]; then
                     cleandel delall
@@ -10464,6 +11519,25 @@ main() {
         exit
     fi
 
+    # 上报节点到 sub-merge（自动上报层）
+    #   sb report           立即上报一次
+    #   sb report status    查看上报状态（开关 / 最近一次时间与结果 / 地址 / 凭证）
+    #   sb report on|off    开关自动上报
+    #   sb rstatus          等价于 sb report status
+    if [ "$_cmd" = "report" ] || [ "$_cmd" = "up" ]; then
+        case "${2:-}" in
+            status|st|state) submerge_status_show; exit 0 ;;
+            on|enable|1) submerge_conf_set SUBMERGE_AUTO 1; green "✅ 已开启自动上报"; submerge_status_show; exit 0 ;;
+            off|disable|0) submerge_conf_set SUBMERGE_AUTO 0; green "✅ 已关闭自动上报"; submerge_status_show; exit 0 ;;
+            "") submerge_report; exit ;;
+            *) red "未知参数：sb report ${2}"; yellow "   可用：sb report | sb report status | sb report on | sb report off"; exit 1 ;;
+        esac
+    fi
+    if [ "$_cmd" = "rstatus" ] || [ "$_cmd" = "reportstatus" ]; then
+        submerge_status_show
+        exit 0
+    fi
+
     # 分流管理
     if [ "$_cmd" = "rt" ] || [ "$_cmd" = "rule" ]; then
         rt_manage
@@ -10491,7 +11565,7 @@ main() {
     # 无效命令提示
     echo
     red "❌ 无效命令：$1"
-    yellow "可用命令：menu / ins / rep / del / delall / list / sub / res / ups / rt / node / sc / sc_off / autostart / autostart_off / nginx_start / nginx_stop / nginx_restart / nginx_status"
+    yellow "可用命令：menu / ins / rep / del / delall / list / sub / report / report status / res / ups / rt / node / sc / sc_off / autostart / autostart_off / nginx_start / nginx_stop / nginx_restart / nginx_status"
     showmode
     exit 1
 
