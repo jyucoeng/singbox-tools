@@ -1091,6 +1091,16 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 
 ## 2.7 版本变更信息
 
+v3.2.65 (2026-11-08)
+ > 把 Argo 边缘连接数从「小内存硬编码 1 条」改成顶部常量 `ARGO_HA_CONNECTIONS`（默认 4）：Cloudflare 面板上的「降级」可一键消掉，也方便按 1 / 2 / 3 / 4 逐档调试。
+
+- 背景：cloudflared 默认向 4 个边缘节点各建一条 QUIC 连接，Cloudflare 只按「边缘冗余够不够」判定隧道状态 —— **1 条 = 降级（degraded）**，4 / 8 条 = 健康（healthy）。此前脚本对 `MemTotal < 1048576`（即 < 1 GiB）的机器写死 `--ha-connections 1`，而标称 1 GB 的小鸡 `MemTotal` 实测只有 96 ~ 100 万 KB，必然 < 1048576，于是台台显示降级
+- 新增常量（脚本顶部，与 `ARGO_DEFAULT_PORT` 同段）：`export ARGO_HA_CONNECTIONS="${ARGO_HA_CONNECTIONS:-4}"`，systemd / openrc / nohup 三条安装路径统一读它；调试时改这一行，或命令行临时覆盖 `ARGO_HA_CONNECTIONS=2 bash sb.sh`
+- 新增 `argo_ha_flag()`：只接受 1 ~ 8 的纯数字，空 / 非数字 / 0 / 超范围一律返回空串 → 不传该参数，回落到 cloudflared 默认值，避免写出「启动即失败」的 unit
+- 内存分支保留不动：`MemTotal < 1 GiB` 时仍写 `GOMEMLIMIT=25%MiB` / `GOGC=40` / `GOMAXPROCS=1` / `MemoryHigh=30%` / `MemoryMax=40%`，只是不再顺带改连接数
+- 实测代价：1500 MB 机器上 4 条连接的 cloudflared RSS 只有 24.5 MB，1 → 4 多出来的是「几 MB ~ 十几 MB」量级，`MemoryMax` 40% 远够用；「降级」只是面板标签，不影响回源、不限速、不降权
+- 老机器想让面板立刻变健康：unit 里已有 `--ha-connections 1` 的，把它换成 4 后 `systemctl daemon-reload && systemctl restart argo`；unit 里本来没有这个参数的，已经是默认 4 条，无需改动
+
 v3.2.63 (2026-11-05)
  > 修「IPv6-only 机器 + WARP 提供 IPv4 时，多打一条连不上的 `-IPv4` 节点」：CDN / CGNAT / 私有段不再当节点地址，IPv4 也不再被套上方括号。
 
