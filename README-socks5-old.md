@@ -1,5 +1,3 @@
-[English](README.md) · [中文](README-zh.md)
-
 # socks5 安装脚本
 
 

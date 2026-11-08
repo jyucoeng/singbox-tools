@@ -1,5 +1,3 @@
-[English](README.md) · [中文](README-zh.md)
-
 ## mtproxy用法示例（旧版脚本 mtp-old.sh）：
 
 > **⚠️ 此文档对应旧版脚本 `mtp-old.sh`**，仅保留 legacy 安装方式（含 Python 版）。

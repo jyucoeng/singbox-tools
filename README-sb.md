@@ -1,5 +1,3 @@
-[English](README.md) · [中文](README-zh.md)
-
 # sing-box 一键安装脚本
 
 支持两种安装方式：

@@ -1,5 +1,3 @@
-[English](README.md) · [中文](README-zh.md)
-
 # bbr.sh（BBR 单流性能优化一键脚本）
 
 `bbr.sh` 是一个 BBR + TCP 单流性能优化脚本，支持 **交互式菜单** 与 **无交互参数** 两种模式，
