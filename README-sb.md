@@ -1091,6 +1091,15 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 
 ## 2.7 版本变更信息
 
+v3.2.67 (2026-11-08)
+ > 修 openrc 机器上 `argo.log` 永远是 0 字节：cloudflared 的日志走 **stderr**，模板只重定向了 stdout，于是全被丢进 `/dev/null`。现在 `output_log` 与 `error_log` 都指向同一个文件。
+
+- 现象：Alpine 机器上 `/root/doraemon/logs/argo.log`、`supervise-argo.log` 常年 0 字节，重启 argo 也不出内容，看上去像「cloudflared 没日志 / 隧道没连上」
+- 根因：`supervise-daemon` 托管的 init 脚本只写了 `output_log="..."`（对应 fd 1）。实测 `ls -l /proc/<cloudflared pid>/fd/1` → `argo.log`、`fd/2` → `/dev/null`，而 cloudflared 的 logrus 默认输出是 **stderr**：所有 `INF/WRN/ERR` 全写 fd 2 → 全丢。只有 token 之类的致命用法错误走 `fmt` 打到 stdout（这也是「坏 token 反而有 15 KB 输出」的原因）
+- 修法：openrc 的 argo 模板补一行 `error_log="'"$LOGS_DIR"'/argo.log"'`；nginx 的 `supervise-daemon` 模板同样补 `error_log=.../nginx-supervise.log`。systemd 分支不受影响（`StandardOutput`/`StandardError` 本来就都给了 journal）
+- 现场验证（122 MB 的 Alpine 小鸡）：补 `error_log` 后 `rc-service argo restart`，`argo.log` 立刻 6110 字节，`connIndex=0/1/2/3` 四条 `Registered tunnel connection` 全部落盘 —— 同时坐实了 v3.2.65 的 4 条连接确实生效
+- 老 openrc 机器临时修（不用重装）：在 `/etc/init.d/argo` 的 `output_log=` 下一行加 `error_log="<同一个路径>"`，`rc-service argo restart`
+
 v3.2.66 (2026-11-08)
  > 补齐 v3.2.65 漏掉的两处：`sb-bak.sh` 里同样的「小内存降成 1 条」还在，`argorestart()` 的 nohup 分支则根本没带上这个参数。现在三个脚本、四条路径全部同源。
 

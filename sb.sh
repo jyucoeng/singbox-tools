@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.66(2026-11-08)"
+VERSION="3.2.67(2026-11-08)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -1496,7 +1496,8 @@ EOF
 respawn_delay=10
 respawn_max=5
 respawn_period=300
-output_log="'"$SB_NGINX_DIR"'/logs/nginx-supervise.log"'
+output_log="'"$SB_NGINX_DIR"'/logs/nginx-supervise.log"
+error_log="'"$SB_NGINX_DIR"'/logs/nginx-supervise.log"'
         else
             _sup='command_background=yes'
         fi
@@ -4769,7 +4770,8 @@ install_argo_service_openrc() {
 respawn_delay=5
 respawn_max=0
 respawn_period=60
-output_log="'"$LOGS_DIR"'/argo.log"'
+output_log="'"$LOGS_DIR"'/argo.log"
+error_log="'"$LOGS_DIR"'/argo.log"'
     else
         _argo_sup_conf='command_background=yes'
     fi
