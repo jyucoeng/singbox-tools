@@ -1091,6 +1091,15 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 
 ## 2.7 版本变更信息
 
+v3.2.66 (2026-11-08)
+ > 补齐 v3.2.65 漏掉的两处：`sb-bak.sh` 里同样的「小内存降成 1 条」还在，`argorestart()` 的 nohup 分支则根本没带上这个参数。现在三个脚本、四条路径全部同源。
+
+- `sb-bak.sh` 同步到 v3.2.66（它长期跟着主脚本走，只是一直落后一个版本，所以这次的常量块、`argo_ha_flag()`、三处调用一并补齐）
+- **`argorestart()` 补丁**：无 init 系统（Alpine / LXC 等没有 systemd、openrc 的环境）走 `sb res` 重启 Argo 时，JSON 固定隧道与 token 固定隧道这两条命令行是手写的，此前不带 `--ha-connections` → 会回落到 cloudflared 默认 4 条，`ARGO_HA_CONNECTIONS=2` 在那条路径上等于没设。现已改成 `${_argo_ha}`，与其余三条路径同源
+- 三条 `--url`（trycloudflare 临时隧道）分支刻意不动：临时隧道不需要边缘冗余，也避免给这条路径引入未验证的参数
+- 全仓库复核：`grep 'ha-connections 1'` 在 `sb.sh` / `sb00.sh` / `sb-bak.sh` 中已零命中；`sb.sh` 与 `sb-bak.sh` 除第 9 行 `SB_SCRIPT_NAME` 外逐字节一致
+- `README-sb.md` 里 v3.2.5x 的旧 changelog 保持原样：那些条目记录的是当时的行为，不是现行文档
+
 v3.2.65 (2026-11-08)
  > 把 Argo 边缘连接数从「小内存硬编码 1 条」改成顶部常量 `ARGO_HA_CONNECTIONS`（默认 4）：Cloudflare 面板上的「降级」可一键消掉，也方便按 1 / 2 / 3 / 4 逐档调试。
 

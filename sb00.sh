@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.65(2026-11-08)"
+VERSION="3.2.66(2026-11-08)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -6734,10 +6734,14 @@ argorestart() {
     pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null
     log_keep_prev "$LOGS_DIR/argo.log"
 
+    # 边缘连接数与其他三条安装路径同源，统一由顶部常量 ARGO_HA_CONNECTIONS 控制
+    local _argo_ha=""
+    _argo_ha="$(argo_ha_flag)"
+
     # 1️⃣ JSON 固定隧道（最高优先级）
     if [ -f "$SINGBOX_FOLDER_PATH/tunnel.yml" ]; then
         nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel \
-            --edge-ip-version auto \
+            --edge-ip-version auto${_argo_ha} \
             --config "$SINGBOX_FOLDER_PATH/tunnel.yml" run \
             >> "$LOGS_DIR/argo.log" 2>&1 &
         return
@@ -6747,7 +6751,7 @@ argorestart() {
     if [ -f "$SINGBOX_FOLDER_PATH/sbargotoken" ]; then
         nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel \
             --no-autoupdate \
-            --edge-ip-version auto run \
+            --edge-ip-version auto${_argo_ha} run \
             --token "$(cat "$SINGBOX_FOLDER_PATH/sbargotoken")" \
             >> "$LOGS_DIR/argo.log" 2>&1 &
         return

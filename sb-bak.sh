@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.64(2026-11-08)"
+VERSION="3.2.66(2026-11-08)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -157,6 +157,15 @@ export ws_cdn_trojan_cf_pt=${ws_cdn_trojan_cf_pt:-''}     # trojan 专属 CDN �
 
 NGINX_DEFAULT_PORT=8080
 readonly ARGO_DEFAULT_PORT=8001
+
+# ✅ Argo 边缘连接数（cloudflared --ha-connections）
+# Cloudflare 只看「边缘冗余够不够」来判定隧道状态：1 条 = 面板显示「降级」，
+# 4 条（cloudflared 默认值）= 「健康」。早期实现把小内存机器的连接数硬编码成 1 条，
+# 现改为常量，调试时只改这一行即可：
+#   4 = 默认（健康，推荐）    3 / 2 = 折中     1 = 省内存（面板会显示降级，断线 1~5 秒）
+# 也可命令行临时覆盖：ARGO_HA_CONNECTIONS=2 bash sb.sh
+# 非法值（空 / 非数字 / 0 / >8）由 argo_ha_flag 忽略，回落到 cloudflared 默认值。
+export ARGO_HA_CONNECTIONS="${ARGO_HA_CONNECTIONS:-4}"
 
 # iptables/ip6tables 规则标记常量（用于精确识别本脚本添加的防火墙规则）
 readonly IPTABLES_COMMENT_SINGBOX="doraemon_singbox_rule"   # 非socks5协议 + 无白名单时的socks5
@@ -4601,6 +4610,22 @@ ensure_cloudflared() {
     return 0
 }
 
+# 生成 --ha-connections 参数（含前导空格）；非法值返回空串，交给 cloudflared 用默认值，
+# 避免写出「启动即失败」的 unit / 命令行。
+argo_ha_flag() {
+    local n="${ARGO_HA_CONNECTIONS:-}"
+    case "$n" in
+        '' | *[!0-9]*) printf '' ;;
+        *)
+            if [ "$n" -ge 1 ] && [ "$n" -le 8 ]; then
+                printf ' --ha-connections %s' "$n"
+            else
+                printf ''
+            fi
+            ;;
+    esac
+}
+
 # 安装 Argo 服务（systemd）
 install_argo_service_systemd() {
     local mode="$1" # json|token
@@ -4619,9 +4644,9 @@ install_argo_service_systemd() {
     fi
 
     # cloudflared 也是 Go 程序，同样是内存大户（Argo 隧道 + 默认 4 条 QUIC 边缘连接）。
-    # 小内存机器上和 sb 一样给软/硬上限，并把边缘连接数降到 1 条：
-    #   - 4 条 QUIC 连接每条都有自己的收发缓冲和 goroutine，128MB 上纯浪费；
-    #   - --ha-connections 1 只影响边缘冗余，不影响能不能连上（断了会自动重连）。
+    # 小内存机器上和 sb 一样给软/硬上限（GOMEMLIMIT / GOGC / GOMAXPROCS / MemoryMax）：
+    #   - 边缘连接数不再跟着内存分支走，统一由顶部常量 ARGO_HA_CONNECTIONS 控制；
+    #   - 连接数只影响边缘冗余，不影响能不能连上（断了会自动重连）。
     # 这里刻意不设 OOMScoreAdjust：
     #   - 它只在「整机 / 容器级 OOM」时参与挑受害者；argo 撞到自己 MemoryMax 时是
     #     cgroup 内部 OOM，组里只有它一个进程，设不设都是它自己死；
@@ -4629,6 +4654,7 @@ install_argo_service_systemd() {
     #   - 想恢复「整机吃紧先牺牲 argo」的话，在下面字符串里追加一行
     #     OOMScoreAdjust=500 即可（一行的事，随时可加）。
     local _argo_mem_conf="" _argo_ha="" _mem_kb=""
+    _argo_ha="$(argo_ha_flag)"
     _mem_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)
     if [ -n "$_mem_kb" ] && [ "$_mem_kb" -lt 1048576 ]; then
         _argo_mem_conf="Environment=GOMEMLIMIT=$(( _mem_kb * 25 / 100 / 1024 ))MiB
@@ -4639,7 +4665,6 @@ Environment=GOMAXPROCS=1"
 MemoryHigh=$(( _mem_kb * 30 / 100 / 1024 ))M
 MemoryMax=$(( _mem_kb * 40 / 100 / 1024 ))M"
         fi
-        _argo_ha=" --ha-connections 1"
     fi
 
     if [ "$mode" = "json" ]; then
@@ -4726,10 +4751,8 @@ install_argo_service_openrc() {
 
     local command_path="$SINGBOX_FOLDER_PATH/cloudflared"
     local args="" _argo_ha=""
-    local _mem_kb=""
-    _mem_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)
-    # 小内存机器把 Argo 边缘连接数从默认 4 条降到 1 条（与 systemd 分支保持一致）
-    [ -n "$_mem_kb" ] && [ "$_mem_kb" -lt 1048576 ] && _argo_ha=" --ha-connections 1"
+    # 边缘连接数与 systemd 分支同源：统一由顶部常量 ARGO_HA_CONNECTIONS 控制
+    _argo_ha="$(argo_ha_flag)"
 
     if [ "$mode" = "json" ]; then
         debug_log "【调试】使用 json 模式安装 argo 服务(openrc)"
@@ -4789,10 +4812,10 @@ start_argo_no_daemon() {
     # 三种隧道模式共用 argo.log，启动前只保留一份上一轮日志（cloudflared 静默退出最常见）
     log_keep_prev "$LOGS_DIR/argo.log"
 
-    # 与 systemd/openrc 分支同口径：小内存机器降边缘连接数 + 压 Go 堆上限
+    # 与 systemd/openrc 分支同口径：连接数由常量统一控制，小内存只压 Go 堆上限
+    _argo_ha="$(argo_ha_flag)"
     _mem_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)
     if [ -n "$_mem_kb" ] && [ "$_mem_kb" -lt 1048576 ]; then
-        _argo_ha=" --ha-connections 1"
         [ -z "${GOMEMLIMIT:-}" ] && export GOMEMLIMIT="$(( _mem_kb * 25 / 100 / 1024 ))MiB"
         [ -z "${GOMAXPROCS:-}" ] && export GOMAXPROCS=1
     fi
@@ -6711,10 +6734,14 @@ argorestart() {
     pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null
     log_keep_prev "$LOGS_DIR/argo.log"
 
+    # 边缘连接数与其他三条安装路径同源，统一由顶部常量 ARGO_HA_CONNECTIONS 控制
+    local _argo_ha=""
+    _argo_ha="$(argo_ha_flag)"
+
     # 1️⃣ JSON 固定隧道（最高优先级）
     if [ -f "$SINGBOX_FOLDER_PATH/tunnel.yml" ]; then
         nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel \
-            --edge-ip-version auto \
+            --edge-ip-version auto${_argo_ha} \
             --config "$SINGBOX_FOLDER_PATH/tunnel.yml" run \
             >> "$LOGS_DIR/argo.log" 2>&1 &
         return
@@ -6724,7 +6751,7 @@ argorestart() {
     if [ -f "$SINGBOX_FOLDER_PATH/sbargotoken" ]; then
         nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel \
             --no-autoupdate \
-            --edge-ip-version auto run \
+            --edge-ip-version auto${_argo_ha} run \
             --token "$(cat "$SINGBOX_FOLDER_PATH/sbargotoken")" \
             >> "$LOGS_DIR/argo.log" 2>&1 &
         return
