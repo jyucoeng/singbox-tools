@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.63(2026-11-05)"
+VERSION="3.2.64(2026-11-08)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -1085,11 +1085,17 @@ print_sb_shortcut_help() {
     green "    sb nginx_stop      停止 Nginx"
     green "    sb nginx_restart   重启 Nginx"
     green "    sb nginx_status    查看 Nginx 状态"
-    green "    sb logs            查看日志菜单（Sing-box/Argo/Nginx/安装日志）"
+    green "    sb logs            查看日志菜单（13 项：运行/守护/系统/进阶）"
     green "    sb log_sb 100      查看 Sing-box 运行日志（最近100行）"
     green "    sb log_argo 100    查看 Argo 隧道日志（最近100行）"
+    green "    sb log_nginx 100   查看 Nginx 错误日志（最近100行）"
+    green "    sb log_nginx_acc 50 查看 Nginx 访问日志（最近50行）"
+    green "    sb log_watchdog    查看看门狗日志（拉起/换域名记录）"
+    green "    sb log_regen       查看 Argo 重生成/上报日志"
+    green "    sb log_journal sb  查看 systemd journal（sb/argo/nginx）"
     green "    sb log_ins         查看最近一次安装日志（全文）"
     green "    sb log_stop        查看服务停止原因日志（排查崩溃用）"
+    green "    sb diag            一键生成诊断包 logs/diag-时间.txt"
 }
 
 # 清理 sb 快捷命令
@@ -3410,10 +3416,23 @@ LOG_ROTATE_SCRIPT="$SINGBOX_FOLDER_PATH/singbox-log-rotate.sh"
 # 服务看门狗：cron 每 2 分钟跑一次，把「异常退出后没被拉起来」的服务补起来
 WATCHDOG_SCRIPT="$SINGBOX_FOLDER_PATH/singbox-watchdog.sh"
 # 应用 / 守护进程日志（logs/）
-LOG_ROTATE_FILES="singbox.log argo.log supervise-singbox.log supervise-argo.log stop_reason.log"
+LOG_ROTATE_FILES="singbox.log argo.log supervise-singbox.log supervise-argo.log stop_reason.log watchdog.log argo-regen.log"
 # 沙箱 nginx 日志（nginx/logs/）
 SB_NGINX_LOGS_DIR="$SB_NGINX_DIR/logs"
 LOG_ROTATE_NGINX_FILES="access.log error.log"
+
+# 服务重启/重装前保留上一轮日志（崩溃现场）。
+# 之前各启动点直接 `: > log` 或 `> log`，一重启就把「为什么停」的唯一证据抹掉；
+# 这里统一改成「先 cp -p 成 .prev（只留 1 份），再以 >> 追加」。
+# 注意：.prev 不参与轮转也不进菜单首屏，仅在需要时手动 cat。
+log_keep_prev() {
+    local _f="$1" _sz
+    [ -n "$_f" ] || return 0
+    [ -s "$_f" ] || return 0
+    _sz=$(wc -c < "$_f" 2> /dev/null || echo 0)
+    [ "${_sz:-0}" -ge 1024 ] || return 0
+    cp -p "$_f" "$_f.prev" 2> /dev/null || true
+}
 
 # 生成轮转脚本（幂等，每次安装覆盖）
 gen_log_rotate_script() {
@@ -3424,14 +3443,15 @@ gen_log_rotate_script() {
 LIMIT_KB=$LOG_ROTATE_SIZE_KB
 
 rotate_dir() {
-    dir="\$1"; shift
-    for f in "\$@"; do
-        p="\$dir/\$f"
-        [ -f "\$p" ] || continue
-        size_kb=\$(( \$(wc -c < "\$p" 2>/dev/null || echo 0) / 1024 ))
-        [ "\$size_kb" -ge "\$LIMIT_KB" ] || continue
-        cp -p "\$p" "\$p.1" 2>/dev/null || continue
-        : > "\$p" 2>/dev/null || true
+    # 全部加 _rd_ 前缀：这个脚本被 . 或 source 时，裸 dir/p/f 会覆盖调用方的同名变量
+    _rd_dir="\$1"; shift
+    for _rd_f in "\$@"; do
+        _rd_p="\$_rd_dir/\$_rd_f"
+        [ -f "\$_rd_p" ] || continue
+        _rd_kb=\$(( \$(wc -c < "\$_rd_p" 2>/dev/null || echo 0) / 1024 ))
+        [ "\$_rd_kb" -ge "\$LIMIT_KB" ] || continue
+        cp -p "\$_rd_p" "\$_rd_p.1" 2>/dev/null || continue
+        : > "\$_rd_p" 2>/dev/null || true
     done
 }
 
@@ -3558,7 +3578,10 @@ NGINX_PID="$SB_NGINX_PID"
 # 看门狗自己的日志超过 128KB 直接清空（它只记「什么时候拉起了谁」）
 if [ -f "\$LOG" ]; then
     _sz=\$(wc -c < "\$LOG" 2>/dev/null || echo 0)
-    [ "\$_sz" -gt 131072 ] && : > "\$LOG"
+    if [ "\${_sz:-0}" -gt 131072 ]; then
+        cp -p "\$LOG" "\$LOG.1" 2>/dev/null || true
+        : > "\$LOG" 2>/dev/null || true
+    fi
 fi
 
 say() { echo "\$(date '+%F %T') \$*" >> "\$LOG" 2>/dev/null; }
@@ -3587,10 +3610,14 @@ ensure_openrc() {
 if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
     ensure_systemd sb
     ensure_systemd argo
+    # sb-nginx 是 Restart=always + StartLimitBurst=5/300s：5 次起不来会停在 failed，
+    # 而它一旦 failed 就再没人管（脚本其它地方只在「手动点菜单」时才 reset-failed）
+    ensure_systemd ${SB_NGINX_SVC}
 elif command -v rc-service >/dev/null 2>&1; then
     # Alpine/openrc：sb 的服务名是 sing-box
     ensure_openrc sing-box
     ensure_openrc argo
+    ensure_openrc ${SB_NGINX_SVC}
 fi
 
 # 沙箱 nginx：若已交由 systemd/openrc 托管，重启交给服务管理器，看门狗不插手
@@ -3652,7 +3679,8 @@ if [ -s "$SINGBOX_FOLDER_PATH/argoport" ] \\
         if ! pgrep -f "cloudflared tunnel --url" >/dev/null 2>&1; then
             _aport=\$(cat "$SINGBOX_FOLDER_PATH/argoport" 2>/dev/null)
             [ -n "\$_aport" ] || _aport=8001
-            : > "$LOGS_DIR/argo.log" 2>/dev/null
+            # 拉起临时隧道前只保留一份上一轮日志，不要清空（清空等于丢现场）
+            [ -s "$LOGS_DIR/argo.log" ] && cp -p "$LOGS_DIR/argo.log" "$LOGS_DIR/argo.log.prev" 2>/dev/null
             nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel --url "http://localhost:\$_aport" \\
                 --edge-ip-version auto --no-autoupdate >> "$LOGS_DIR/argo.log" 2>&1 &
             say "argo: 临时隧道未运行，已拉起（localhost:\$_aport）"
@@ -3755,8 +3783,11 @@ sbbout() {
         # sb.json 内含全部协议口令，收紧权限（jq 写 tmp+mv 会重建文件，需重新 chmod）
         chmod 600 "$sbj" 2>/dev/null || true
 
-        # 预创建 singbox.log，确保 sing-box 启动时文件已存在
-        : > "$LOGS_DIR/singbox.log" 2>/dev/null
+        # 预创建 singbox.log，确保 sing-box 启动时文件已存在。
+        # ⚠️ 已存在时不再清空：重启前的日志正是排查「为什么停」的唯一现场，
+        #    只把它留一份 singbox.log.prev
+        log_keep_prev "$LOGS_DIR/singbox.log"
+        touch "$LOGS_DIR/singbox.log" 2> /dev/null
 
         if has_systemd && [ "$EUID" -eq 0 ]; then
             debug_log "【调试】sbbout：使用 systemd 管理/启动 sb 服务"
@@ -3801,7 +3832,10 @@ sbbout() {
             # 且旧进程会占着端口让新进程起不来
             pkill -15 -f "$SINGBOX_FOLDER_PATH/sing-box" 2> /dev/null
             sleep 1
-            nohup "$SINGBOX_FOLDER_PATH/sing-box" run -c "$SINGBOX_FOLDER_PATH/sb.json" > /dev/null 2>&1 &
+            # 无 init 时没有 append: 机制，stdout/stderr（Go 的 panic 栈）过去直接丢进 /dev/null，
+            # 而这类容器恰恰是最容易崩的。改为追加到 singbox.log（sing-box 自身的 log.output 也写这里）
+            log_keep_prev "$LOGS_DIR/singbox.log"
+            nohup "$SINGBOX_FOLDER_PATH/sing-box" run -c "$SINGBOX_FOLDER_PATH/sb.json" >> "$LOGS_DIR/singbox.log" 2>&1 &
             echo ""
             debug_print green "✅  sb 服务已启动, 使用 nohup 模式运行"
         fi
@@ -4624,6 +4658,9 @@ NoNewPrivileges=yes
 ${_argo_mem_conf}
 LimitNOFILE=65535
 ExecStart=$SINGBOX_FOLDER_PATH/cloudflared tunnel --edge-ip-version auto${_argo_ha} --config $SINGBOX_FOLDER_PATH/tunnel.yml run
+# 与 sb.service 同口径：固定隧道过去没有任何落盘，菜单[10]-2 与 stop_reason 全是空的
+StandardOutput=append:$LOGS_DIR/argo.log
+StandardError=append:$LOGS_DIR/argo.log
 Restart=always
 RestartSec=5s
 
@@ -4646,6 +4683,8 @@ NoNewPrivileges=yes
 ${_argo_mem_conf}
 LimitNOFILE=65535
 ExecStart=$SINGBOX_FOLDER_PATH/cloudflared tunnel --no-autoupdate --edge-ip-version auto${_argo_ha} run --token "${token}"
+StandardOutput=append:$LOGS_DIR/argo.log
+StandardError=append:$LOGS_DIR/argo.log
 Restart=always
 RestartSec=5s
 
@@ -4707,7 +4746,7 @@ install_argo_service_openrc() {
 respawn_delay=5
 respawn_max=0
 respawn_period=60
-output_log="'"$LOGS_DIR"'/supervise-argo.log"'
+output_log="'"$LOGS_DIR"'/argo.log"'
     else
         _argo_sup_conf='command_background=yes'
     fi
@@ -4747,6 +4786,8 @@ start_argo_no_daemon() {
     local port="$3"
     local _argo_ha="" _mem_kb=""
     mkdir -p "$LOGS_DIR" 2> /dev/null
+    # 三种隧道模式共用 argo.log，启动前只保留一份上一轮日志（cloudflared 静默退出最常见）
+    log_keep_prev "$LOGS_DIR/argo.log"
 
     # 与 systemd/openrc 分支同口径：小内存机器降边缘连接数 + 压 Go 堆上限
     _mem_kb=$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)
@@ -4761,21 +4802,21 @@ start_argo_no_daemon() {
         nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel \
             --edge-ip-version auto${_argo_ha} \
             --config "$SINGBOX_FOLDER_PATH/tunnel.yml" run \
-            > "$LOGS_DIR/argo.log" 2>&1 &
+            >> "$LOGS_DIR/argo.log" 2>&1 &
     elif [ -n "$token" ]; then
         debug_log "【调试】使用 token 模式，nohup 启动 argo"
         nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel \
             --no-autoupdate \
             --edge-ip-version auto${_argo_ha} run \
             --token "$token" \
-            > "$LOGS_DIR/argo.log" 2>&1 &
+            >> "$LOGS_DIR/argo.log" 2>&1 &
     else
         debug_log "【调试】使用 URL 模式，nohup 启动 argo"
         nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel \
             --url "http://localhost:${port}" \
             --edge-ip-version auto \
             --no-autoupdate \
-            > "$LOGS_DIR/argo.log" 2>&1 &
+            >> "$LOGS_DIR/argo.log" 2>&1 &
     fi
 }
 
@@ -6565,7 +6606,13 @@ migrate_logs_dir() {
     [ -d "$SINGBOX_FOLDER_PATH" ] || return 0
     mkdir -p "$LOGS_DIR" 2> /dev/null || return 0
     local f
-    for f in singbox.log argo.log install.log deps_failed.log; do
+    # 清单要把所有落在根目录的历史日志都带上：老版本只有前四个，升级后
+    # stop_reason.log / watchdog.log / supervise-*.log / argo-regen.log 会留在
+    # $SINGBOX_FOLDER_PATH 下，菜单和轮转都只管 $LOGS_DIR，等于永久失联
+    for f in singbox.log argo.log install.log deps_failed.log \
+        stop_reason.log watchdog.log argo-regen.log \
+        supervise-singbox.log supervise-argo.log \
+        singbox.log.1 argo.log.1; do
         if [ -s "$SINGBOX_FOLDER_PATH/$f" ] && [ ! -s "$LOGS_DIR/$f" ]; then
             mv -f "$SINGBOX_FOLDER_PATH/$f" "$LOGS_DIR/$f" 2> /dev/null
         fi
@@ -6616,7 +6663,8 @@ sbrestart() {
         rc-service sing-box restart || { red "❌ sing-box 重启失败（openrc），请查看：$LOGS_DIR/singbox.log"; return 1; }
     else
         pkill -15 -f "$SINGBOX_FOLDER_PATH/sing-box" 2> /dev/null
-        nohup "$SINGBOX_FOLDER_PATH/sing-box" run -c "$_sbj" > /dev/null 2>&1 &
+        log_keep_prev "$LOGS_DIR/singbox.log"
+        nohup "$SINGBOX_FOLDER_PATH/sing-box" run -c "$_sbj" >> "$LOGS_DIR/singbox.log" 2>&1 &
     fi
     return 0
 }
@@ -6661,13 +6709,14 @@ argorestart() {
     # 判断顺序非常重要！
     # ===============================
     pkill -15 -f "$SINGBOX_FOLDER_PATH/cloudflared" 2> /dev/null
+    log_keep_prev "$LOGS_DIR/argo.log"
 
     # 1️⃣ JSON 固定隧道（最高优先级）
     if [ -f "$SINGBOX_FOLDER_PATH/tunnel.yml" ]; then
         nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel \
             --edge-ip-version auto \
             --config "$SINGBOX_FOLDER_PATH/tunnel.yml" run \
-            > /dev/null 2>&1 &
+            >> "$LOGS_DIR/argo.log" 2>&1 &
         return
     fi
 
@@ -6677,7 +6726,7 @@ argorestart() {
             --no-autoupdate \
             --edge-ip-version auto run \
             --token "$(cat "$SINGBOX_FOLDER_PATH/sbargotoken")" \
-            > /dev/null 2>&1 &
+            >> "$LOGS_DIR/argo.log" 2>&1 &
         return
     fi
 
@@ -6688,7 +6737,7 @@ argorestart() {
             --url "http://localhost:$(cat "$SINGBOX_FOLDER_PATH/argoport")" \
             --edge-ip-version auto \
             --no-autoupdate \
-            > "$LOGS_DIR/argo.log" 2>&1 &
+            >> "$LOGS_DIR/argo.log" 2>&1 &
     fi
 }
 
@@ -7054,28 +7103,51 @@ capture_stop_reason() {
     local svc="${1:-sb}" quiet="${2:-}" stop_log="$LOGS_DIR/stop_reason.log"
     mkdir -p "$LOGS_DIR" 2>/dev/null
 
-    local ts reason oom_info log_err
+    local ts reason unit_state oom_info log_err disk_warn _unit _app_log
     ts=$(date '+%Y-%m-%d %H:%M:%S')
 
-    # 1) journalctl 最近日志（含 exit code）
-    reason=""
-    if command -v journalctl > /dev/null 2>&1; then
-        reason=$(journalctl -u "$svc" --no-pager -n 20 --since "10 min ago" 2>/dev/null)
+    # 服务单元名（openrc 下 sb 叫 sing-box，nginx 叫 sb-nginx）
+    case "$svc" in
+        sb) _unit="sb"; [ -e /etc/init.d/sing-box ] && ! has_systemd && _unit="sing-box" ;;
+        argo) _unit="argo" ;;
+        nginx) _unit="$SB_NGINX_SVC" ;;
+        *) _unit="$svc" ;;
+    esac
+
+    # 1) unit 状态硬指标：退出码 / 信号 / 重启次数 / 停止时间——「为什么停」最直接的证据
+    unit_state=""
+    if command -v systemctl > /dev/null 2>&1 && [ -d /run/systemd/system ]; then
+        unit_state=$(systemctl show "$_unit" --no-pager 2>/dev/null \
+            -p ActiveState -p SubState -p Result -p ExecMainStatus -p ExecMainCode \
+            -p NRestarts -p ExecMainExitTimestamp -p InactiveEnterTimestamp \
+            | grep -vE '^[A-Za-z]+=$')
     fi
 
-    # 2) OOM killer
+    # 2) journal：不再限制「10 分钟前」——半夜挂掉、第二天才开菜单也要看得到
+    reason=""
+    if command -v journalctl > /dev/null 2>&1; then
+        reason=$(journalctl -u "$_unit" --no-pager -n 60 2>/dev/null)
+    fi
+
+    # 3) OOM killer
     oom_info=""
     if command -v dmesg > /dev/null 2>&1; then
         oom_info=$(dmesg 2>/dev/null | grep -iE "oom|killed process|out of memory" | tail -5)
     fi
 
-    # 3) sing-box / argo 自身日志最后的 error/fatal 行
+    # 4) 应用日志里真正的错误行。关键词收窄：原来的裸 "fail" 会命中 sing-box 每条
+    #    正常的 connection failed 警告，tail -10 全被噪音占满，真错误反而挤掉。
     log_err=""
-    local _app_log="$LOGS_DIR/singbox.log"
+    _app_log="$LOGS_DIR/singbox.log"
     [ "$svc" = "argo" ] && _app_log="$LOGS_DIR/argo.log"
+    [ "$svc" = "nginx" ] && _app_log="$SB_NGINX_LOGS_DIR/error.log"
     if [ -s "$_app_log" ]; then
-        log_err=$(grep -iE "fatal|error|panic|fail|segfault" "$_app_log" 2>/dev/null | tail -10)
+        log_err=$(grep -aiE 'fatal|panic|segfault|segmentation|out of memory|too many open files|no space left on device|address already in use|\[emerg\]|\[alert\]|\bERR\b|\bERROR\b|"level":"?(error|fatal)' "$_app_log" 2>/dev/null | tail -15)
     fi
+
+    # 5) 磁盘写满会连锁弄死 nginx/cloudflared（日志一天 20M），顺手记一笔
+    disk_warn=""
+    disk_warn=$(df -P / 2>/dev/null | awk 'NR==2 {gsub("%","",$5); if ($5+0 >= 85) print "根分区已用 "$5"%（可用 "$4"KB）→ 日志/缓存写满会拖垮服务"}')
 
     # 5 分钟内已记录过则跳过（避免每次刷新菜单重复写入）
     local _dedup="$LOGS_DIR/.stop_reason_${svc}_ts"
@@ -7087,13 +7159,18 @@ capture_stop_reason() {
         [ "$_diff" -lt 300 ] && return 0
     fi
     date +%s > "$_dedup" 2>/dev/null
-    if [ -n "$reason" ] || [ -n "$oom_info" ] || [ -n "$log_err" ]; then
+    if [ -n "$reason" ] || [ -n "$oom_info" ] || [ -n "$log_err" ] || [ -n "$unit_state" ]; then
         {
             echo "========================================"
-            echo "检测时间: $ts | 服务: $svc"
-            [ -n "$reason" ]   && echo "--- journalctl -u $svc ---" && echo "$reason"
-            [ -n "$oom_info" ] && echo "--- OOM Killer ---"         && echo "$oom_info"
-            [ -n "$log_err" ]  && echo "--- 应用日志 ---"           && echo "$log_err"
+            echo "检测时间: $ts | 服务: $svc (unit: $_unit)"
+            if [ -n "$unit_state" ]; then
+                echo "--- systemctl show $_unit ---"
+                echo "$unit_state"
+            fi
+            [ -n "$disk_warn" ] && echo "--- 磁盘 ---" && echo "$disk_warn"
+            [ -n "$oom_info" ] && echo "--- OOM Killer ---" && echo "$oom_info"
+            [ -n "$reason" ]   && echo "--- journalctl -u $_unit ---" && echo "$reason"
+            [ -n "$log_err" ]  && echo "--- 应用日志 ---" && echo "$log_err"
             echo ""
         } >> "$stop_log" 2>/dev/null
 
@@ -7269,6 +7346,7 @@ menu_status_block() {
         st_nginx="$(green "● 运行中")"
     elif [ -x "$SB_NGINX_BIN" ]; then
         st_nginx="$(red "■ 已停止")"
+        capture_stop_reason nginx quiet 2> /dev/null
     else
         st_nginx="$(yellow "○ 未安装")"
     fi
@@ -9772,55 +9850,309 @@ show_log_file() {
     echo ""
 }
 
+# ---- 日志菜单辅助：问行数再显示（统一入口，避免每项重复 5 行）----
+_log_ask_and_show() { # 文件 标题 提示
+    local _l=100
+    reading "显示最近行数 (默认100): " _l
+    show_log_file "$1" "$2" "$3" "$_l"
+    menu_pause
+}
+
+# systemd journal（systemd 的启停/退出码/reload 记录只在 journal 里）
+journal_log_menu() {
+    local _ch _u _l
+    while true; do
+        clear
+        green "========= [10][9] systemd journal ========="
+        echo ""
+        green "  1) sb              （sing-box）"
+        green "  2) argo            （cloudflared）"
+        green "  3) $SB_NGINX_SVC            （沙箱 nginx）"
+        green "  4) 三个一起看"
+        purple "  0) 返回"
+        reading "请输入选择: " _ch
+        case "$_ch" in
+            0) return ;;
+            1) _u="sb" ;;
+            2) _u="argo" ;;
+            3) _u="$SB_NGINX_SVC" ;;
+            4) _u="" ;;
+            *) yellow "无效选项"; sleep 1; continue ;;
+        esac
+        _l=100
+        reading "显示最近行数 (默认100): " _l
+        echo "$_l" | grep -qE '^[0-9]+$' || _l=100
+        if ! command -v journalctl > /dev/null 2>&1; then
+            yellow "本机没有 journalctl（openrc / 无 systemd 环境），请用上面的日志文件项"
+            menu_pause
+            continue
+        fi
+        echo ""
+        if [ -n "$_u" ]; then
+            green "=== journalctl -u $_u (最近 $_l 行) ==="
+            journalctl -u "$_u" --no-pager -n "$_l" 2>/dev/null \
+                || yellow "暂无记录：journalctl -u $_u"
+        else
+            for _u in sb argo "$SB_NGINX_SVC"; do
+                green "=== journalctl -u $_u (最近 $_l 行) ==="
+                journalctl -u "$_u" --no-pager -n "$_l" 2>/dev/null || yellow "暂无记录：$_u"
+                echo ""
+            done
+        fi
+        echo ""
+        menu_pause
+    done
+}
+
+# 上一轮日志：*.log.prev（脚本重启前保的现场）与轮转出来的 *.log.1
+prev_log_menu() {
+    local _i _f _ch _pick _l
+    local _list="" _n=0
+    while true; do
+        _list=""
+        _n=0
+        clear
+        green "========= [10][11] 上一轮日志 ========="
+        echo ""
+        for _f in "$LOGS_DIR"/*.prev "$LOGS_DIR"/*.log.1 "$SB_NGINX_LOGS_DIR"/*.log.1; do
+            [ -f "$_f" ] || continue
+            _n=$((_n + 1))
+            _list="$_list$_n|$_f
+"
+            printf "  %2d) %-46s %s\n" "$_n" "$_f" "$(du -h "$_f" 2>/dev/null | awk '{print $1}')"
+        done
+        echo ""
+        if [ "$_n" -eq 0 ]; then
+            yellow "暂无上一轮日志（还没发生过重启/轮转，或已被清理）"
+            menu_pause
+            return
+        fi
+        purple "   0) 返回"
+        reading "请输入选择: " _ch
+        case "$_ch" in
+            0) return ;;
+            '' | *[!0-9]*) yellow "无效选项"; sleep 1; continue ;;
+        esac
+        [ "$_ch" -ge 1 ] 2>/dev/null && [ "$_ch" -le "$_n" ] || { yellow "无效选项"; sleep 1; continue; }
+        _pick=$(printf '%s' "$_list" | awk -F'|' -v n="$((_ch))" '$1==n {print $2}')
+        [ -n "$_pick" ] || { yellow "读取失败"; sleep 1; continue; }
+        _l=200
+        reading "显示最近行数 (默认200): " _l
+        show_log_file "$_pick" "上一轮日志：$(basename "$_pick")" "文件为空：$_pick" "$_l"
+        menu_pause
+    done
+}
+
+# 实时跟踪：查偶发掉线时挂着看
+follow_log_menu() {
+    local _ch _log
+    while true; do
+        clear
+        green "========= [10][12] 实时跟踪 (tail -f) ========="
+        echo ""
+        yellow "  按 Ctrl-C 结束跟踪，回到本菜单"
+        echo ""
+        green "  1) Sing-box 运行日志"
+        green "  2) Argo (cloudflared) 日志"
+        green "  3) Nginx 错误日志"
+        green "  4) Nginx 访问日志"
+        green "  5) 看门狗日志"
+        purple "  0) 返回"
+        reading "请输入选择: " _ch
+        case "$_ch" in
+            0) return ;;
+            1) _log="$LOGS_DIR/singbox.log" ;;
+            2) _log="$LOGS_DIR/argo.log" ;;
+            3) _log="$SB_NGINX_LOGS_DIR/error.log" ;;
+            4) _log="$SB_NGINX_LOGS_DIR/access.log" ;;
+            5) _log="$LOGS_DIR/watchdog.log" ;;
+            *) yellow "无效选项"; sleep 1; continue ;;
+        esac
+        if [ ! -f "$_log" ]; then
+            yellow "暂无该日志：$_log"
+            menu_pause
+            continue
+        fi
+        echo ""
+        green "=== 跟踪 $_log（Ctrl-C 结束）==="
+        # 子 shell 里忽略 INT：Ctrl-C 只结束 tail，脚本本身继续跑回菜单
+        ( trap '' INT; tail -n 30 -f "$_log" 2>/dev/null )
+        echo ""
+        green "=== 已结束跟踪 ==="
+        menu_pause
+    done
+}
+
+# 一键诊断包：把排查「异常/停止」要看的东西收进一个文件，方便直接发出来
+gen_diag_bundle() {
+    local _ts _out _u _lf
+    _ts=$(date '+%Y%m%d-%H%M%S')
+    mkdir -p "$LOGS_DIR" 2>/dev/null
+    _out="$LOGS_DIR/diag-$_ts.txt"
+    {
+        echo "================= sb 诊断包 ================="
+        echo "时间     : $(date '+%F %T %Z')"
+        echo "脚本版本 : $VERSION ($SB_SCRIPT_NAME)"
+        echo "主机     : $(uname -srm) / $(hostname 2>/dev/null)"
+        echo "目录     : $SINGBOX_FOLDER_PATH"
+        echo ""
+
+        echo "--- 服务状态（退出码 / 重启次数 / 启停时间）---"
+        if command -v systemctl > /dev/null 2>&1 && [ -d /run/systemd/system ]; then
+            for _u in sb argo "$SB_NGINX_SVC"; do
+                [ -f "/etc/systemd/system/${_u}.service" ] || continue
+                echo "[$_u] is-active=$(systemctl is-active "$_u" 2>/dev/null) is-enabled=$(systemctl is-enabled "$_u" 2>/dev/null) is-failed=$(systemctl is-failed "$_u" 2>/dev/null)"
+                systemctl show "$_u" --no-pager 2>/dev/null \
+                    -p Result -p ExecMainStatus -p ExecMainCode -p NRestarts \
+                    -p ActiveEnterTimestamp -p InactiveEnterTimestamp -p ExecMainExitTimestamp
+            done
+        elif command -v rc-service > /dev/null 2>&1; then
+            for _u in sing-box argo "$SB_NGINX_SVC"; do
+                [ -e "/etc/init.d/$_u" ] || continue
+                echo "[$_u] $(rc-service "$_u" status 2>&1 | tr '\n' ' ')"
+            done
+        else
+            echo "无 systemd / openrc（nohup 模式）"
+        fi
+        echo ""
+
+        echo "--- 进程 ---"
+        pgrep -af "sing-box|cloudflared|nginx" 2>/dev/null || echo "（未发现相关进程）"
+        echo ""
+
+        echo "--- 端口 ---"
+        (ss -lntup 2>/dev/null || netstat -lntup 2>/dev/null) | grep -iE "sing-box|cloudflared|nginx" || echo "（未取到，可能无 ss/netstat）"
+        echo ""
+
+        echo "--- 资源 ---"
+        free -m 2>/dev/null | head -3
+        df -h / 2>/dev/null
+        echo ""
+
+        echo "--- OOM / 内核异常 ---"
+        dmesg 2>/dev/null | grep -iE "oom|killed process|out of memory|segfault" | tail -20 \
+            || echo "（无记录 / 无权限读取 dmesg）"
+        echo ""
+
+        echo "--- 日志文件清单 ---"
+        ls -lh "$LOGS_DIR" 2>/dev/null
+        ls -lh "$SB_NGINX_LOGS_DIR" 2>/dev/null
+        echo ""
+
+        for _lf in singbox.log argo.log stop_reason.log watchdog.log argo-regen.log supervise-singbox.log supervise-argo.log; do
+            echo "--- tail 60: logs/$_lf ---"
+            if [ -s "$LOGS_DIR/$_lf" ]; then
+                tail -n 60 "$LOGS_DIR/$_lf" | sed "s/$(printf '\033')\[[0-9;?]*[A-Za-z]//g"
+            else
+                echo "（空 / 不存在）"
+            fi
+            echo ""
+        done
+        for _lf in error.log access.log; do
+            echo "--- tail 40: nginx/logs/$_lf ---"
+            if [ -s "$SB_NGINX_LOGS_DIR/$_lf" ]; then
+                tail -n 40 "$SB_NGINX_LOGS_DIR/$_lf"
+            else
+                echo "（空 / 不存在）"
+            fi
+            echo ""
+        done
+
+        if command -v journalctl > /dev/null 2>&1; then
+            for _u in sb argo "$SB_NGINX_SVC"; do
+                echo "--- journalctl -u $_u -n 60 ---"
+                journalctl -u "$_u" --no-pager -n 60 2>/dev/null || echo "（无记录）"
+                echo ""
+            done
+        fi
+        echo "================= 诊断包结束 ================="
+    } > "$_out" 2>&1
+    echo ""
+    green "✅ 诊断包已生成：$_out"
+    echo "   大小：$(wc -c < "$_out" 2>/dev/null) 字节"
+    yellow "   提示：内含节点端口/域名等信息，转发前请自行过目"
+}
+
 interactive_log_menu() {
-    local _ch _log _title _hint _lines
+    local _ch
     while true; do
         clear
         green "========= [10] 查看日志 ========="
         echo ""
-        green "  1) Sing-box 日志"
-        green "  2) Argo (cloudflared) 日志"
-        green "  3) Nginx 日志"
-        green "  4) 脚本安装日志 (最近一次安装)"
-        green "  5) 服务停止原因日志 (排查崩溃用)"
-        purple "  0) 返回主菜单"
+        yellow "  【运行日志】"
+        green "   1) Sing-box 运行日志          logs/singbox.log"
+        green "   2) Argo (cloudflared) 日志    logs/argo.log"
+        green "   3) Nginx 错误日志             nginx/logs/error.log"
+        green "   4) Nginx 访问日志             nginx/logs/access.log"
+        echo ""
+        yellow "  【守护 / 排障日志】"
+        green "   5) 服务停止原因日志           logs/stop_reason.log"
+        green "   6) 看门狗日志（拉起记录）     logs/watchdog.log"
+        green "   7) Argo 重生成/上报日志       logs/argo-regen.log"
+        green "   8) 守护进程日志               logs/supervise-*.log"
+        echo ""
+        yellow "  【系统日志】"
+        green "   9) systemd journal (sb/argo/sb-nginx)"
+        echo ""
+        yellow "  【其他】"
+        green "  10) 脚本安装日志               logs/install.log（仅最近一次）"
+        green "  11) 上一轮日志                 *.log.prev / *.log.1"
+        green "  12) 实时跟踪                   tail -f"
+        green "  13) 一键诊断包                 logs/diag-时间.txt"
+        purple "   0) 返回主菜单"
         reading "请输入选择: " _ch
         case "$_ch" in
             0) return ;;
             1)
-                _log="$LOGS_DIR/singbox.log"
-                _title="Sing-box 日志"
-                _hint="暂无日志：$_log" ;;
+                _log_ask_and_show "$LOGS_DIR/singbox.log" "Sing-box 日志" "暂无日志：$LOGS_DIR/singbox.log"
+                ;;
             2)
-                _log="$LOGS_DIR/argo.log"
-                _title="Argo (cloudflared) 日志"
-                _hint="暂无日志：$_log" ;;
+                _log_ask_and_show "$LOGS_DIR/argo.log" "Argo (cloudflared) 日志" "暂无日志：$LOGS_DIR/argo.log"
+                ;;
             3)
-                _log="$SB_NGINX_DIR/logs/error.log"
-                _title="Nginx 日志（沙箱）"
-                _hint="暂无日志：$_log" ;;
+                _log_ask_and_show "$SB_NGINX_LOGS_DIR/error.log" "Nginx 错误日志（沙箱）" "暂无日志：$SB_NGINX_LOGS_DIR/error.log"
+                ;;
             4)
-                # 安装日志：直接显示全文，不问行数
-                _log="$LOGS_DIR/install.log"
-                if [ ! -s "$_log" ]; then
-                    yellow "暂无安装日志：执行 ins/rep 或菜单安装后自动生成"
-                    menu_pause
-                    continue
-                fi
-                green "=== 脚本安装日志（仅保留最近一次安装） ==="
-                cat "$_log"
-                menu_pause
-                continue ;;
+                _log_ask_and_show "$SB_NGINX_LOGS_DIR/access.log" "Nginx 访问日志（沙箱）" "暂无日志：$SB_NGINX_LOGS_DIR/access.log"
+                ;;
             5)
-                _log="$LOGS_DIR/stop_reason.log"
-                _title="服务停止原因日志"
-                _hint="暂无停止记录：服务运行正常时不会产生记录" ;;
-            *) yellow "无效选项"; sleep 1; continue ;;
+                _log_ask_and_show "$LOGS_DIR/stop_reason.log" "服务停止原因日志" "暂无停止记录：服务运行正常时不会产生记录"
+                ;;
+            6)
+                _log_ask_and_show "$LOGS_DIR/watchdog.log" "看门狗日志" "暂无记录：看门狗只在拉起服务/换 argo 域名时写日志"
+                ;;
+            7)
+                _log_ask_and_show "$LOGS_DIR/argo-regen.log" "Argo 重生成/上报日志" "暂无记录：临时隧道换域名时才会有内容"
+                ;;
+            8)
+                clear
+                green "========= [10][8] 守护进程日志 ========="
+                echo ""
+                green "  1) supervise-singbox.log （openrc + supervise-daemon）"
+                green "  2) supervise-argo.log"
+                purple "  0) 返回"
+                reading "请输入选择: " _ch
+                case "$_ch" in
+                    1) _log_ask_and_show "$LOGS_DIR/supervise-singbox.log" "sing-box 守护进程日志" "暂无：本机可能用 systemd 或 nohup 模式，没有这个文件" ;;
+                    2) _log_ask_and_show "$LOGS_DIR/supervise-argo.log" "argo 守护进程日志" "暂无：本机可能用 systemd 或 nohup 模式，没有这个文件" ;;
+                    *) : ;;
+                esac
+                ;;
+            9) journal_log_menu ;;
+            10)
+                if [ -s "$LOGS_DIR/install.log" ]; then
+                    green "=== 脚本安装日志（仅保留最近一次安装） ==="
+                    cat "$LOGS_DIR/install.log"
+                else
+                    yellow "暂无安装日志：执行 ins/rep 或菜单安装后自动生成"
+                fi
+                menu_pause
+                ;;
+            11) prev_log_menu ;;
+            12) follow_log_menu ;;
+            13) gen_diag_bundle; menu_pause ;;
+            *) yellow "无效选项"; sleep 1 ;;
         esac
-        _lines=100
-        reading "显示最近行数 (默认100): " _lines
-        show_log_file "$_log" "$_title" "$_hint" "$_lines"
-        menu_pause
     done
 }
 
@@ -11669,6 +12001,53 @@ main() {
     # 查看服务停止原因日志
     if [ "$_cmd" = "log_stop" ]; then
         show_log_file "$LOGS_DIR/stop_reason.log" "服务停止原因日志" "暂无停止记录：服务运行正常时不会产生记录" "${2:-100}"
+        exit
+    fi
+
+    # 查看 Nginx 错误日志（sb log_nginx 200）
+    if [ "$_cmd" = "log_nginx" ]; then
+        show_log_file "$SB_NGINX_LOGS_DIR/error.log" "Nginx 错误日志（沙箱）" "暂无日志：$SB_NGINX_LOGS_DIR/error.log" "${2:-100}"
+        exit
+    fi
+
+    # 查看 Nginx 访问日志
+    if [ "$_cmd" = "log_nginx_acc" ]; then
+        show_log_file "$SB_NGINX_LOGS_DIR/access.log" "Nginx 访问日志（沙箱）" "暂无日志：$SB_NGINX_LOGS_DIR/access.log" "${2:-50}"
+        exit
+    fi
+
+    # 查看看门狗日志（谁在什么时候拉起过服务 / 换过 argo 域名）
+    if [ "$_cmd" = "log_watchdog" ]; then
+        show_log_file "$LOGS_DIR/watchdog.log" "看门狗日志" "暂无记录：看门狗只在拉起服务/换 argo 域名时写日志" "${2:-100}"
+        exit
+    fi
+
+    # 查看 Argo 重生成/上报日志
+    if [ "$_cmd" = "log_regen" ]; then
+        show_log_file "$LOGS_DIR/argo-regen.log" "Argo 重生成/上报日志" "暂无记录：临时隧道换域名时才会有内容" "${2:-100}"
+        exit
+    fi
+
+    # 查看 systemd journal（sb log_journal [sb|argo|nginx] [行数]）
+    if [ "$_cmd" = "log_journal" ]; then
+        local _junit="sb"
+        case "${2:-sb}" in
+            argo) _junit="argo" ;;
+            nginx) _junit="$SB_NGINX_SVC" ;;
+            sb | sing-box) _junit="sb" ;;
+        esac
+        if ! command -v journalctl > /dev/null 2>&1; then
+            yellow "本机没有 journalctl（openrc / 无 systemd 环境），请用 sb logs 里的文件项"
+            exit
+        fi
+        green "=== journalctl -u $_junit (最近 ${3:-100} 行) ==="
+        journalctl -u "$_junit" --no-pager -n "${3:-100}" 2>/dev/null || yellow "暂无记录：journalctl -u $_junit"
+        exit
+    fi
+
+    # 一键诊断包
+    if [ "$_cmd" = "diag" ]; then
+        gen_diag_bundle
         exit
     fi
 
