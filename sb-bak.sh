@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.61(2026-11-05)"
+VERSION="3.2.63(2026-11-05)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -1200,12 +1200,66 @@ rss_kb_by_comm() {
     return 0
 }
 
+# 列出「属于本项目 prefix」的 nginx master（只认 exe 精确路径 + cmdline 里的 master process）
+#   ⚠️ 不用 pgrep -f：busybox 下语义不同；只看 exe 可以保证宝塔/系统 nginx 绝不会被误认
+_sb_nginx_master_pids() {
+    local pid exe cmd
+    for pid in /proc/[0-9]*; do
+        pid="${pid#/proc/}"
+        [ -n "$pid" ] || continue
+        exe="$(readlink "/proc/${pid}/exe" 2> /dev/null)" || continue
+        case "$exe" in
+            "$SB_NGINX_BIN"*) ;;
+            *) continue ;;
+        esac
+        cmd="$(tr '\0' ' ' < "/proc/${pid}/cmdline" 2> /dev/null)"
+        case "$cmd" in
+            *"master process"*) printf '%s\n' "$pid" ;;
+        esac
+    done
+}
+
+# 服务管理器 stop 之后再收一次尾。
+#   历史现场：openrc 的 supervise-daemon 起第二份 nginx 时因端口被占失败退出，
+#   openrc 按自己 init 脚本里的 pidfile= 把「共用的那个 pid 文件」删了；
+#   而真正在服务的那份进程没被碰 → 面板从此永久显示「已停止」。
+#   这里只认 exe 精确路径，确认还活着就 TERM→KILL，并清掉 pid 文件。
+_sb_nginx_reap_stray() {
+    local pid hit
+    hit="$(_sb_nginx_master_pids | tr '\n' ' ')"
+    if [ -z "${hit// /}" ]; then
+        rm -f "$SB_NGINX_PID" 2> /dev/null
+        return 0
+    fi
+    debug_log "【调试】nginx_stop：服务已停，仍发现残留 master（pid:${hit}），清理"
+    for pid in $hit; do
+        kill -TERM "$pid" 2> /dev/null || true
+    done
+    sleep 1
+    for pid in $hit; do
+        kill -0 "$pid" 2> /dev/null && kill -KILL "$pid" 2> /dev/null || true
+    done
+    rm -f "$SB_NGINX_PID" 2> /dev/null
+    return 0
+}
+
 sb_nginx_running() {
     local pid
-    [ -s "$SB_NGINX_PID" ] || return 1
-    pid="$(cat "$SB_NGINX_PID" 2> /dev/null | tr -d ' \r\n')"
+    if [ -s "$SB_NGINX_PID" ]; then
+        pid="$(cat "$SB_NGINX_PID" 2> /dev/null | tr -d ' \r\n')"
+        if [ -n "$pid" ] && _pid_is_sb_nginx "$pid"; then
+            return 0
+        fi
+    fi
+    # 兜底：pid 文件可能被删（服务管理器失败退出时会删、旧版清理也会删），
+    # 但进程其实还活着在正常服务。按 exe 认领并把 pid 写回，面板/watchdog/停止流程
+    # 立刻恢复对得上号，不至于「明明在跑却显示已停止」。
+    pid="$(_sb_nginx_master_pids | head -n1)"
     [ -n "$pid" ] || return 1
-    _pid_is_sb_nginx "$pid"
+    printf '%s\n' "$pid" > "$SB_NGINX_PID" 2> /dev/null
+    chmod 600 "$SB_NGINX_PID" 2> /dev/null
+    debug_log "【调试】sb_nginx_running：pid 文件缺失/失效，已按 exe 认领存活实例（pid=${pid}）"
+    return 0
 }
 
 # 写沙箱主配置（daemon/pid/include 全在 prefix 内，不依赖 mime.types）
@@ -1482,6 +1536,7 @@ _sb_nginx_stop_raw() {
             case "$(systemctl is-active "$SB_NGINX_SVC" 2> /dev/null)" in
                 active | activating | reloading)
                     systemctl stop "$SB_NGINX_SVC" > /dev/null 2>&1
+                    _sb_nginx_reap_stray
                     return 0
                     ;;
             esac
@@ -1490,6 +1545,7 @@ _sb_nginx_stop_raw() {
         if command -v rc-service > /dev/null 2>&1; then
             if rc-service "$SB_NGINX_SVC" status > /dev/null 2>&1; then
                 rc-service "$SB_NGINX_SVC" stop > /dev/null 2>&1
+                _sb_nginx_reap_stray
                 return 0
             fi
             return 1
@@ -3544,22 +3600,39 @@ _ngx_managed=0
 [ -f "/etc/init.d/$SB_NGINX_SVC" ] && _ngx_managed=1
 
 # 未托管时（老安装 / 无 systemd 环境）：靠 pid 文件判断
-#   没有 pid 文件 = 用户主动停的（nginx_stop 会删），不碰
 #   有 pid 文件但进程没了 = 被 OOM 杀了，重启
-if [ "\$_ngx_managed" = "0" ] && [ -x "\$NGINX_BIN" ] && [ -f "\$NGINX_PID" ]; then
-    _pid=\$(cat "\$NGINX_PID" 2>/dev/null | tr -d ' \r\n')
-    _alive=0
-    if [ -n "\$_pid" ] && kill -0 "\$_pid" 2>/dev/null; then
-        _alive=1
-        # pid 可能被系统复用给别的进程，确认一下确实是 nginx
-        if [ -r "/proc/\$_pid/comm" ] && ! grep -qi nginx "/proc/\$_pid/comm" 2>/dev/null; then
-            _alive=0
+#   没有 pid 文件 = 先按 exe 认领一遍再下结论：openrc 的 supervise-daemon 起失败退出时
+#     会把共享的 pid 文件删掉，而真正在服务的进程还活着；认领到就写回 pid，别让状态永久错位。
+if [ "\$_ngx_managed" = "0" ] && [ -x "\$NGINX_BIN" ]; then
+    if [ ! -f "\$NGINX_PID" ]; then
+        _m=""
+        for _q in /proc/[0-9]*; do
+            _q=\${_q#/proc/}
+            [ -n "\$_q" ] || continue
+            _e=\$(readlink "/proc/\$_q/exe" 2>/dev/null) || continue
+            case "\$_e" in "\$NGINX_BIN"*) ;; *) continue ;; esac
+            _c=\$(tr '\0' ' ' < "/proc/\$_q/cmdline" 2>/dev/null)
+            case "\$_c" in *"master process"*) _m=\$_q; break ;; esac
+        done
+        if [ -n "\$_m" ]; then
+            printf '%s\n' "\$_m" > "\$NGINX_PID" 2>/dev/null && chmod 600 "\$NGINX_PID" 2>/dev/null
+            say "nginx: pid 文件丢失但进程在跑（pid=\$_m），已写回 pid 文件"
         fi
-    fi
-    if [ "\$_alive" = "0" ]; then
-        rm -f "\$NGINX_PID" 2>/dev/null
-        "\$NGINX_BIN" -p "\$NGINX_DIR/" -c conf/nginx.conf >/dev/null 2>&1
-        say "nginx: pid 文件存在但进程已消失，已重新启动"
+    else
+        _pid=\$(cat "\$NGINX_PID" 2>/dev/null | tr -d ' \r\n')
+        _alive=0
+        if [ -n "\$_pid" ] && kill -0 "\$_pid" 2>/dev/null; then
+            _alive=1
+            # pid 可能被系统复用给别的进程，确认一下确实是 nginx
+            if [ -r "/proc/\$_pid/comm" ] && ! grep -qi nginx "/proc/\$_pid/comm" 2>/dev/null; then
+                _alive=0
+            fi
+        fi
+        if [ "\$_alive" = "0" ]; then
+            rm -f "\$NGINX_PID" 2>/dev/null
+            "\$NGINX_BIN" -p "\$NGINX_DIR/" -c conf/nginx.conf >/dev/null 2>&1
+            say "nginx: pid 文件存在但进程已消失，已重新启动"
+        fi
     fi
 fi
 
@@ -4340,6 +4413,9 @@ nginx_stop() {
         fi
     fi
     rm -f "$SB_NGINX_PID" 2> /dev/null
+    # 最后再兜一遍：pid 文件可能早就对不上真实进程（服务管理器删过/换过），
+    # 只要还有本项目的 master 活着就说明没停干净，直接收掉，避免「说已停止其实还在跑」。
+    _sb_nginx_reap_stray
     debug_log "【调试】nginx_stop：沙箱 Nginx 服务已停止"
     return 0
 }
@@ -4893,6 +4969,63 @@ format_ip_for_log() {
     fi
 }
 
+# =========================
+# 地址可用性判断：节点链接里只能放「公网可入站」的地址
+#   反面教材：IPv6-only 机器 + WARP 提供 IPv4，出口是 104.28.x.x（Cloudflare）——
+#   拿它当节点地址，客户端连到的是 CDN 边缘节点，永远连不回来。
+#   CGNAT(100.64/10)、私有段同理。这里全是纯本地计算，不联网。
+# =========================
+# IPv4 是否落在某个 CIDR 里（纯 awk 整数运算，busybox awk 也能跑）
+_ipv4_in_cidr() {
+    local _ip="${1:-}" _cidr="${2:-}"
+    [ -n "$_ip" ] && [ -n "$_cidr" ] || return 1
+    awk -v ip="$_ip" -v cidr="$_cidr" 'BEGIN {
+        n = split(cidr, a, "/"); if (n != 2) exit 1
+        base = a[1]; pref = a[2] + 0
+        if (pref < 0 || pref > 32) exit 1
+        ni = split(ip, i, "."); nb = split(base, b, ".")
+        if (ni != 4 || nb != 4) exit 1
+        ipn = 0; basen = 0
+        for (k = 1; k <= 4; k++) { ipn = ipn * 256 + i[k]; basen = basen * 256 + b[k] }
+        if (pref == 0) exit 0
+        sh = 2 ^ (32 - pref)
+        if (int(ipn / sh) == int(basen / sh)) exit 0
+        exit 1
+    }' 2> /dev/null
+}
+
+# IPv4 是否是「公网可入站」地址：排除私有段 / CGNAT / 保留段 / 已知 CDN 段（WARP 出口多为 Cloudflare）
+_ipv4_is_public() {
+    local _ip="${1:-}" _c
+    printf '%s' "$_ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || return 1
+    for _c in \
+        0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 \
+        172.16.0.0/12 192.0.0.0/24 192.0.2.0/24 192.88.99.0/24 192.168.0.0/16 \
+        198.18.0.0/15 198.51.100.0/24 203.0.113.0/24 224.0.0.0/4 240.0.0.0/4 \
+        103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 104.16.0.0/13 104.24.0.0/14 \
+        104.28.0.0/14 108.162.192.0/18 131.0.72.0/22 141.101.64.0/18 162.158.0.0/15 \
+        172.64.0.0/13 172.68.0.0/16 173.245.48.0/20 188.114.96.0/20 \
+        190.93.240.0/20 197.234.240.0/22 198.41.128.0/17 \
+        151.101.0.0/16 199.232.0.0/16; do
+        _ipv4_in_cidr "$_ip" "$_c" && return 1
+    done
+    return 0
+}
+
+# IPv6 是否是「公网可入站」地址：排除回环 / 链路本地 / ULA / 文档段
+_ipv6_is_global() {
+    local _ip="${1:-}" _l
+    printf '%s' "$_ip" | grep -q ':' || return 1
+    _l="$(printf '%s' "$_ip" | tr 'A-Z' 'a-z')"
+    case "$_l" in
+        :: | ::1) return 1 ;;
+        fe8* | fe9* | fea* | feb*) return 1 ;;
+        fc* | fd*) return 1 ;;
+        2001:db8*) return 1 ;;
+    esac
+    return 0
+}
+
 # 写入服务器 IP（IPv6 自动加 []，根据ipzz参数来决定写入哪一个ip，当有out_ip时，优先写入out_ip）
 write_server_ip() {
     # 1) 读取偏好：优先用传参，其次 ipzz，再其次 ippz（兼容你现在脚本变量名）
@@ -5038,11 +5171,23 @@ EOF
     local _v4s _v6s
     _v4s="$(strip_ip_brackets_all "${v4_local:-}")"
     _v6s="$(strip_ip_brackets_all "${v6_local:-}")"
+    #   注意：只写「公网可入站」的地址。WARP 出口（Cloudflare/CDN 段）、CGNAT、私有段一律不写，
+    #   否则"另一地址族"节点会打出一条永远连不上的死链；旧文件也要清掉，避免覆盖安装后继续用它。
     if is_valid_ip_simple "$_v4s" && ! printf '%s' "$_v4s" | grep -q ':'; then
-        printf '%s\n' "$_v4s" > "$SINGBOX_FOLDER_PATH/ip_v4"
+        if _ipv4_is_public "$_v4s"; then
+            printf '%s\n' "$_v4s" > "$SINGBOX_FOLDER_PATH/ip_v4"
+        else
+            rm -f "$SINGBOX_FOLDER_PATH/ip_v4" 2> /dev/null
+            debug_log "【调试】pick_server_ip_for_install：IPv4 ${_v4s} 非公网可入站（CGNAT/私有/CDN 段），不写入 ip_v4"
+        fi
     fi
     if is_valid_ip_simple "$_v6s" && printf '%s' "$_v6s" | grep -q ':'; then
-        printf '%s\n' "$_v6s" > "$SINGBOX_FOLDER_PATH/ip_v6"
+        if _ipv6_is_global "$_v6s"; then
+            printf '%s\n' "$_v6s" > "$SINGBOX_FOLDER_PATH/ip_v6"
+        else
+            rm -f "$SINGBOX_FOLDER_PATH/ip_v6" 2> /dev/null
+            debug_log "【调试】pick_server_ip_for_install：IPv6 ${_v6s} 非公网地址（回环/链路本地/ULA），不写入 ip_v6"
+        fi
     fi
 
 }
@@ -5965,15 +6110,25 @@ cip() {
 #   - 拿不到两族地址时不补
 # =========================
 alt_family_addr() {
-    local _main="${1:-}" _ip4d _ip6d
+    local _main="${1:-}" _ip4d _ip6d _pick
     [ -n "$(cat "$SINGBOX_FOLDER_PATH/direct_host" 2> /dev/null | tr -d '\r\n')" ] && return 0
     _ip4d="$(cat "$SINGBOX_FOLDER_PATH/ip_v4" 2> /dev/null | tr -d '\r\n')"
     _ip6d="$(cat "$SINGBOX_FOLDER_PATH/ip_v6" 2> /dev/null | tr -d '\r\n')"
     [ -n "$_ip4d" ] && [ -n "$_ip6d" ] || return 0
     case "$(strip_ip_brackets_all "$_main")" in
-        *:*) printf '[%s]' "$_ip4d" ;;
-        *) printf '[%s]' "$_ip6d" ;;
+        *:*) _pick="$_ip4d" ;;
+        *) _pick="$_ip6d" ;;
     esac
+    # 打印前再筛一次（覆盖老安装留下的过期文件）：
+    #   - IPv6 必须是公网地址，返回时加 []
+    #   - IPv4 必须公网可入站（CGNAT/私有/Cloudflare 等 CDN 段直接放弃这条），IPv4 绝不加方括号
+    if printf '%s' "$_pick" | grep -q ':'; then
+        _ipv6_is_global "$_pick" || return 0
+        printf '[%s]' "$_pick"
+    else
+        _ipv4_is_public "$_pick" || return 0
+        printf '%s' "$_pick"
+    fi
 }
 
 # $1=协议(hy2|tuic|vless|anytls) $2=端口 $3=sni
