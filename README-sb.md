@@ -1091,6 +1091,18 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 
 ## 2.7 版本变更信息
 
+v3.2.68 (2026-11-09)
+ > Alpine 机器终于有内核层优化了：安装完成后自动调用 [jyucoeng/alpine-onekey](https://github.com/jyucoeng/alpine-onekey) 的 `alpine-optimize-safe.sh`（apk 源锁当前分支、常用工具、时区、sysctl+BBR、开机重放）。默认带 `--no-ssh`，**不会**改动 sshd。
+
+- 背景：`low_mem_tune()` 只在 systemd 下生效（非 systemd 直接 return），而 `sb.sh` 通篇没有 `sysctl -w` / `/etc/sysctl.d` 写入，所以 Alpine / LXC / OpenVZ 小鸡装完从来拿不到 BBR 和那批内核参数
+- 为什么不把 sysctl 抄进 sb：外链脚本自带版本演进（apk 源锁分支、容器可写键白名单、`/etc/local.d` 开机重放），抄一遍就得分叉维护。sb 只负责**下载→`sh -n` 校验→调用**
+- 新增常量：`ALPINE_OPT_URL`（默认 raw 地址）、`ALPINE_OPT_FILE`（默认 `$SINGBOX_FOLDER_PATH/alpine-optimize-safe.sh`，兼作下载失败时的本地缓存）、`ALPINE_OPT_ARGS`（额外透传参数）、`ALPINE_OPT_ON_INSTALL`（默认 `1`，安装流程里自动跑；设 `0` 关掉只保留手动）
+- 新增函数：`is_alpine()`、`alpine_opt_fetch()`、`alpine_opt_supports()`、`alpine_optimize()`
+- **`--no-ssh` 是硬要求**：外链脚本会 `ensure_kv PasswordAuthentication yes` / `PermitRootLogin yes`，改完重启 sshd。sb 的机器大多是密钥登录，自动放开密码直登属于安全降级 → 默认一律带 `--no-ssh`；取到的脚本若是旧版（不认这个参数）则**中止并提示**，绝不硬塞
+- 新增命令：`sb opt`（执行）、`sb opt dry`（dry-run）、`sb opt upgrade`（额外 `apk upgrade`）、`sb opt ssh`（显式允许改 sshd，慎用）；菜单在 Alpine 上多一项 `[14] Alpine 系统优化`
+- 安装/重装流程：`install_deps` 完成后自动跑一次，失败只告警不阻断（`ALPINE_OPT_ON_INSTALL=0` 可关）
+- 配套改动在 alpine-onekey 侧（同日 v2.1）：新增 `--no-ssh` / `--no-tools` / `--no-tz` / `--sysctl-only`，可任意组合裁剪
+
 v3.2.67 (2026-11-08)
  > 修 openrc 机器上 `argo.log` 永远是 0 字节：cloudflared 的日志走 **stderr**，模板只重定向了 stdout，于是全被丢进 `/dev/null`。现在 `output_log` 与 `error_log` 都指向同一个文件。
 

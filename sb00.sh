@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.67(2026-11-08)"
+VERSION="3.2.68(2026-11-09)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -11,6 +11,7 @@ SB_SCRIPT_NAME="sb00.sh"
 REPO_PATH="jyucoeng/singbox-tools"
 SCRIPT_URL="${SB_SCRIPT_URL:-https://raw.githubusercontent.com/${REPO_PATH}/refs/heads/main/${SB_SCRIPT_NAME}}"
 # ================== 仓库信息 结束 ==================
+
 
 # 若没有 bash 则自动安装
 if [ -z "${BASH_VERSION}" ]; then
@@ -44,6 +45,18 @@ OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志集中于此）
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
+
+# ================== Alpine 系统优化（外链 alpine-onekey） ==================
+# Alpine / OpenVZ / LXC 小鸡的系统层优化（apk 源锁当前分支、常用工具、时区、
+# sysctl + BBR、开机重放 sysctl）统一交给独立仓库 jyucoeng/alpine-onekey 的
+# alpine-optimize-safe.sh 负责；sb 只做「下载 + 语法校验 + 调用」，不再自维护一套 sysctl。
+ALPINE_OPT_URL="${ALPINE_OPT_URL:-https://raw.githubusercontent.com/jyucoeng/alpine-onekey/refs/heads/main/alpine-optimize-safe.sh}"
+ALPINE_OPT_FILE="$SINGBOX_FOLDER_PATH/alpine-optimize-safe.sh"   # 本地缓存副本（下载失败时复用）
+# 额外参数（空格分隔），例如 ALPINE_OPT_ARGS="--no-tools" sb opt
+ALPINE_OPT_ARGS="${ALPINE_OPT_ARGS:-}"
+# 安装 / 覆盖安装流程里是否自动跑一次（1=是，0=只在 sb opt 手动跑）
+ALPINE_OPT_ON_INSTALL="${ALPINE_OPT_ON_INSTALL:-1}"
+# ================== Alpine 系统优化 结束 ==================
 
 # ================== 沙箱 Nginx 配置 ==================
 # ✅ 专用沙箱 nginx：静态二进制 + 独立 prefix，不经包管理器安装，
@@ -3410,6 +3423,105 @@ EOF
     done
     return 0
 }
+
+# ================== Alpine 系统优化（调用 alpine-onekey）==================
+# 设计取舍：
+#   - 不在 sb 里重复实现内核调优：外链脚本更新后 sb 不用跟着发版；
+#   - 默认带 --no-ssh：外链脚本会确保 PasswordAuthentication/PermitRootLogin 为 yes，
+#     而 sb 的机器大量用密钥登录，自动放开密码 + root 直登属于安全降级，必须显式 --ssh 才做；
+#   - 下载失败回退本地缓存，缓存也没有就跳过，绝不阻断安装主流程；
+#   - 外链脚本先 sh -n 校验再执行，避免半截下载被执行。
+is_alpine() { [ -f /etc/alpine-release ]; }
+
+alpine_opt_fetch() {
+    local _url="$ALPINE_OPT_URL" _tmp="$ALPINE_OPT_FILE.tmp"
+    mkdir -p "$SINGBOX_FOLDER_PATH" 2> /dev/null
+    # raw.githubusercontent 有约 5 分钟 CDN 缓存，带时间戳绕开旧副本
+    case "$_url" in
+        *\?*) : ;;
+        *) _url="$_url?ts=$(date +%s)" ;;
+    esac
+    rm -f "$_tmp" 2> /dev/null
+    if command -v curl > /dev/null 2>&1; then
+        (curl -fsSL --connect-timeout 10 -m 120 "$_url" -o "$_tmp" 2> /dev/null) || rm -f "$_tmp"
+    fi
+    if [ ! -s "$_tmp" ] && command -v wget > /dev/null 2>&1; then
+        (wget -qO "$_tmp" --timeout=30 "$_url" 2> /dev/null) || rm -f "$_tmp"
+    fi
+    # sh -n 通过才落盘，避免把截断的脚本缓存下来
+    if [ -s "$_tmp" ] && sh -n "$_tmp" 2> /dev/null; then
+        mv -f "$_tmp" "$ALPINE_OPT_FILE"
+        chmod +x "$ALPINE_OPT_FILE" 2> /dev/null || true
+        return 0
+    fi
+    rm -f "$_tmp" 2> /dev/null
+    return 1
+}
+
+alpine_opt_supports() { grep -qF -- "$1" "$ALPINE_OPT_FILE" 2> /dev/null; }
+
+# 用法：alpine_optimize [run|dry-run] [--ssh] [其它透传参数]
+alpine_optimize() {
+    local _mode="run" _allow_ssh=0 _arg _ver _rc
+
+    for _arg in "$@"; do
+        case "$_arg" in
+            run) _mode="run" ;;
+            dry | dry-run | --dry-run) _mode="dry-run" ;;
+            --ssh) _allow_ssh=1 ;;
+            *) ALPINE_OPT_ARGS="$ALPINE_OPT_ARGS $_arg" ;;
+        esac
+    done
+
+    if ! is_alpine; then
+        yellow "当前不是 Alpine（无 /etc/alpine-release），跳过 Alpine 专属优化"
+        return 0
+    fi
+
+    echo
+    green "🧰 Alpine 系统优化（alpine-onekey / alpine-optimize-safe.sh）"
+    if alpine_opt_fetch; then
+        green "  ✓ 已获取最新脚本"
+    elif [ -s "$ALPINE_OPT_FILE" ]; then
+        yellow "  ! 下载失败，改用本地缓存副本（可能是旧版）"
+    else
+        red "  ✗ 下载 alpine-optimize-safe.sh 失败且无本地缓存，跳过"
+        return 1
+    fi
+
+    _ver=$(sed -n '3p' "$ALPINE_OPT_FILE" 2> /dev/null | tr -d '\r')
+    [ -n "$_ver" ] && debug_log "【调试】外链脚本版本行：$_ver"
+
+    # 环境变量里显式写了 --ssh 也算允许（并从透传参数里摘掉，避免重复传）
+    case " $ALPINE_OPT_ARGS " in
+        *" --ssh "*)
+            _allow_ssh=1
+            ALPINE_OPT_ARGS=$(printf '%s' "$ALPINE_OPT_ARGS" | sed 's/--ssh//g; s/  */ /g; s/^ //; s/ $//')
+            ;;
+    esac
+    if [ "$_allow_ssh" = "1" ]; then
+        yellow "  ⚠️ 已显式允许处理 sshd（会确保 PasswordAuthentication/PermitRootLogin=yes）"
+    elif alpine_opt_supports "--no-ssh"; then
+        ALPINE_OPT_ARGS="$ALPINE_OPT_ARGS --no-ssh"
+    else
+        red "  ✗ 取到的脚本不支持 --no-ssh（旧版），为避免改动 sshd 配置已中止"
+        yellow "    更新 jyucoeng/alpine-onekey 后重试，或手动执行：sh $ALPINE_OPT_FILE"
+        return 1
+    fi
+    [ "$_mode" = "dry-run" ] && ALPINE_OPT_ARGS="$ALPINE_OPT_ARGS --dry-run"
+
+    debug_log "【调试】执行：sh $ALPINE_OPT_FILE$ALPINE_OPT_ARGS"
+    # shellcheck disable=SC2086
+    sh "$ALPINE_OPT_FILE" $ALPINE_OPT_ARGS
+    _rc=$?
+    if [ "$_rc" = "0" ]; then
+        green "  ✓ Alpine 系统优化完成"
+    else
+        yellow "  ! Alpine 系统优化返回码 $_rc（非致命，继续）"
+    fi
+    return "$_rc"
+}
+# ================== Alpine 系统优化函数 结束 ==================
 
 # ================== 日志轮转 ==================
 # sing-box / cloudflared 的日志都是追加写入且没有上限：info 级别下 100M 级的 LXC 小鸡
@@ -6869,6 +6981,12 @@ install_step() {
     }
 
     debug_log "【调试】安装各种乱七八糟的依赖完成"
+
+    # Alpine：交给 alpine-onekey 做系统层优化（apk 源锁分支 / 常用工具 / 时区 / sysctl+BBR）
+    # 只跑不改 sshd 的安全子集；失败只告警不阻断安装。ALPINE_OPT_ON_INSTALL=0 可关闭。
+    if is_alpine && is_true "${ALPINE_OPT_ON_INSTALL:-1}"; then
+        alpine_optimize run || yellow "⚠️ Alpine 系统优化未完成，继续安装（稍后可手动 sb opt）"
+    fi
 
     # ⚠️ SELinux 处理：仅在 SELinux 处于 Enforcing 时才临时禁用它，并明确提示用户（不写入配置文件）
     if command -v getenforce > /dev/null 2>&1 && [ "$(getenforce 2>/dev/null)" = "Enforcing" ]; then
@@ -11895,6 +12013,11 @@ interactive_main() {
         echo ""
         yellow "  【上 报】"
         green "    [13] 上报到 sub-merge (report)"
+        if is_alpine; then
+            echo ""
+            yellow "  【系 统】"
+            green "    [14] Alpine 系统优化 (opt)"
+        fi
         echo ""
         red   "  【危险操作】"
         red   "    [11] 卸载 (del, 保留二进制)"
@@ -11915,6 +12038,7 @@ interactive_main() {
             8) menu_status_block; show_local_ip_info_with_out_ip_hint; menu_pause ;;
             9) interactive_sub_menu ;;
             13) interactive_submerge_menu ;;
+            14) alpine_optimize run; menu_pause ;;
             10) interactive_log_menu ;;
             11)
                 yellow "  将删除：节点配置、uuid、reality 密钥、argo 凭证、上报状态记录"
@@ -12213,10 +12337,29 @@ main() {
         exit
     fi
 
+    # Alpine 系统优化（调用 alpine-onekey 的 alpine-optimize-safe.sh）
+    #   sb opt            立即执行（默认不改 sshd）
+    #   sb opt dry        只打印不修改（dry-run）
+    #   sb opt upgrade    额外执行 apk upgrade
+    #   sb opt ssh        显式允许处理 sshd（会放开密码登录 / root 直登）
+    if [ "$_cmd" = "opt" ] || [ "$_cmd" = "optimize" ] || [ "$_cmd" = "alpine" ]; then
+        case "${2:-}" in
+            "" | run) alpine_optimize run; exit $? ;;
+            dry | dry-run | dryrun) alpine_optimize dry-run; exit $? ;;
+            up | upgrade) alpine_optimize run --upgrade; exit $? ;;
+            ssh) alpine_optimize run --ssh; exit $? ;;
+            *)
+                red "未知参数：sb opt ${2}"
+                yellow "   可用：sb opt | sb opt dry | sb opt upgrade | sb opt ssh"
+                exit 1
+                ;;
+        esac
+    fi
+
     # 无效命令提示
     echo
     red "❌ 无效命令：$1"
-    yellow "可用命令：menu / ins / rep / del / delall / list / sub / report / report status / res / ups / rt / node / sc / sc_off / autostart / autostart_off / nginx_start / nginx_stop / nginx_restart / nginx_status"
+    yellow "可用命令：menu / ins / rep / del / delall / list / sub / report / report status / res / ups / rt / node / opt / sc / sc_off / autostart / autostart_off / nginx_start / nginx_stop / nginx_restart / nginx_status"
     showmode
     exit 1
 
