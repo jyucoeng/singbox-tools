@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.68(2026-11-09)"
+VERSION="3.2.69(2026-11-09)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -2408,6 +2408,69 @@ check_disk_space() {
     return 0
 }
 
+# ================== GitHub 发布资产下载（直链 → API 回落） ==================
+# 背景：releases/download/<tag>/<file> 会 302 跳到 objects.githubusercontent.com，
+# 这条 CDN 链路偶发 504 Gateway Time-out 或返回 HTML 错误页（GitHub 侧问题，与本机网络无关）；
+# 而 REST API 的 /releases/assets/<id> 接口同一时刻往往仍然可用，因此按序回落。
+
+# 判断下载结果是否可用：非空，且不是 HTML/网关错误页
+dl_result_ok() {
+    [ -s "$1" ] || return 1
+    if head -c 256 "$1" 2> /dev/null | grep -qiE '<!DOCTYPE|<html|404: Not Found|504 Gateway|502 Bad Gateway' 2> /dev/null; then
+        return 1
+    fi
+    return 0
+}
+
+# 查某个发布里指定资产的 id（tag 传 latest 表示最新发布）
+gh_asset_id() {
+    local _repo="$1" _tag="$2" _name="$3" _json=""
+    if [ "$_tag" = "latest" ]; then
+        _json="$(curl -fsSL -m 30 -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${_repo}/releases/latest" 2> /dev/null)"
+    else
+        _json="$(curl -fsSL -m 30 -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${_repo}/releases/tags/${_tag}" 2> /dev/null)"
+    fi
+    [ -n "$_json" ] || return 0
+    printf '%s\n' "$_json" | awk -v want="$_name" '
+        /"url": *"https:\/\/api\.github\.com\/repos\/[^"]*\/releases\/assets\/[0-9]+"/ {
+            if (match($0, /assets\/[0-9]+/)) id = substr($0, RSTART + 7, RLENGTH - 7)
+        }
+        index($0, "\"name\": \"" want "\"") { if (id != "") { print id; exit } }
+    '
+}
+
+# 下载 GitHub 发布资产：先直链，失败再走 API asset 接口；成功返回 0
+dl_github_release() {
+    local _repo="$1" _tag="$2" _asset="$3" _dest="$4" _aid=""
+    local _direct="https://github.com/${_repo}/releases/download/${_tag}/${_asset}"
+
+    rm -f "$_dest" 2> /dev/null
+    (curl -fLo "$_dest" -# --connect-timeout 5 --max-time 180 --retry 2 --retry-delay 2 --retry-all-errors "$_direct") \
+        || (wget -qO "$_dest" --tries=2 --timeout=180 --dns-timeout=5 --read-timeout=60 "$_direct" 2> /dev/null)
+    if dl_result_ok "$_dest"; then
+        debug_log "【调试】直链下载成功：$_direct"
+        return 0
+    fi
+
+    _aid="$(gh_asset_id "$_repo" "$_tag" "$_asset")"
+    if [ -n "$_aid" ]; then
+        debug_log "【调试】直链异常，回落 API asset：repo=$_repo tag=$_tag id=$_aid"
+        yellow "  直链下载异常（GitHub CDN 504/错误页），改用 API 接口重试…"
+        rm -f "$_dest" 2> /dev/null
+        curl -fsSL -m 300 --connect-timeout 10 -H 'Accept: application/octet-stream' \
+            -o "$_dest" "https://api.github.com/repos/${_repo}/releases/assets/${_aid}" 2> /dev/null
+        if dl_result_ok "$_dest"; then
+            debug_log "【调试】API asset 下载成功：id=$_aid"
+            return 0
+        fi
+    fi
+    rm -f "$_dest" 2> /dev/null
+    return 1
+}
+# ================== GitHub 发布资产下载 结束 ==================
+
 # download Sing-box
 # 检测已安装版本，需要更新时下载并安装 sing-box 二进制
 update_singbox() {
@@ -2442,8 +2505,18 @@ update_singbox() {
 
     check_disk_space 120 || exit 1
 
-    (curl -Lo "$tmp_archive" -# --connect-timeout 5 --max-time 120 --retry 2 --retry-delay 2 --retry-all-errors "$url") \
-        || (wget -O "$tmp_archive" --tries=2 --timeout=120 --dns-timeout=5 --read-timeout=60 "$url")
+    # 三级回落：本仓库直链 → 本仓库 API asset → 上游 SagerNet 同名资产
+    # （GitHub 的 releases CDN 偶发 504，API 接口通常仍可用；上游是同一份 musl 构建）
+    if ! dl_github_release "jyucoeng/singbox-tools" "v${sb_ver}" "$archive" "$tmp_archive"; then
+        yellow "  本仓库直链与 API 均不可用，回落到上游 SagerNet/sing-box…"
+        if ! dl_github_release "SagerNet/sing-box" "v${sb_ver}" "$archive" "$tmp_archive"; then
+            debug_log "【调试】update_singbox：三级回落全部失败"
+            red "❌ 下载失败：${url}"
+            yellow "  GitHub 发布资产当前不可达（504/错误页），可稍后重试；"
+            yellow "  或手动下载后放到 ${tmp_archive} 再重跑安装"
+            exit 1
+        fi
+    fi
 
     if [ ! -s "$tmp_archive" ]; then
         debug_log "【调试】update_singbox：下载失败：文件为空"
@@ -4658,9 +4731,12 @@ ensure_cloudflared() {
 
     check_disk_space 80 || return 1
 
-    (curl -fLo "$_cf_tmp" -# --connect-timeout 5 --max-time 120 \
-        --retry 2 --retry-delay 2 --retry-all-errors "$url") \
-        || (wget -O "$_cf_tmp" --tries=2 --timeout=60 --dns-timeout=5 --read-timeout=60 "$url")
+    # 直链 → cloudflare/cloudflared 的 API asset → 本仓库 cloudflared 固定版本资产（2025.11.1）
+    if ! dl_github_release "cloudflare/cloudflared" "latest" "cloudflared-linux-$cpu" "$_cf_tmp"; then
+        yellow "  官方直链与 API 均不可用，回落到本仓库固定版本资产…"
+        dl_github_release "jyucoeng/singbox-tools" "cloudflared" "cloudflared-linux-$cpu" "$_cf_tmp" \
+            || debug_log "【调试】ensure_cloudflared：三级回落全部失败"
+    fi
 
     debug_log "【调试】ensure_cloudflared：检查 cloudflared 二进制文件是否下载成功"
     if [ ! -s "$_cf_tmp" ]; then

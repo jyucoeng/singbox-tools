@@ -1091,6 +1091,16 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 
 ## 2.7 版本变更信息
 
+v3.2.69 (2026-11-09)
+ > GitHub 的 `releases/download` 链路偶发 **504 Gateway Time-out**（返回 HTML 错误页），导致 `rep` 卡在下载 sing-box 内核。现在下载改成三级回落：本仓库直链 → 本仓库 **REST API asset 接口** → 上游 `SagerNet/sing-box` 同名资产。cloudflared 同样处理。
+
+- 现象：Alpine 机器跑 `rep`，`update_singbox` 打印 `❌ 下载内容异常（疑似 HTML 错误页）`，而同一 URL 用浏览器/其它机器也可能打不开；重试 3 次全部 `http=504`
+- 根因：`https://github.com/<repo>/releases/download/<tag>/<file>` 会 302 跳到 `objects.githubusercontent.com`，这条 CDN 链路这次持续 504。**同一个资产**走 `https://api.github.com/repos/<repo>/releases/assets/<id>`（带 `Accept: application/octet-stream`）却能 200 拿到完整 22.6 MB —— 说明文件没丢、仓库没问题，只是直链的跳转链路挂了
+- 新增 `dl_result_ok()` / `gh_asset_id()` / `dl_github_release()`：直链失败后自动查 `releases/tags/<tag>`（或 `/releases/latest`）拿 asset id，再走 API 下载；每个候选都做「非空 + 不是 HTML/网关错误页」校验
+- `update_singbox` 三级回落：本仓库直链 → 本仓库 API asset → **上游 SagerNet 同名资产**（本仓库的包本来就是从上游镜像的，`sing-box-<ver>-linux-<arch>[-musl].tar.gz` 命名与内容一致）
+- `ensure_cloudflared` 三级回落：`cloudflare/cloudflared` 的 `latest` 直链 → 其 API asset → 本仓库 `cloudflared` 固定版本资产（2025.11.1）
+- 顺带：失败时的提示补上「可稍后重试 / 手动把文件放到 `/tmp/<archive>` 再重跑」，不再是干巴巴一行 `❌ 下载失败`
+
 v3.2.68 (2026-11-09)
  > Alpine 机器终于有内核层优化了：安装完成后自动调用 [jyucoeng/alpine-onekey](https://github.com/jyucoeng/alpine-onekey) 的 `alpine-optimize-safe.sh`（apk 源锁当前分支、常用工具、时区、sysctl+BBR、开机重放）。默认带 `--no-ssh`，**不会**改动 sshd。
 
