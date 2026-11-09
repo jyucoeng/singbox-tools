@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.70(2026-11-09)"
+VERSION="3.2.71(2026-11-09)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -1497,21 +1497,57 @@ EOF
 
     if command -v rc-service > /dev/null 2>&1; then
         local _init="/etc/init.d/${SB_NGINX_SVC}"
-        if [ -f "$_init" ] && grep -q 'unit-rev: 3' "$_init" 2> /dev/null; then
+        if [ -f "$_init" ] && grep -q 'unit-rev: 4' "$_init" 2> /dev/null; then
             # 同上：init 脚本在，也要确认它真的挂进了 default 运行级
             [ -e "/etc/runlevels/default/$SB_NGINX_SVC" ] \
                 || rc-update add "$SB_NGINX_SVC" default > /dev/null 2>&1
             return 0
         fi
-        # nginx 自己会 fork 到后台（conf 里是 `daemon on;`），所以**不能**挂
-        # supervisor="supervise-daemon"：supervise-daemon 跟踪的是它自己 exec 出来的
-        # 那个进程，而 nginx 父进程 fork 完就退出 → 被判定「崩了」→ 每 10 秒重拉一次，
-        # 每次重拉都撞 Address in use，5 次后放弃，服务显示 stopped，真正的 master
-        # 反而成了「孤儿」。这也是 nginx error.log 里那一堆
-        # `bind() to ... failed (98: Address in use)` 的来源。
-        # 沿用 Alpine 官方 main/nginx 的做法：只给 command + pidfile，由 nginx 自己写
-        # pid 文件，openrc 用 pidfile 判定 start/stop/status（不自动重启，与上游一致）。
+        # nginx 自己会 fork 到后台（conf 里是 `daemon on;`），所以：
+        #   1) **不能**挂 supervisor="supervise-daemon" —— 它跟踪的是自己 exec 出来的
+        #      那个进程，nginx 父进程 fork 完立刻退出 → 被判定「崩了」→ 每 10 秒重拉，
+        #      每次重拉都撞 Address in use，5 次后放弃，服务显示 stopped，真正的 master
+        #      成了「孤儿」。nginx error.log 里那一片 `bind() ... failed (98)` 就是它。
+        #   2) **也不能**只用 openrc 默认的 started()：它认不出这种「命令已退出但
+        #      进程还在」的守护进程，结果 status=stopped / stop=already stopped /
+        #      start=already running 三连，实际 master 一直在跑。
+        # 做法（与 Alpine 官方 main/nginx/nginx.initd 同思路）：pidfile 由 nginx 自己写，
+        # started/start/stop 全部直接用 start-stop-daemon 按 pidfile 判定。
         cat > "$_init" << EOF
+#!/sbin/openrc-run
+# unit-rev: 4
+description="sb nginx service (sandboxed subscribe/argo gateway)"
+command="$SB_NGINX_BIN"
+command_args="-p \"$SB_NGINX_DIR/\" -c conf/nginx.conf"
+pidfile="$SB_NGINX_PID"
+
+started() {
+    start-stop-daemon --test --stop --quiet --pidfile "\$pidfile" --exec "\$command" > /dev/null 2>&1
+}
+
+start() {
+    ebegin "Starting \${RC_SVCNAME}"
+    if started; then
+        eend 0
+        return 0
+    fi
+    eval "set -- \$command_args"
+    "\$command" "\$@"
+    eend \$?
+}
+
+stop() {
+    ebegin "Stopping \${RC_SVCNAME}"
+    start-stop-daemon --stop --retry 10 --pidfile "\$pidfile" --exec "\$command" --remove-pidfile
+    eend \$?
+}
+
+reload() {
+    ebegin "Reloading \${RC_SVCNAME} configuration"
+    start-stop-daemon --signal HUP --pidfile "\$pidfile"
+    eend \$?
+}
+EOF
 #!/sbin/openrc-run
 # unit-rev: 3
 description="sb nginx service (sandboxed subscribe/argo gateway)"

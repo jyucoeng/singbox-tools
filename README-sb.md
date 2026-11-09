@@ -1091,6 +1091,18 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 
 ## 2.7 版本变更信息
 
+v3.2.71 (2026-11-09)
+ > 补齐 3.2.70 的尾巴：openrc 下 `sb-nginx` 的 `status` / `stop` / `start` 仍然认不出 nginx。
+
+- 3.2.70 去掉 `supervise-daemon` 后，openrc 自带的 `started()` 认不出「命令已 fork 退出、进程还在」的守护进程，于是出现三连：
+  - `rc-service sb-nginx status` → `stopped`（实际在跑）
+  - `rc-service sb-nginx stop` → `WARNING: sb-nginx is already stopped`（停不掉真正的 master）
+  - `rc-service sb-nginx start` → `start-stop-daemon: nginx is already running` → `Failed to start`
+  实测 `start-stop-daemon --test --stop --pidfile … --exec …` 返回 0（判定为在跑），说明只有 openrc 的判定逻辑不对
+- 修法：`/etc/init.d/sb-nginx` 里显式覆盖 `started()` / `start()` / `stop()`，全部改用 `start-stop-daemon --pidfile … --exec …` 判定与发信号；`reload()` 同样按 pidfile 发 HUP。`start()` 遇到已在跑直接返回 0（幂等）
+- 模板标记 `unit-rev: 3` → `unit-rev: 4`，老机器下次 `ins`/`rep`/`sb nginx_start` 自动重写
+- Alpine 官方 `main/nginx/nginx.initd` 也是「只给 command + pidfile」的思路，但它的 stop 依赖 openrc 默认 `started()`；我们的脚本里 nginx 是带 `-p` 的独立沙箱实例，故显式覆盖
+
 v3.2.70 (2026-11-09)
  > 修 Alpine(openrc) 下 `sb-nginx` 服务永远显示 `stopped`、nginx error.log 被 `bind() ... failed (98: Address in use)` 刷屏的问题。
 
