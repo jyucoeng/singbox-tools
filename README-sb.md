@@ -1091,6 +1091,16 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 
 ## 2.7 版本变更信息
 
+v3.2.72 (2026-11-09)
+ > openrc `sb-nginx` 第三次修正：`status` 仍报 stopped，且 `stop` 会把 start-stop-daemon 打崩。
+
+- 实测本机 `start-stop-daemon`（openrc 0.62.6）两个坑：
+  - 不支持 `--remove-pidfile` → `unrecognized option` + 打印 usage
+  - `--test --stop --retry 10` 同用会 **Segmentation fault**
+  3.2.71 的 `stop()` 两个都用了，所以 `rc-service sb-nginx restart` 输出一堆 usage + `Segmentation fault`
+- openrc 的 `rc-service X status` 不走我们覆盖的 `started()`，仍报 `stopped`；`status()` 也要显式覆盖
+- 3.2.72 定稿（`unit-rev: 5`）：`started()` 先看 pidfile 是否存在再 `--test --stop --quiet`；`status()` 直接 `echo "status: started|stopped"` 并返回 0/3；`start()` 已有则幂等返回 0、否则先删残留 pidfile 再 `eval set -- $command_args` 启动；`stop()` 只发 SIGTERM（不带 --retry/--remove-pidfile）+ `rm -f` pidfile；`reload()` 按 pidfile 发 HUP
+
 v3.2.71 (2026-11-09)
  > 补齐 3.2.70 的尾巴：openrc 下 `sb-nginx` 的 `status` / `stop` / `start` 仍然认不出 nginx。
 

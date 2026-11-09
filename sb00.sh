@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.71(2026-11-09)"
+VERSION="3.2.72(2026-11-09)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -1497,7 +1497,7 @@ EOF
 
     if command -v rc-service > /dev/null 2>&1; then
         local _init="/etc/init.d/${SB_NGINX_SVC}"
-        if [ -f "$_init" ] && grep -q 'unit-rev: 4' "$_init" 2> /dev/null; then
+        if [ -f "$_init" ] && grep -q 'unit-rev: 5' "$_init" 2> /dev/null; then
             # 同上：init 脚本在，也要确认它真的挂进了 default 运行级
             [ -e "/etc/runlevels/default/$SB_NGINX_SVC" ] \
                 || rc-update add "$SB_NGINX_SVC" default > /dev/null 2>&1
@@ -1515,14 +1515,28 @@ EOF
         # started/start/stop 全部直接用 start-stop-daemon 按 pidfile 判定。
         cat > "$_init" << EOF
 #!/sbin/openrc-run
-# unit-rev: 4
+# unit-rev: 5
 description="sb nginx service (sandboxed subscribe/argo gateway)"
 command="$SB_NGINX_BIN"
 command_args="-p \"$SB_NGINX_DIR/\" -c conf/nginx.conf"
 pidfile="$SB_NGINX_PID"
 
+# openrc 自带的 status/started 判定不出「命令已 fork 退出、进程还在」的守护进程，
+# 所以这三个都显式覆盖；全部只用 --pidfile + --exec 判定与发信号。
+# 注意：本机的 start-stop-daemon 不支持 --remove-pidfile，且 --test --stop 与
+# --retry 同用会 segfault，这里都不用。
 started() {
+    [ -s "\$pidfile" ] || return 1
     start-stop-daemon --test --stop --quiet --pidfile "\$pidfile" --exec "\$command" > /dev/null 2>&1
+}
+
+status() {
+    if started; then
+        echo "status: started"
+        return 0
+    fi
+    echo "status: stopped"
+    return 3
 }
 
 start() {
@@ -1531,6 +1545,7 @@ start() {
         eend 0
         return 0
     fi
+    rm -f "\$pidfile" 2> /dev/null
     eval "set -- \$command_args"
     "\$command" "\$@"
     eend \$?
@@ -1538,8 +1553,14 @@ start() {
 
 stop() {
     ebegin "Stopping \${RC_SVCNAME}"
-    start-stop-daemon --stop --retry 10 --pidfile "\$pidfile" --exec "\$command" --remove-pidfile
-    eend \$?
+    if ! started; then
+        eend 0
+        return 0
+    fi
+    start-stop-daemon --stop --pidfile "\$pidfile" --exec "\$command" > /dev/null 2>&1
+    local r=\$?
+    rm -f "\$pidfile" 2> /dev/null
+    eend \$r
 }
 
 reload() {
