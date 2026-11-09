@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.75(2026-11-09)"
+VERSION="3.2.76(2026-11-09)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -3673,9 +3673,7 @@ os_tune_menu() {
         green "  🧰 系统优化（jyucoeng/vps-tune，自动识别 Alpine / Debian / Ubuntu）"
         echo ""
         green "    [1] 立即优化（默认，不改 SSH 登录策略）"
-        green "    [2] 演练：只打印计划，不改任何配置"
-        green "    [3] 优化 + 升级系统包（apk / apt）"
-        red   "    [4] 优化并允许修改 SSH 登录策略（会放开密码登录 / root 直登）"
+        green "    [2] 优化 + 升级系统包（apk / apt）"
         echo ""
         purple "    [0] 返回"
         echo ""
@@ -3683,17 +3681,7 @@ os_tune_menu() {
         case "$_ch" in
             0|q|Q) return 0 ;;
             1) os_tune run; menu_pause ;;
-            2) os_tune dry-run; menu_pause ;;
-            3) os_tune run --upgrade; menu_pause ;;
-            4)
-                yellow "  将写入 sshd：PasswordAuthentication yes、PermitRootLogin yes"
-                reading "确认继续? (y/N): " _ch
-                if [ "$_ch" = "y" ] || [ "$_ch" = "Y" ]; then
-                    os_tune run --ssh
-                else
-                    yellow "  已取消"
-                fi
-                menu_pause ;;
+            2) os_tune run --upgrade; menu_pause ;;
             *) yellow "无效选项"; sleep 1 ;;
         esac
     done
@@ -12520,9 +12508,8 @@ main() {
 
     # 系统优化（调用 jyucoeng/vps-tune，按系统自动选后端）
     #   sb opt            立即执行（默认不改 sshd）
-    #   sb opt dry        只打印不修改（dry-run）
-    #   sb opt upgrade    额外执行包升级（apk / apt）
-    #   sb opt ssh        显式允许处理 sshd（会放开密码登录 / root 直登）
+    #   sb opt upgrade    优化 + 升级系统包（apk / apt）
+    #   sb opt menu       打开子菜单（等价主菜单 [14]）
     if [ "$_cmd" = "opt" ] || [ "$_cmd" = "optimize" ] || [ "$_cmd" = "alpine" ]; then
         case "${2:-}" in
             "" | run) os_tune run; exit $? ;;
@@ -12532,7 +12519,7 @@ main() {
             ssh) os_tune run --ssh; exit $? ;;
             *)
                 red "未知参数：sb opt ${2}"
-                yellow "   可用：sb opt | sb opt menu | sb opt dry | sb opt upgrade | sb opt ssh"
+                yellow "   可用：sb opt | sb opt upgrade | sb opt menu"
                 exit 1
                 ;;
         esac
