@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.74(2026-11-09)"
+VERSION="3.2.75(2026-11-09)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -3661,6 +3661,44 @@ os_tune() {
     fi
     return "$_rc"
 }
+# 系统优化子菜单（主菜单 [14] / sb opt menu）
+os_tune_menu() {
+    local _ch
+    if ! is_tunable_os; then
+        yellow "当前系统不在 vps-tune 支持范围（Alpine / Debian / Ubuntu）"
+        return 1
+    fi
+    while true; do
+        echo ""
+        green "  🧰 系统优化（jyucoeng/vps-tune，自动识别 Alpine / Debian / Ubuntu）"
+        echo ""
+        green "    [1] 立即优化（默认，不改 SSH 登录策略）"
+        green "    [2] 演练：只打印计划，不改任何配置"
+        green "    [3] 优化 + 升级系统包（apk / apt）"
+        red   "    [4] 优化并允许修改 SSH 登录策略（会放开密码登录 / root 直登）"
+        echo ""
+        purple "    [0] 返回"
+        echo ""
+        reading "  请输入选项: " _ch
+        case "$_ch" in
+            0|q|Q) return 0 ;;
+            1) os_tune run; menu_pause ;;
+            2) os_tune dry-run; menu_pause ;;
+            3) os_tune run --upgrade; menu_pause ;;
+            4)
+                yellow "  将写入 sshd：PasswordAuthentication yes、PermitRootLogin yes"
+                reading "确认继续? (y/N): " _ch
+                if [ "$_ch" = "y" ] || [ "$_ch" = "Y" ]; then
+                    os_tune run --ssh
+                else
+                    yellow "  已取消"
+                fi
+                menu_pause ;;
+            *) yellow "无效选项"; sleep 1 ;;
+        esac
+    done
+}
+
 # ================== 系统优化函数 结束 ==================
 
 # ================== 日志轮转 ==================
@@ -12181,7 +12219,7 @@ interactive_main() {
             8) menu_status_block; show_local_ip_info_with_out_ip_hint; menu_pause ;;
             9) interactive_sub_menu ;;
             13) interactive_submerge_menu ;;
-            14) os_tune run; menu_pause ;;
+            14) os_tune_menu ;;
             10) interactive_log_menu ;;
             11)
                 yellow "  将删除：节点配置、uuid、reality 密钥、argo 凭证、上报状态记录"
@@ -12488,12 +12526,13 @@ main() {
     if [ "$_cmd" = "opt" ] || [ "$_cmd" = "optimize" ] || [ "$_cmd" = "alpine" ]; then
         case "${2:-}" in
             "" | run) os_tune run; exit $? ;;
+            menu | ui) os_tune_menu; exit $? ;;
             dry | dry-run | dryrun) os_tune dry-run; exit $? ;;
             up | upgrade) os_tune run --upgrade; exit $? ;;
             ssh) os_tune run --ssh; exit $? ;;
             *)
                 red "未知参数：sb opt ${2}"
-                yellow "   可用：sb opt | sb opt dry | sb opt upgrade | sb opt ssh"
+                yellow "   可用：sb opt | sb opt menu | sb opt dry | sb opt upgrade | sb opt ssh"
                 exit 1
                 ;;
         esac

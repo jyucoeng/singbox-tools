@@ -941,6 +941,11 @@ sb rstatus         同 sb report status
 sb del             卸载（保留二进制）
 sb delall          卸载全部并清理
 sb ups             更新 sing-box 内核
+sb opt             系统优化（按系统自动选 Alpine/Debian/Ubuntu 后端，默认不改 SSH）
+sb opt menu        打开系统优化子菜单（等价主菜单 [14]）
+sb opt dry         演练：只打印计划，不改任何配置
+sb opt upgrade     优化 + 升级系统包（apk / apt）
+sb opt ssh         优化并允许修改 sshd（放开密码登录 / root 直登，慎用）
 sb sc              创建/刷新本快捷命令
 sb sc_off          删除本快捷命令
 sb autostart       开启开机自启
@@ -1090,6 +1095,15 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 - **失败提示**：401 凭证错、400 机器名/内容不合规、413 超过 512KB、连不上域名，都会给对应的中文提示
 
 ## 2.7 版本变更信息
+
+v3.2.75 (2026-11-09)
+ > 系统优化从「一行直达命令」补成「有子菜单」：主菜单 [14] 进去可选 立即优化 / 演练 / 优化+升级包 / 允许改 SSH。
+
+- 新增 `os_tune_menu()`：主菜单 `[14] 系统优化 (opt)` 不再直接开跑，而是进子菜单（1 立即优化、2 演练、3 优化+升级、4 优化并改 SSH，0 返回）
+- 新增快捷指令 `sb opt menu`（等价主菜单 [14]）；原有 `sb opt` / `sb opt dry` / `sb opt upgrade` / `sb opt ssh` 行为完全不变
+- 选 4（改 SSH）前多一道 `y/N` 确认，避免误放密码登录
+- 非 Alpine/Debian/Ubuntu 系统进入子菜单时直接提示不在支持范围
+- 同步：`singbox-tools-interface` 的「sb 快捷指令速查」表补上这 5 条
 
 v3.2.74 (2026-11-09)
  > 修 3.2.73 的下载顺序：raw 直链的 CDN 会长期留旧副本，`?ts=` 也压不住，导致「下到的是旧版 vps-tune」。
