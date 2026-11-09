@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.73(2026-11-09)"
+VERSION="3.2.74(2026-11-09)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -3583,10 +3583,11 @@ os_tune_fetch() {
     esac
     rm -f "$_tmp" 2> /dev/null
     if command -v curl > /dev/null 2>&1; then
-        (curl -fsSL --connect-timeout 10 -m 120 "$_url" -o "$_tmp" 2> /dev/null) || rm -f "$_tmp"
-        # raw.githubusercontent 偶发 504，换 GitHub API 再试一次
+        # API 优先：raw 的 CDN 会长期留旧副本（?ts= 也压不住），旧文件语法合法会被误判成下载成功
+        (curl -fsSL --connect-timeout 10 -m 120 -H "Accept: application/vnd.github.raw" "$_api" -o "$_tmp" 2> /dev/null) || rm -f "$_tmp"
+        # API 限流 / 失败时回落 raw 直链
         if [ ! -s "$_tmp" ]; then
-            (curl -fsSL --connect-timeout 10 -m 120 -H "Accept: application/vnd.github.raw" "$_api" -o "$_tmp" 2> /dev/null) || rm -f "$_tmp"
+            (curl -fsSL --connect-timeout 10 -m 120 "$_url" -o "$_tmp" 2> /dev/null) || rm -f "$_tmp"
         fi
     fi
     if [ ! -s "$_tmp" ] && command -v wget > /dev/null 2>&1; then

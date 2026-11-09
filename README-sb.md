@@ -1091,6 +1091,13 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 
 ## 2.7 版本变更信息
 
+v3.2.74 (2026-11-09)
+ > 修 3.2.73 的下载顺序：raw 直链的 CDN 会长期留旧副本，`?ts=` 也压不住，导致「下到的是旧版 vps-tune」。
+
+- 实测：`https://raw.githubusercontent.com/jyucoeng/vps-tune/main/vps-tune.sh?ts=…` 在 Debian 12 上拿到的仍是 v1.0.0（md5 不符），而文件语法合法，`bash -n` 校验一样通过 → 被当成「下载成功」，静默用旧逻辑跑
+- 修法：`os_tune_fetch()` 改成 **GitHub API `contents` 优先**（`Accept: application/vnd.github.raw`，不吃这层 CDN 缓存），API 失败（限流 / 403）再回落 raw 直链；仍是 `grep vps-tune` + `bash -n` 双重校验后才落盘
+- 同步：`vps-tune` 自身的后端下载（`tune-alpine.sh` / `tune-debian.sh`）也改成 API 优先（vps-tune v1.0.2），并修掉下载进度写 stdout 污染 `$(resolve_backend)` 的 bug（v1.0.3）
+
 v3.2.73 (2026-11-09)
  > 系统优化从「只管 Alpine」扩到「按系统自动选」：外链换成新仓库 jyucoeng/vps-tune，Debian / Ubuntu 也自动吃上 sysctl / BBR / journald / limits 调优。
 
