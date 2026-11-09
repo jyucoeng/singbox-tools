@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.69(2026-11-09)"
+VERSION="3.2.70(2026-11-09)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -1497,31 +1497,33 @@ EOF
 
     if command -v rc-service > /dev/null 2>&1; then
         local _init="/etc/init.d/${SB_NGINX_SVC}"
-        if [ -f "$_init" ] && grep -q 'unit-rev: 2' "$_init" 2> /dev/null; then
+        if [ -f "$_init" ] && grep -q 'unit-rev: 3' "$_init" 2> /dev/null; then
             # 同上：init 脚本在，也要确认它真的挂进了 default 运行级
             [ -e "/etc/runlevels/default/$SB_NGINX_SVC" ] \
                 || rc-update add "$SB_NGINX_SVC" default > /dev/null 2>&1
             return 0
         fi
-        local _sup
-        if command -v supervise-daemon > /dev/null 2>&1; then
-            _sup='supervisor="supervise-daemon"
-respawn_delay=10
-respawn_max=5
-respawn_period=300
-output_log="'"$SB_NGINX_DIR"'/logs/nginx-supervise.log"
-error_log="'"$SB_NGINX_DIR"'/logs/nginx-supervise.log"'
-        else
-            _sup='command_background=yes'
-        fi
+        # nginx 自己会 fork 到后台（conf 里是 `daemon on;`），所以**不能**挂
+        # supervisor="supervise-daemon"：supervise-daemon 跟踪的是它自己 exec 出来的
+        # 那个进程，而 nginx 父进程 fork 完就退出 → 被判定「崩了」→ 每 10 秒重拉一次，
+        # 每次重拉都撞 Address in use，5 次后放弃，服务显示 stopped，真正的 master
+        # 反而成了「孤儿」。这也是 nginx error.log 里那一堆
+        # `bind() to ... failed (98: Address in use)` 的来源。
+        # 沿用 Alpine 官方 main/nginx 的做法：只给 command + pidfile，由 nginx 自己写
+        # pid 文件，openrc 用 pidfile 判定 start/stop/status（不自动重启，与上游一致）。
         cat > "$_init" << EOF
 #!/sbin/openrc-run
-# unit-rev: 2
+# unit-rev: 3
 description="sb nginx service (sandboxed subscribe/argo gateway)"
 command="$SB_NGINX_BIN"
 command_args="-p \"$SB_NGINX_DIR/\" -c conf/nginx.conf"
 pidfile="$SB_NGINX_PID"
-${_sup}
+
+reload() {
+    ebegin "Reloading \${RC_SVCNAME} configuration"
+    start-stop-daemon --signal HUP --pidfile "$pidfile"
+    eend \$?
+}
 EOF
         chmod 755 "$_init" 2> /dev/null
         rc-update add "$SB_NGINX_SVC" default > /dev/null 2>&1

@@ -1091,6 +1091,15 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 
 ## 2.7 版本变更信息
 
+v3.2.70 (2026-11-09)
+ > 修 Alpine(openrc) 下 `sb-nginx` 服务永远显示 `stopped`、nginx error.log 被 `bind() ... failed (98: Address in use)` 刷屏的问题。
+
+- 根因：openrc 模板给 nginx 挂了 `supervisor="supervise-daemon"`，但 nginx.conf 里是 `daemon on;`——nginx 父进程 fork 完立刻退出，supervise-daemon 认为它崩了，每 10 秒重拉一次（`respawn_max=5`），每次重拉都撞上已被真 master 占着的 `31007`/`8001`，于是
+  `[emerg] bind() to [::]:31007 failed (98: Address in use)` × 5 之后放弃。最终：`rc-service sb-nginx status` = **stopped**（实际上在跑）、error.log 每次安装多 15 行垃圾、`rc-service sb-nginx stop` 停不掉真正的 master
+- 复现：Alpine 3.22 + 122MB 小机，装着 `sb-nginx` 的机器 `grep -c 'Address in use' /root/doraemon/nginx/logs/error.log` 每次 `ins`/`rep` 都会 +15
+- 修法：openrc 模板改成 Alpine 官方 `main/nginx/nginx.initd` 的做法——**只给 `command` + `pidfile`，不挂 supervisor、不设 command_background**，由 nginx 自己写 pid 文件，openrc 用 pidfile 判定 start/stop/status；顺带补 `reload()`（`start-stop-daemon --signal HUP`）
+- 模板标记 `unit-rev: 2` → `unit-rev: 3`，老机器下次 `ins`/`rep`/`sb nginx_start` 会自动重写 `/etc/init.d/sb-nginx`
+- 取舍：不再有自动重启（上游 nginx 也没有），换来 status 准确、stop 真能停、日志干净；systemd 侧本来就是 `Type=forking` + `PIDFile`，未改动
 v3.2.69 (2026-11-09)
  > GitHub 的 `releases/download` 链路偶发 **504 Gateway Time-out**（返回 HTML 错误页），导致 `rep` 卡在下载 sing-box 内核。现在下载改成三级回落：本仓库直链 → 本仓库 **REST API asset 接口** → 上游 `SagerNet/sing-box` 同名资产。cloudflared 同样处理。
 
