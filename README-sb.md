@@ -1091,6 +1091,17 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 
 ## 2.7 版本变更信息
 
+v3.2.73 (2026-11-09)
+ > 系统优化从「只管 Alpine」扩到「按系统自动选」：外链换成新仓库 jyucoeng/vps-tune，Debian / Ubuntu 也自动吃上 sysctl / BBR / journald / limits 调优。
+
+- 新仓库 [jyucoeng/vps-tune](https://github.com/jyucoeng/vps-tune)（v1.0.0）把两个脚本合成一个入口：`vps-tune.sh` 识别 Alpine / Debian / Ubuntu → `tune-alpine.sh`（原 alpine-onekey v2.1）/ `tune-debian.sh`（原 ovz-tune v1.1.0）
+- sb 侧改名：`ALPINE_OPT_URL/FILE/ARGS/ON_INSTALL` → `OS_TUNE_URL` / `OS_TUNE_API` / `OS_TUNE_FILE`（`$SINGBOX_FOLDER_PATH/vps-tune.sh`）/ `OS_TUNE_ARGS` / `OS_TUNE_ON_INSTALL`；`is_alpine` + `alpine_optimize` → `is_tunable_os` + `os_tune`。旧变量 `ALPINE_OPT_ARGS` / `ALPINE_OPT_ON_INSTALL` 仍作为默认值兼容
+- `is_tunable_os()` 同时认 `/etc/alpine-release` 与 `/etc/os-release` 的 `ID`/`ID_LIKE`（debian / ubuntu 系），非这三家直接跳过
+- 下载仍是两条路：raw 直链（带 `?ts=` 绕 CDN）→ 失败换 GitHub API `contents`（`Accept: application/vnd.github.raw`）→ 再回落本地缓存；落盘前 `grep vps-tune` + `bash -n` 双重校验，HTML 错误页会被拒
+- 语义变化：`os_tune run` 传 `--apply`、`os_tune dry-run` 传 `--dry-run`（vps-tune 默认演练，与旧脚本默认执行相反）；`--ssh` 仍需显式给，默认不碰 sshd
+- 菜单 [14] 与 `sb opt` 文案改成「系统优化」，Debian / Ubuntu 机器上也会出现该项；`sb opt upgrade` 在两个系统上都是包升级（apk / apt）
+- 兼容：`sb opt` / `opt dry` / `opt upgrade` / `opt ssh` 四个子命令行为不变
+
 v3.2.72 (2026-11-09)
  > openrc `sb-nginx` 第三次修正：`status` 仍报 stopped，且 `stop` 会把 start-stop-daemon 打崩。
 
