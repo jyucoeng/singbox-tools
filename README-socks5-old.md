@@ -1,3 +1,5 @@
+**简体中文** | [English](README-socks5-old-en.md)
+
 # socks5 安装脚本
 
 

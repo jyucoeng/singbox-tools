@@ -1,3 +1,5 @@
+**简体中文** | [English](README-sb-en.md)
+
 # sing-box 一键安装脚本
 
 支持两种安装方式：

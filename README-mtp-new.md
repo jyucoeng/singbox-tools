@@ -1,3 +1,5 @@
+**简体中文** | [English](README-mtp-new-en.md)
+
 ## mtp-new.sh 用法
 
 `mtp-new.sh` 是 MTProxy 管理脚本，同时支持**交互式菜单**与**无交互参数安装**两种模式。
