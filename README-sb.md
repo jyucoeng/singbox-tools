@@ -1096,6 +1096,17 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 
 ## 2.7 版本变更信息
 
+v3.2.77 (2026-11-16)
+ > 修 GitHub 内核下载在国内 VPS（IPv4 出口坏或被墙）上必挂的问题：放宽超时、加镜像回落与 IPv6 兜底；并修 `_tag=latest` 拼错成 `/releases/download/latest/` 导致 cloudflared 内核一直 404。
+
+- 原 `dl_github_release()` 把连接超时写死 5 秒，IPv4 不通的机器上表现为 `curl: (28) Connection timed out after 5002 milliseconds` ×3 后整单失败
+- 新增 4 个可调参数：`SB_DL_CONNECT_TIMEOUT`（默认 20，原 5）、`SB_DL_MIRROR_CONNECT_TIMEOUT`（8）、`SB_DL_MAX_TIME`（300，原 180）、`SB_GH_MIRROR`（默认 `ghfast.top,gh-proxy.com,ghproxy.net,gh.llkk.cc,github.moeyy.xyz`，填 `none` 关闭镜像）
+- 新增 `dl_url_candidates()`：直链 + 各镜像前缀 `<mirror>/https://github.com/...` 依次尝试，命中镜像时打印提示
+- 新增 `dl_fetch_url()`：单地址按「默认出口 → `curl -6` 强制 IPv6 → wget」三级试，每级都用 `dl_result_ok` 校验大小与 HTML 错误页
+- 新增 `dl_net_hint()`：全部失败时打印诊断（IPv4 默认路由为空 / `wg show` 收包为 0 / api.github.com 不通）并给出 `SB_GH_MIRROR='https://ghfast.top' bash sb.sh install`
+- 修 `_tag=latest`：直链改为 `https://github.com/<repo>/releases/latest/download/<asset>`；原来统一拼 `/releases/download/latest/<asset>` 是 GitHub 硬 404（实测 404 vs 302），这就是 cloudflared 报「版本不匹配 → 下载 404 → 一直失败」的根因
+- 本仓库 `cloudflared` 兜底资产同步升到 **2026.11.0**（amd64 40283099 / arm64 37668707，sha256 与上游官方 release 一致）
+
 v3.2.76 (2026-11-09)
  > 系统优化子菜单按实际使用收成两项：`[1]` 立即优化（默认，不改 SSH 登录策略）、`[2]` 优化 + 升级系统包（apk / apt），另 `[0]` 返回。演练与「允许改 SSH」从菜单与快捷指令里撤掉（`sb opt dry` / `sb opt ssh` 仍可用，只是不再对外列出）。
 
@@ -1164,7 +1175,7 @@ v3.2.69 (2026-11-09)
 - 根因：`https://github.com/<repo>/releases/download/<tag>/<file>` 会 302 跳到 `objects.githubusercontent.com`，这条 CDN 链路这次持续 504。**同一个资产**走 `https://api.github.com/repos/<repo>/releases/assets/<id>`（带 `Accept: application/octet-stream`）却能 200 拿到完整 22.6 MB —— 说明文件没丢、仓库没问题，只是直链的跳转链路挂了
 - 新增 `dl_result_ok()` / `gh_asset_id()` / `dl_github_release()`：直链失败后自动查 `releases/tags/<tag>`（或 `/releases/latest`）拿 asset id，再走 API 下载；每个候选都做「非空 + 不是 HTML/网关错误页」校验
 - `update_singbox` 三级回落：本仓库直链 → 本仓库 API asset → **上游 SagerNet 同名资产**（本仓库的包本来就是从上游镜像的，`sing-box-<ver>-linux-<arch>[-musl].tar.gz` 命名与内容一致）
-- `ensure_cloudflared` 三级回落：`cloudflare/cloudflared` 的 `latest` 直链 → 其 API asset → 本仓库 `cloudflared` 固定版本资产（2025.11.1）
+- `ensure_cloudflared` 三级回落：`cloudflare/cloudflared` 的 `latest` 直链 → 其 API asset → 本仓库 `cloudflared` 固定版本资产（2026.11.0）
 - 顺带：失败时的提示补上「可稍后重试 / 手动把文件放到 `/tmp/<archive>` 再重跑」，不再是干巴巴一行 `❌ 下载失败`
 
 v3.2.68 (2026-11-09)

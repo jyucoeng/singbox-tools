@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.76(2026-11-09)"
+VERSION="3.2.77(2026-11-16)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -2501,27 +2501,109 @@ gh_asset_id() {
     '
 }
 
-# 下载 GitHub 发布资产：先直链，失败再走 API asset 接口；成功返回 0
-dl_github_release() {
-    local _repo="$1" _tag="$2" _asset="$3" _dest="$4" _aid=""
-    local _direct="https://github.com/${_repo}/releases/download/${_tag}/${_asset}"
+# ============ GitHub 下载加固（超时 / 出口族 / 镜像） ============
+# 说明：原实现用 --connect-timeout 5 直连 github.com，在跨境线路或 IPv4 出口异常的机器上
+# 会在 5 秒内直接打满变 "curl: (28) Connection timed out after 5002 milliseconds"，
+# 三次重试全部落在同一个 5 秒窗口里，看起来像"重试无效"，实质是 TCP 根本连不上。
+# 这里做三件事：放宽握手超时、逐个地址尝试「默认出口 → 强制 IPv6 → wget」、
+# 直链不通时自动套 GitHub 加速镜像（可用 SB_GH_MIRROR 覆盖或设 none 关闭）。
+SB_DL_CONNECT_TIMEOUT="${SB_DL_CONNECT_TIMEOUT:-20}"
+SB_DL_MIRROR_CONNECT_TIMEOUT="${SB_DL_MIRROR_CONNECT_TIMEOUT:-8}"
+SB_DL_MAX_TIME="${SB_DL_MAX_TIME:-300}"
+SB_GH_MIRROR="${SB_GH_MIRROR:-https://ghfast.top,https://gh-proxy.com,https://ghproxy.net,https://gh.llkk.cc,https://github.moeyy.xyz}"
 
+# 生成候选地址：直链在前，镜像前缀在后（镜像写法 <mirror>/https://github.com/...）
+dl_url_candidates() {
+    local _direct="$1" _m
+    printf '%s\n' "$_direct"
+    case "${SB_GH_MIRROR:-}" in
+        "" | none | off | 0 | no) return 0 ;;
+    esac
+    for _m in $(printf '%s' "$SB_GH_MIRROR" | tr ',' ' '); do
+        [ -n "$_m" ] || continue
+        printf '%s/%s\n' "$_m" "$_direct"
+    done
+}
+
+# 单地址下载：默认出口 → 强制 IPv6（IPv4 无出口但 v6 正常）→ wget 兜底
+# 用法：dl_fetch_url <url> <dest> [connect_timeout]
+dl_fetch_url() {
+    local _url="$1" _dest="$2" _ct="${3:-$SB_DL_CONNECT_TIMEOUT}"
     rm -f "$_dest" 2> /dev/null
-    (curl -fLo "$_dest" -# --connect-timeout 5 --max-time 180 --retry 2 --retry-delay 2 --retry-all-errors "$_direct") \
-        || (wget -qO "$_dest" --tries=2 --timeout=180 --dns-timeout=5 --read-timeout=60 "$_direct" 2> /dev/null)
-    if dl_result_ok "$_dest"; then
-        debug_log "【调试】直链下载成功：$_direct"
+    if curl -fLo "$_dest" -# --connect-timeout "$_ct" --max-time "$SB_DL_MAX_TIME" \
+        --retry 2 --retry-delay 2 --retry-all-errors "$_url" 2> /dev/null && dl_result_ok "$_dest"; then
         return 0
     fi
+    rm -f "$_dest" 2> /dev/null
+    if curl -fLo "$_dest" -# -6 --connect-timeout "$_ct" --max-time "$SB_DL_MAX_TIME" \
+        --retry 1 --retry-delay 2 --retry-all-errors "$_url" 2> /dev/null && dl_result_ok "$_dest"; then
+        return 0
+    fi
+    rm -f "$_dest" 2> /dev/null
+    if command -v wget > /dev/null 2>&1 \
+        && wget -qO "$_dest" --tries=2 --timeout="$SB_DL_MAX_TIME" --dns-timeout=10 --read-timeout=60 "$_url" 2> /dev/null \
+        && dl_result_ok "$_dest"; then
+        return 0
+    fi
+    rm -f "$_dest" 2> /dev/null
+    return 1
+}
+
+# 网络自检提示：下载全挂时告诉用户到底哪一层断了（不做任何修改，只打印）
+dl_net_hint() {
+    local _v4def _wg
+    _v4def="$(ip -4 route show default 2> /dev/null | head -1)"
+    if [ -z "$_v4def" ]; then
+        red "  ⚠️ 本机没有 IPv4 默认路由（IPv4 出口不可用）"
+        yellow "     检查：ip -4 route show default  /  ip -4 addr  /  wg show"
+    fi
+    _wg="$(wg show 2> /dev/null | grep -A4 '^interface:' | grep 'transfer:' | head -3)"
+    if printf '%s' "$_wg" | grep -qE '0 B received'; then
+        red "  ⚠️ WireGuard/WARP 隧道只发不收（0 B received）：隧道没有建立，IPv4 实际不通"
+        yellow "     处理：重启隧道（wg-quick down warp && wg-quick up warp）或重新注册 WARP 账号"
+    fi
+    if [ -z "$(curl -s -o /dev/null -4 --connect-timeout 5 -w '%{http_code}' https://api.github.com 2> /dev/null | grep -v '^000$')" ]; then
+        yellow "     提示：本机连 api.github.com 也失败，可改用镜像下载："
+        yellow "       SB_GH_MIRROR='https://ghfast.top' bash sb.sh install"
+        yellow "     或手动把归档放到 /tmp 后再重跑安装（脚本会跳过已存在的文件）"
+    fi
+}
+
+# 下载 GitHub 发布资产：直链 → 镜像 → API asset 接口；任一成功返回 0
+dl_github_release() {
+    local _repo="$1" _tag="$2" _asset="$3" _dest="$4" _aid="" _url _direct _ct
+    # ⚠️ _tag=latest 时地址必须是 /releases/latest/download/<asset>，
+    #    写成 /releases/download/latest/<asset> 会直接 404（GitHub 不把 latest 当 tag 别名），
+    #    这正是 cloudflared 内核「版本不匹配 → 下载 404 → 一直失败」的根因。
+    if [ "$_tag" = "latest" ]; then
+        _direct="https://github.com/${_repo}/releases/latest/download/${_asset}"
+    else
+        _direct="https://github.com/${_repo}/releases/download/${_tag}/${_asset}"
+    fi
+
+    for _url in $(dl_url_candidates "$_direct"); do
+        [ -n "$_url" ] || continue
+        if [ "$_url" = "$_direct" ]; then
+            _ct="$SB_DL_CONNECT_TIMEOUT"
+        else
+            _ct="$SB_DL_MIRROR_CONNECT_TIMEOUT"
+        fi
+        if dl_fetch_url "$_url" "$_dest" "$_ct"; then
+            debug_log "【调试】发布资产下载成功：$_url"
+            case "$_url" in
+                "$_direct") : ;;
+                *) yellow "  ✅ 已通过镜像下载：$(printf '%s' "$_url" | sed 's#\(https://[^/]*\)/.*#\1#')" ;;
+            esac
+            return 0
+        fi
+        debug_log "【调试】发布资产下载失败：$_url"
+    done
 
     _aid="$(gh_asset_id "$_repo" "$_tag" "$_asset")"
     if [ -n "$_aid" ]; then
-        debug_log "【调试】直链异常，回落 API asset：repo=$_repo tag=$_tag id=$_aid"
-        yellow "  直链下载异常（GitHub CDN 504/错误页），改用 API 接口重试…"
-        rm -f "$_dest" 2> /dev/null
-        curl -fsSL -m 300 --connect-timeout 10 -H 'Accept: application/octet-stream' \
-            -o "$_dest" "https://api.github.com/repos/${_repo}/releases/assets/${_aid}" 2> /dev/null
-        if dl_result_ok "$_dest"; then
+        debug_log "【调试】直链/镜像均失败，回落 API asset：repo=$_repo tag=$_tag id=$_aid"
+        yellow "  直链与镜像均不可用，改用 GitHub API 接口重试…"
+        if dl_fetch_url "https://api.github.com/repos/${_repo}/releases/assets/${_aid}" "$_dest"; then
             debug_log "【调试】API asset 下载成功：id=$_aid"
             return 0
         fi
@@ -2529,6 +2611,7 @@ dl_github_release() {
     rm -f "$_dest" 2> /dev/null
     return 1
 }
+
 # ================== GitHub 发布资产下载 结束 ==================
 
 # download Sing-box
@@ -2572,8 +2655,9 @@ update_singbox() {
         if ! dl_github_release "SagerNet/sing-box" "v${sb_ver}" "$archive" "$tmp_archive"; then
             debug_log "【调试】update_singbox：三级回落全部失败"
             red "❌ 下载失败：${url}"
-            yellow "  GitHub 发布资产当前不可达（504/错误页），可稍后重试；"
-            yellow "  或手动下载后放到 ${tmp_archive} 再重跑安装"
+            yellow "  已尝试：直链 → GitHub 加速镜像 → API asset → 上游 SagerNet/sing-box"
+            dl_net_hint
+            yellow "  也可手动下载后放到 ${tmp_archive} 再重跑安装"
             exit 1
         fi
     fi
@@ -4808,7 +4892,7 @@ ensure_cloudflared() {
     yellow "下载 Cloudflared Argo 内核中…"
     local url out
 
-    # 下面为备用链接，里面的版本为2025.11.1，当有latest问题在切回我的仓库去
+    # 下面为备用链接，里面的版本为2026.11.0，当有latest问题在切回我的仓库去
     # url="https://github.com/jyucoeng/singbox-tools/releases/download/cloudflared/cloudflared-linux-$cpu";
 
     url="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$cpu"
@@ -4824,7 +4908,7 @@ ensure_cloudflared() {
 
     check_disk_space 80 || return 1
 
-    # 直链 → cloudflare/cloudflared 的 API asset → 本仓库 cloudflared 固定版本资产（2025.11.1）
+    # 直链 → cloudflare/cloudflared 的 API asset → 本仓库 cloudflared 固定版本资产（2026.11.0）
     if ! dl_github_release "cloudflare/cloudflared" "latest" "cloudflared-linux-$cpu" "$_cf_tmp"; then
         yellow "  官方直链与 API 均不可用，回落到本仓库固定版本资产…"
         dl_github_release "jyucoeng/singbox-tools" "cloudflared" "cloudflared-linux-$cpu" "$_cf_tmp" \
@@ -4874,7 +4958,7 @@ ensure_cloudflared() {
     debug_log "【调试】ensure_cloudflared：设置 cloudflared 二进制文件权限"
     chmod +x "$out" || return 1
 
-    # 校验二进制能运行且版本格式正确（cloudflared version 2025.11.1）
+    # 校验二进制能运行且版本格式正确（cloudflared version 2026.11.0）
     if ! "$out" --version 2> /dev/null | grep -qE '[0-9]{4}\.[0-9]+\.[0-9]+'; then
         red "❌ cloudflared 二进制校验失败（无法运行或版本异常），可能下载损坏"
         rm -f "$out" 2> /dev/null

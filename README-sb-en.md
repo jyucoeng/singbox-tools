@@ -1097,6 +1097,17 @@ Two things that "passing an empty string" cannot express, worth stating separate
 
 ## 2.7 Changelog
 
+v3.2.77 (2026-11-16)
+ > Fixes GitHub kernel downloads always failing on VPS hosts in mainland China (broken or blocked IPv4 egress): relaxed timeouts, mirror fallbacks and an IPv6 fallback; also fixes `_tag=latest` being assembled as `/releases/download/latest/`, which made the cloudflared kernel return a hard 404 forever.
+
+- the old `dl_github_release()` hardcoded a 5 second connect timeout; on hosts without working IPv4 this shows up as `curl: (28) Connection timed out after 5002 milliseconds` ×3 and then a complete failure
+- four tunables added: `SB_DL_CONNECT_TIMEOUT` (default 20, was 5), `SB_DL_MIRROR_CONNECT_TIMEOUT` (8), `SB_DL_MAX_TIME` (300, was 180), `SB_GH_MIRROR` (default `ghfast.top,gh-proxy.com,ghproxy.net,gh.llkk.cc,github.moeyy.xyz`; set to `none` to disable mirrors)
+- add `dl_url_candidates()`: the direct URL plus `<mirror>/https://github.com/...` prefixes are tried in order, printing a notice when a mirror is used
+- add `dl_fetch_url()`: each URL is tried as "default egress → forced IPv6 via `curl -6` → wget", every step validated with `dl_result_ok` (size and HTML error page checks)
+- add `dl_net_hint()`: on total failure it prints diagnostics (empty IPv4 default route / `wg show` receiving 0 bytes / api.github.com unreachable) and suggests `SB_GH_MIRROR='https://ghfast.top' bash sb.sh install`
+- fix `_tag=latest`: the direct URL is now `https://github.com/<repo>/releases/latest/download/<asset>`; the old code always built `/releases/download/latest/<asset>`, which GitHub answers with a hard 404 (measured 404 vs 302) — this is the root cause of cloudflared's "version mismatch → download 404 → permanent failure"
+- the in-repo `cloudflared` fallback assets were bumped to **2026.11.0** (amd64 40283099 / arm64 37668707, sha256 identical to the upstream official release)
+
 v3.2.76 (2026-11-09)
  > The system optimization submenu was collapsed to two items based on actual usage: `[1]` optimize now (default, does not change the SSH login policy), `[2]` optimize + upgrade system packages (apk / apt), plus `[0]` back. The dry run and "allow changing SSH" options were removed from the menu and the shortcut commands (`sb opt dry` / `sb opt ssh` still work, they are just no longer listed publicly).
 
