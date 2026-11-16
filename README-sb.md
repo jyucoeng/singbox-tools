@@ -1096,6 +1096,14 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 
 ## 2.7 版本变更信息
 
+v3.2.78 (2026-11-16)
+ > 系统优化的脚本下载也走镜像：`os_tune_fetch` 原来只有「API → raw 直链」两跳，API 被限流、raw 被墙时就报「✗ 下载失败」直接跳过系统优化。
+
+- `os_tune_fetch()` 改用 `dl_url_candidates` + `dl_fetch_url`：API 失败后按「raw 直链 → 各镜像（gh-proxy.com / ghproxy.net / ghfast.top / gh.llkk.cc / github.moeyy.xyz）」逐个试，任一跳成功即落盘
+- 超时从写死的 10 秒改成跟随 `SB_DL_CONNECT_TIMEOUT`（默认 20）/ `SB_DL_MAX_TIME`（默认 300）
+- `SB_GH_MIRROR` 默认顺序调整：实测可达性把 `gh-proxy.com`、`ghproxy.net` 排前面，`ghfast.top`、`gh.llkk.cc`、`github.moeyy.xyz` 依次垫后（`none` 仍可整体关闭）
+- 配套：`jyucoeng/vps-tune` 升到 1.0.5，`download_backend()` 也加了 jsDelivr 与镜像回落，后端 `tune-debian.sh` / `tune-alpine.sh` 不会再因为 API 限流下一跳 raw 不通而整段失败
+
 v3.2.77 (2026-11-16)
  > 修 GitHub 内核下载在国内 VPS（IPv4 出口坏或被墙）上必挂的问题：放宽超时、加镜像回落与 IPv6 兜底；并修 `_tag=latest` 拼错成 `/releases/download/latest/` 导致 cloudflared 内核一直 404。
 

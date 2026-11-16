@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.77(2026-11-16)"
+VERSION="3.2.78(2026-11-16)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -2510,7 +2510,7 @@ gh_asset_id() {
 SB_DL_CONNECT_TIMEOUT="${SB_DL_CONNECT_TIMEOUT:-20}"
 SB_DL_MIRROR_CONNECT_TIMEOUT="${SB_DL_MIRROR_CONNECT_TIMEOUT:-8}"
 SB_DL_MAX_TIME="${SB_DL_MAX_TIME:-300}"
-SB_GH_MIRROR="${SB_GH_MIRROR:-https://ghfast.top,https://gh-proxy.com,https://ghproxy.net,https://gh.llkk.cc,https://github.moeyy.xyz}"
+SB_GH_MIRROR="${SB_GH_MIRROR:-https://gh-proxy.com,https://ghproxy.net,https://ghfast.top,https://gh.llkk.cc,https://github.moeyy.xyz}"
 
 # 生成候选地址：直链在前，镜像前缀在后（镜像写法 <mirror>/https://github.com/...）
 dl_url_candidates() {
@@ -3658,7 +3658,7 @@ is_tunable_os() {
 }
 
 os_tune_fetch() {
-    local _url="$OS_TUNE_URL" _tmp="$OS_TUNE_FILE.tmp" _api="$OS_TUNE_API"
+    local _url="$OS_TUNE_URL" _tmp="$OS_TUNE_FILE.tmp" _api="$OS_TUNE_API" _u
     mkdir -p "$SINGBOX_FOLDER_PATH" 2> /dev/null
     # raw.githubusercontent 有 CDN 缓存，带时间戳绕开旧副本
     case "$_url" in
@@ -3666,16 +3666,24 @@ os_tune_fetch() {
         *) _url="$_url?ts=$(date +%s)" ;;
     esac
     rm -f "$_tmp" 2> /dev/null
+    # API 优先：raw 的 CDN 会长期留旧副本（?ts= 也压不住），旧文件语法合法会被误判成下载成功
     if command -v curl > /dev/null 2>&1; then
-        # API 优先：raw 的 CDN 会长期留旧副本（?ts= 也压不住），旧文件语法合法会被误判成下载成功
-        (curl -fsSL --connect-timeout 10 -m 120 -H "Accept: application/vnd.github.raw" "$_api" -o "$_tmp" 2> /dev/null) || rm -f "$_tmp"
-        # API 限流 / 失败时回落 raw 直链
-        if [ ! -s "$_tmp" ]; then
-            (curl -fsSL --connect-timeout 10 -m 120 "$_url" -o "$_tmp" 2> /dev/null) || rm -f "$_tmp"
-        fi
+        (curl -fsSL --connect-timeout "$SB_DL_CONNECT_TIMEOUT" -m "$SB_DL_MAX_TIME" \
+            -H "Accept: application/vnd.github.raw" "$_api" -o "$_tmp" 2> /dev/null) || rm -f "$_tmp"
     fi
-    if [ ! -s "$_tmp" ] && command -v wget > /dev/null 2>&1; then
-        (wget -qO "$_tmp" --timeout=30 "$_url" 2> /dev/null) || rm -f "$_tmp"
+    # API 限流 / 403 / 被墙：直链 → 镜像逐个试（国内机器上 raw 常常整个不可达）
+    if [ ! -s "$_tmp" ] || ! grep -q 'vps-tune' "$_tmp" 2> /dev/null || ! bash -n "$_tmp" 2> /dev/null; then
+        rm -f "$_tmp" 2> /dev/null
+        dl_url_candidates "$_url" > "$_tmp.cand" 2> /dev/null
+        while IFS= read -r _u; do
+            [ -n "$_u" ] || continue
+            if dl_fetch_url "$_u" "$_tmp" \
+                && grep -q 'vps-tune' "$_tmp" 2> /dev/null && bash -n "$_tmp" 2> /dev/null; then
+                break
+            fi
+            rm -f "$_tmp" 2> /dev/null
+        done < "$_tmp.cand"
+        rm -f "$_tmp.cand" 2> /dev/null
     fi
     # 先确认是本脚本（防 404 页面），再 bash -n 校验，通过才落盘
     if [ -s "$_tmp" ] && grep -q 'vps-tune' "$_tmp" 2> /dev/null && bash -n "$_tmp" 2> /dev/null; then

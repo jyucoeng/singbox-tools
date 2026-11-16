@@ -1097,6 +1097,14 @@ Two things that "passing an empty string" cannot express, worth stating separate
 
 ## 2.7 Changelog
 
+v3.2.78 (2026-11-16)
+ > The system-optimization script download now also goes through mirrors: `os_tune_fetch` only had "API → raw direct" before, so when the API was rate limited and raw was blocked it reported a download failure and skipped system optimization entirely.
+
+- `os_tune_fetch()` now uses `dl_url_candidates` + `dl_fetch_url`: after the API attempt fails it tries the raw direct URL and then each mirror (gh-proxy.com / ghproxy.net / ghfast.top / gh.llkk.cc / github.moeyy.xyz) in order, and keeps the first one that passes validation
+- timeouts are no longer hardcoded to 10 seconds; they follow `SB_DL_CONNECT_TIMEOUT` (default 20) and `SB_DL_MAX_TIME` (default 300)
+- the default `SB_GH_MIRROR` order was reordered by measured reachability: `gh-proxy.com` and `ghproxy.net` first, then `ghfast.top`, `gh.llkk.cc`, `github.moeyy.xyz` (`none` still disables mirrors entirely)
+- companion: `jyucoeng/vps-tune` went to 1.0.5, whose `download_backend()` gained jsDelivr and mirror fallbacks, so `tune-debian.sh` / `tune-alpine.sh` no longer fail as a whole when the API is rate limited and the next-hop raw URL is unreachable
+
 v3.2.77 (2026-11-16)
  > Fixes GitHub kernel downloads always failing on VPS hosts in mainland China (broken or blocked IPv4 egress): relaxed timeouts, mirror fallbacks and an IPv6 fallback; also fixes `_tag=latest` being assembled as `/releases/download/latest/`, which made the cloudflared kernel return a hard 404 forever.
 
