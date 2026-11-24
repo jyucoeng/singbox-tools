@@ -482,7 +482,7 @@ client --wss--> CDN (ws_cdn_cf_pt, default 443) --http--> server nginx_pt --http
 | `ws_cdn_vmess_sni` etc. | Per-protocol origin domain (host/SNI) | Falls back to the shared `ws_cdn_sni` when empty |
 | `ws_cdn_vmess_cf_pt` etc. | Per-protocol CF optimized port | Falls back to the shared `ws_cdn_cf_pt` when empty |
 | `ws_cdn_cf_host` | Shared CF optimized domain (the fallback **connection address add** for each protocol; can be an optimized IP/domain) | Falls back to the default `saas.sin.fan` when empty |
-| `ws_cdn_sni` | Shared origin domain (the real origin domain; used as the node host/SNI and as the **subscription URL** domain; Cloudflare matches its origin rule on this domain and forwards to your `nginx_pt`) | Falls back to that protocol's `ws_cdn_*_cf_host` when empty (ultimately `saas.sin.fan`; no fallback when the host is an IP) |
+| `ws_cdn_sni` | Shared origin domain (the real origin domain; used as the node host/SNI and as the **subscription URL** domain; Cloudflare matches its origin rule on this domain and forwards to your `nginx_pt`) | When empty it falls back in order to **the `argodomain` of an enabled Argo tunnel (fixed or temporary)** and then to that protocol's `ws_cdn_*_cf_host` (ultimately `saas.sin.fan`; no fallback when the host is an IP) |
 | `ws_cdn_cf_pt` | Shared CDN port (https-family ports only) | 443 |
 
 ### 2、 Full example (shared + per-protocol mix)
@@ -1096,6 +1096,13 @@ Two things that "passing an empty string" cannot express, worth stating separate
 - **Failure notices**: HTTP 401 (bad credential), 400 (bad machine name / content), 413 (over 512 KB), or an unreachable domain each produce their corresponding notice
 
 ## 2.7 Changelog
+
+v3.2.81 (2026-11-24)
+ > Adds one more SNI fallback level for CDN-origin-relay nodes: when no origin domain is configured but Argo is enabled on the box, the Argo tunnel domain is used as host/SNI, so no extra origin DNS record is needed.
+
+- `ws_cdn_eff_sni()` chain is now "per-protocol `ws_cdn_{p}_sni` → shared `ws_cdn_sni` → the `argodomain` of an enabled Argo tunnel → the effective origin address (only when it is a domain)"
+- the `argodomain` comes from `argo_pick_domain()` (temporary tunnel: newest domain from the appended log; fixed tunnel: `argo_domain`) and is validated with `is_valid_domain`, so invalid values never take part in the fallback
+- the "CDN relay enabled" notice matches the new chain: when no origin SNI is configured but a fallback exists, it prints "falling back to node host/SNI: <value>" instead of the misleading "no node will be generated"
 
 v3.2.80 (2026-11-24)
  > Fixes the foreground path: after switching a temporary Argo tunnel, the first run still printed the previous (dead) domain. 3.2.79 only fixed the watchdog, while `wait_and_check_argo()` kept the old logic (`argo.log` is append-only, so `[ -s ]` is always true and the previous tunnel's domain was returned immediately).

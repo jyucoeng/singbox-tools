@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.80(2026-11-24)"
+VERSION="3.2.81(2026-11-24)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -3191,11 +3191,18 @@ ws_cdn_eff_host() {
     printf '%s' "$h"
 }
 
-# 生效 SNI：protocol 专属 > 共享 ws_cdn_sni > 生效 host（仅当 host 是域名时回退；host 是优选 IP 时不回退，避免 SNI=IP）
+# 生效 SNI：protocol 专属 > 共享 ws_cdn_sni > Argo 已启用时的 argodomain > 生效 host
+#   （最后一跳仅当 host 是域名时回退；host 是优选 IP 时不回退，避免 SNI=IP）
 ws_cdn_eff_sni() {
-    local p="$1" s="" _h=""
+    local p="$1" s="" _h="" _ad=""
     s="$(ws_cdn_val "ws_cdn_${p}_sni")"
     [ -n "$s" ] || s="$(ws_cdn_val "ws_cdn_sni")"
+    # 回源域名没配、但本机已有 Argo 隧道：用隧道域名兜底（固定/临时都认），
+    # 这样 ws_cdn 节点不必额外准备回源 DNS，Cloudflare 按该域名回源即可
+    if [ -z "$s" ] && need_argo; then
+        _ad="$(argo_pick_domain)"
+        if [ -n "$_ad" ] && is_valid_domain "$_ad"; then s="$_ad"; fi
+    fi
     if [ -z "$s" ]; then
         _h="$(ws_cdn_eff_host "$p")"
         # IPv4 点分 或 含 ":"（IPv6/带端口）视为 IP，不可当 SNI
@@ -9697,12 +9704,15 @@ edit_ws_cdn_proto_menu() {
                 _pt="$(ws_cdn_val "ws_cdn_${_p}_cf_pt")"
                 [ -n "$_pt" ] || _pt="$(ws_cdn_val ws_cdn_cf_pt)"
                 [ -n "$_pt" ] || _pt="443"
-                # 没配回源 SNI 时不会生成节点链接（回源域名靠 SNI 区分），先提醒
-                _sni="$(ws_cdn_val "ws_cdn_${_p}_sni")"
-                [ -n "$_sni" ] || _sni="$(ws_cdn_val ws_cdn_sni)"
+                # 生效 SNI 走 ws_cdn_eff_sni：专属 > 共享 > Argo 域名 > 回源地址（仅域名）
+                _explicit_sni="$(ws_cdn_val "ws_cdn_${_p}_sni")"
+                [ -n "$_explicit_sni" ] || _explicit_sni="$(ws_cdn_val ws_cdn_sni)"
+                _sni="$(ws_cdn_eff_sni "$_p")"
                 if [ -z "$_sni" ]; then
-                    yellow "  ⚠️ 还没配置回源域名 SNI，该协议暂时不会生成节点链接"
+                    yellow "  ⚠️ 没配回源域名 SNI、也没有可用的 Argo 隧道域名，TLS 无法校验"
                     yellow "     请先到 [4][3] SNI / CDN 设置里配置回源域名（或专属 ws_cdn_${_p}_sni）"
+                elif [ -z "$_explicit_sni" ]; then
+                    purple "  未配置回源 SNI，按兜底使用节点 host/SNI：${_sni}"
                 fi
                 purple "  回源地址: ${_h}:${_pt} → 本机 nginx:${_npt}"
                 yellow "  ⚠️ 记得在 Cloudflare 给 ${_h} 配置回源规则指向本机 ${_npt} 端口（或用同一 A 记录 + 回源端口）"

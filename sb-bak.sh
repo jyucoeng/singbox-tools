@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.79(2026-11-24)"
+VERSION="3.2.80(2026-11-24)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -3814,6 +3814,27 @@ log_keep_prev() {
     cp -p "$_f" "$_f.prev" 2> /dev/null || true
 }
 
+# 取临时 Argo 域名：argo_domain 文件优先，但文件里是 trycloudflare 域名、而 argo.log 最后一条更新时
+# 以日志为准（argo.log 追加有序，最后一条即最近一次启动的隧道）→ 文件被写成旧域名时不会一直挂在死域名上。
+argo_pick_domain() {
+    local _fd="" _ld=""
+    _fd="$(tr -d '\r\n' < "$SINGBOX_FOLDER_PATH/argo_domain" 2> /dev/null)"
+    if [ ! -s "$LOGS_DIR/argo.log" ]; then
+        printf '%s' "$_fd"
+        return 0
+    fi
+    _ld="$(grep -aoE '[a-zA-Z0-9.-]+\.trycloudflare\.com' "$LOGS_DIR/argo.log" 2> /dev/null | tail -n1)"
+    case "$_fd" in
+        *.trycloudflare.com)
+            if [ -n "$_ld" ] && [ "$_ld" != "$_fd" ]; then printf '%s' "$_ld"; return 0; fi
+            ;;
+        "")
+            if [ -n "$_ld" ]; then printf '%s' "$_ld"; return 0; fi
+            ;;
+    esac
+    printf '%s' "$_fd"
+}
+
 # 生成轮转脚本（幂等，每次安装覆盖）
 gen_log_rotate_script() {
     mkdir -p "$LOGS_DIR" 2> /dev/null
@@ -5319,6 +5340,10 @@ start_argo_no_daemon() {
         [ -z "${GOMAXPROCS:-}" ] && export GOMAXPROCS=1
     fi
 
+    # 记录启动前 argo.log 的字节数：wait_and_check_argo 只认这之后新增的域名，
+    # 否则日志里上一次隧道的死域名会被立刻当成"本次已生成"（3.2.79 及更早的 bug）
+    ARGO_LOG_OFF="$(wc -c < "$LOGS_DIR/argo.log" 2> /dev/null || echo 0)"
+
     if [ "$mode" = "json" ]; then
         debug_log "【调试】使用 json 模式，nohup 启动 argo"
         nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel \
@@ -5388,22 +5413,50 @@ wait_and_check_argo() {
         return 1
     fi
 
-    # ✅ 临时 Argo：从 argo.log 提取 *.trycloudflare.com
+    # ✅ 临时 Argo：只认「本次启动之后」新增的日志
+    # 老逻辑用 tail -n1 读整份 argo.log（只追加、几乎不轮转），新隧道的域名要 5~12 秒后才打印，
+    # 于是第一回取到的必然是上一轮的死域名并立刻 return → 节点/订阅全写成旧域名。
+    local _off="${ARGO_LOG_OFF:-}" _cand="" _old="" _t=""
+    _old="$(tail -n1 "$ym_log" 2> /dev/null | tr -d '\r\n')"
+    [ -z "$_off" ] && [ -s "$argo_log" ] && _off="$(wc -c < "$argo_log" 2> /dev/null || echo 0)"
     yellow "⏳ 正在等待临时 Argo 域名生成（trycloudflare.com）..."
     while [ "$i" -lt "$max_wait" ]; do
-        if [ -s "$argo_log" ]; then
-            argodomain="$(grep -aoE '[a-zA-Z0-9.-]+\.trycloudflare\.com' "$argo_log" 2> /dev/null | tail -n1)"
-            if [ -n "$argodomain" ]; then
-                export ARGO_DOMAIN="$argodomain"
-                echo "$ARGO_DOMAIN" > "$ym_log" 2> /dev/null
-                green "✅ 临时 Argo 域名：$ARGO_DOMAIN"
-                return 0
-            fi
-        fi
         sleep 1
         i=$((i + 1))
+        _cand=""
+        if [ -s "$argo_log" ] && [ -n "$_off" ]; then
+            # 只看增量：历史域名不会再被误判成"本次已生成"
+            _cand="$(tail -c +$((_off + 1)) "$argo_log" 2> /dev/null \
+                | grep -aoE '[a-zA-Z0-9.-]+\.trycloudflare\.com' | tail -n1)"
+        fi
+        # 兜底：隧道在函数被调用之前就写好了域名（增量里没有）→ 只接受"与上一轮不同"的值；
+        # 上一轮为空（菜单里刚删过 argo_domain）时不用兜底，否则会把历史死域名重新认回来
+        if [ -z "$_cand" ] && [ -n "$_old" ] && [ -s "$argo_log" ]; then
+            _t="$(grep -aoE '[a-zA-Z0-9.-]+\.trycloudflare\.com' "$argo_log" 2> /dev/null | tail -n1)"
+            if [ -n "$_t" ] && [ "$_t" != "$_old" ]; then _cand="$_t"; fi
+        fi
+        if [ -n "$_cand" ]; then
+            export ARGO_DOMAIN="$_cand"
+            printf '%s\n' "$ARGO_DOMAIN" > "$ym_log" 2> /dev/null
+            chmod 600 "$ym_log" 2> /dev/null || true
+            ARGO_LOG_OFF=""
+            green "✅ 临时 Argo 域名：$ARGO_DOMAIN"
+            return 0
+        fi
     done
 
+    # 超时兜底：增量始终没出现（日志被轮转、cloudflared 极慢）→ 退回日志最后一条，但仍要求与上一轮不同
+    _t="$(grep -aoE '[a-zA-Z0-9.-]+\.trycloudflare\.com' "$argo_log" 2> /dev/null | tail -n1)"
+    if [ -n "$_t" ] && [ "$_t" != "$_old" ]; then
+        export ARGO_DOMAIN="$_t"
+        printf '%s\n' "$ARGO_DOMAIN" > "$ym_log" 2> /dev/null
+        chmod 600 "$ym_log" 2> /dev/null || true
+        ARGO_LOG_OFF=""
+        yellow "⚠ 未等到本次新增域名，退回日志最后一条：$ARGO_DOMAIN"
+        return 0
+    fi
+
+    ARGO_LOG_OFF=""
     red "❌ 未能获取临时 Argo 域名（$argo_log 未生成或 cloudflared 未启动成功）"
     return 1
 }
@@ -6367,9 +6420,9 @@ show_sub_url() {
     if [ -n "$vlvm" ]; then
         need_argo_flag=true
     fi
-    argodomain=$(cat "$SINGBOX_FOLDER_PATH/argo_domain" 2> /dev/null | tr -d '\r\n')
-    if $need_argo_flag && [ -z "$argodomain" ] && [ -s "$LOGS_DIR/argo.log" ]; then
-        argodomain=$(grep -aoE '[a-zA-Z0-9.-]+\.trycloudflare\.com' "$LOGS_DIR/argo.log" 2> /dev/null | tail -n1)
+    argodomain="$(tr -d '\r\n' < "$SINGBOX_FOLDER_PATH/argo_domain" 2> /dev/null)"
+    if $need_argo_flag; then
+        argodomain="$(argo_pick_domain)"
     fi
 
     # 订阅 CDN 域名：共享 ws_cdn_cf_host > vmess 专属 > vless 专属 > trojan 专属（固定顺序取第一个非空）
@@ -6835,10 +6888,9 @@ regenerate_links_and_sub() {
     # 直连块（hy2/tuic/vless-reality/anytls）结束：若设置了 direct_host（对外域名），提醒 Cloudflare DNS 绑定 + 关小黄云（仅直连协议受影响，显示一次）
     print_direct_host_dns_hint
 
-    argodomain=$(cat "$SINGBOX_FOLDER_PATH/argo_domain" 2> /dev/null | tr -d '\r\n')
-
-    if need_argo && [ -z "$argodomain" ] && [ -s "$LOGS_DIR/argo.log" ]; then
-        argodomain=$(grep -aoE '[a-zA-Z0-9.-]+\.trycloudflare\.com' "$LOGS_DIR/argo.log" 2> /dev/null | tail -n1)
+    argodomain=""
+    if need_argo; then
+        argodomain="$(argo_pick_domain)"
     fi
 
     if [ -n "$argodomain" ] && need_argo; then

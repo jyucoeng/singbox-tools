@@ -481,7 +481,7 @@ ws_cdn_cf_pt=443 \
 | `ws_cdn_vmess_sni` 等 | 各协议专属回源域名（host/SNI） | 为空时回退共享 ws_cdn_sni |
 | `ws_cdn_vmess_cf_pt` 等 | 各协议专属 CF 优选端口 | 为空时回退共享 ws_cdn_cf_pt |
 | `ws_cdn_cf_host` | 共享 CF 优选域名（各协议**连接地址 add** 兜底；可填优选 IP/域名） | 为空时回退默认 saas.sin.fan |
-| `ws_cdn_sni` | 共享回源域名（真实回源域名；作为节点 host/SNI 与**订阅地址**域名，Cloudflare 按此域名匹配回源规则转发到你的 nginx_pt） | 为空时回退该协议的 `ws_cdn_*_cf_host`（最终 `saas.sin.fan`；host 是 IP 时不回退） |
+| `ws_cdn_sni` | 共享回源域名（真实回源域名；作为节点 host/SNI 与**订阅地址**域名，Cloudflare 按此域名匹配回源规则转发到你的 nginx_pt） | 为空时依次回退：**Argo 已启用时的 `argodomain`（固定/临时隧道域名）** → 该协议的 `ws_cdn_*_cf_host`（最终 `saas.sin.fan`；host 是 IP 时不回退） |
 | `ws_cdn_cf_pt` | 共享 CDN 端口（仅限 https 系端口） | 443 |
 
 ### 2、 完整示例（共享 + 专属混合）
@@ -1095,6 +1095,13 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 - **失败提示**：401 凭证错、400 机器名/内容不合规、413 超过 512KB、连不上域名，都会给对应的中文提示
 
 ## 2.7 版本变更信息
+
+v3.2.81 (2026-11-24)
+ > 给 CDN 回源节点补一级 SNI 兜底：回源域名没配、而本机已启用 Argo 时，直接用 Argo 隧道域名当 host/SNI，不必再单独准备回源 DNS。
+
+- `ws_cdn_eff_sni()` 的兜底链改为「协议专属 `ws_cdn_{p}_sni` → 共享 `ws_cdn_sni` → Argo 已启用时的 `argodomain` → 生效回源 address（仅当是域名）」
+- `argodomain` 经 `argo_pick_domain()` 取（临时隧道取日志增量后的最新域名，固定隧道取 `argo_domain`），并用 `is_valid_domain` 校验，非法值不参与兜底
+- 开启 CDN 回源时的提示同步调整：没配回源 SNI 但现在会用兜底值时，明确打印「按兜底使用节点 host/SNI：<值>」，不再误报「不会生成节点链接」
 
 v3.2.80 (2026-11-24)
  > 修前台交互路径「切换临时 Argo 隧道后第一回仍显示旧域名」：3.2.79 只修了看门狗，`wait_and_check_argo()` 还是老逻辑（`argo.log` 是追加的，`[ -s ]` 恒真 → 立刻把上一轮的死域名当成本次结果返回）。
