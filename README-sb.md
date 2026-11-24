@@ -2,6 +2,8 @@
 
 # sing-box 一键安装脚本
 
+> 🚀 **懒得手写参数就用在线生成器：[singbox.dingdang.de5.net](https://singbox.dingdang.de5.net/)** —— 勾选协议、填好端口/域名，直接得到可复制的安装命令（源码 [singbox-tools-interface](https://github.com/jyucoeng/singbox-tools-interface)，也可自行部署）。
+
 支持两种安装方式：
 
 - **交互式**：直接运行 `bash sb.sh`（不带参数），按菜单提示完成安装、卸载、查看等操作。

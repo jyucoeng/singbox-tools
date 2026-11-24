@@ -2,8 +2,12 @@
 
 #  sing-box one-click installation script, socks5 one-click script, mtp one-click script
 
-> Command generator UI: **[online version](https://singbox.dingdang.de5.net/)** (source: [singbox-tools-interface](https://github.com/jyucoeng/singbox-tools-interface)); or deploy it yourself and access it with your own domain.
-> Node aggregation project: see [sub_merge](https://github.com/jyucoeng/sub_merge); after deploying it, aggregate the nodes of all your machines with your own domain.
+### 🚀 Generate your install command online: [singbox.dingdang.de5.net](https://singbox.dingdang.de5.net/)
+
+**Ready to use**: tick the protocols you need, fill in ports / domain / SNI, and the page hands you a copy-paste `bash <(curl -Ls ...)` command for your server.
+
+> Source: [singbox-tools-interface](https://github.com/jyucoeng/singbox-tools-interface) (or deploy it yourself on your own domain).
+> Node aggregation: [sub_merge](https://github.com/jyucoeng/sub_merge) — aggregate every machine's nodes under your own domain.
 
 ## Please click through to the corresponding readme
 

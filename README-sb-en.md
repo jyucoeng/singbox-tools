@@ -2,6 +2,8 @@
 
 # sing-box One-Click Installation Script
 
+> 🚀 **Skip the manual flags with the online generator: [singbox.dingdang.de5.net](https://singbox.dingdang.de5.net/)** — tick protocols, fill in ports/domain, and copy the generated install command (source: [singbox-tools-interface](https://github.com/jyucoeng/singbox-tools-interface); self-hosting works too).
+
 Two installation methods are supported:
 
 - **Interactive**: run `bash sb.sh` directly (without arguments) and follow the menu prompts to complete installation, uninstallation, viewing, and other operations.
