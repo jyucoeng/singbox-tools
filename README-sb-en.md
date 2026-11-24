@@ -1097,6 +1097,14 @@ Two things that "passing an empty string" cannot express, worth stating separate
 
 ## 2.7 Changelog
 
+v3.2.86 (2026-11-24)
+ > Corrects the rotation threshold from 3.2.85: 1 MB applies to `argo.log` only; sing-box / supervisor / sandbox nginx logs keep rotating at 10 MB.
+
+- new `LOG_ROTATE_ARGO_KB` (default `1024`) covers `argo.log`; `LOG_ROTATE_SIZE_KB` is back to `10240` for the rest
+- `rotate_dir()` in the generated script now takes directory + threshold + file list, and the script calls it twice (one tier for argo, one for everything else); both `LIMIT_KB` and `ARGO_LIMIT_KB` stay editable
+- the install-time notice now reads "argo.log > 1MB, other logs > 10MB"
+- why not cut everything to 1 MB: those logs are only tailed and read in the menu, never scanned whole, so a smaller cap just loses crash evidence sooner
+
 v3.2.85 (2026-11-24)
  > Log rotation threshold cut from 10 MB to 1 MB, plus protection for "still waiting for the Argo domain when rotation truncates the log".
 

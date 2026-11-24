@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.85(2026-11-24)"
+VERSION="3.2.86(2026-11-24)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -3794,20 +3794,24 @@ os_tune_menu() {
 # 沙箱 nginx 的 access.log 同理：每次订阅拉取、每条 CDN 回源 ws 连接、以及公网扫描
 # 都会追加一行，长期不轮转也能堆到上百 M。
 # 这里生成一个独立的轮转脚本，用每小时一次的 cron 调用：
-#   - 单文件超过 LOG_ROTATE_SIZE_KB（默认 1 MB）就轮转一次，只保留 1 份历史（.1）
-#     为什么是 1 MB 而不是更大/更小：argo.log 每轮只能靠「整文件 grep 最新域名」(argo_pick_domain
-#     与看门狗) 兜底，1 MB 时单次扫描 5~10ms，对 2 分钟一轮的看门狗等于无成本；而降到 256 KB
-#     会让 .1 太容易覆盖，cloudflared 每次启动 + 重试都写日志，256 KB 只够十几次启动就翻篇，
-#     真出问题时要看的上一条隧道记录就没了。1 MB 约等于几百次启动，兼顾扫描成本和现场保留。
+#   - 单文件超过自己的阈值就轮转一次，只保留 1 份历史（.1），两档分开：
+#     * argo.log → LOG_ROTATE_ARGO_KB（默认 1 MB）：只有它需要「整文件 grep 最新域名」
+#       (argo_pick_domain 与看门狗的跟随逻辑)，1 MB 时单次扫描 5~10ms，对 2 分钟一轮的
+#       看门狗等于无成本；没降到 256 KB 是因为 .1 只留一份，cloudflared 每次启动（含重试）
+#       都写日志，256 KB 十几次就翻篇，真出问题时要看的上一轮隧道记录就没了。
+#     * sing-box / 守护进程 / 沙箱 nginx 日志 → LOG_ROTATE_SIZE_KB（默认 10 MB）：这些只被
+#       tail -f 和菜单偶尔看，没有整文件扫描需求，压小只会更早丢掉崩溃现场。
 #   - 用「复制 + 清空」而不是 mv：sing-box 与 nginx 都以 O_APPEND 打开日志文件，mv 之后
 #     进程仍持有旧 inode，新日志会继续写进已改名的文件（看起来像日志丢失）；清空同一个
 #     inode 才能让后续写入落回原文件名（nginx 因此也不需要额外的 USR1 reopen）。
-LOG_ROTATE_SIZE_KB="${LOG_ROTATE_SIZE_KB:-1024}"
+LOG_ROTATE_SIZE_KB="${LOG_ROTATE_SIZE_KB:-10240}"   # sing-box / 守护进程 / nginx 日志
+LOG_ROTATE_ARGO_KB="${LOG_ROTATE_ARGO_KB:-1024}"    # 只给 argo.log（整文件 grep 最新域名）
 LOG_ROTATE_SCRIPT="$SINGBOX_FOLDER_PATH/singbox-log-rotate.sh"
 # 服务看门狗：cron 每 2 分钟跑一次，把「异常退出后没被拉起来」的服务补起来
 WATCHDOG_SCRIPT="$SINGBOX_FOLDER_PATH/singbox-watchdog.sh"
 # 应用 / 守护进程日志（logs/）
-LOG_ROTATE_FILES="singbox.log argo.log supervise-singbox.log supervise-argo.log stop_reason.log watchdog.log argo-regen.log"
+LOG_ROTATE_ARGO_FILES="argo.log"
+LOG_ROTATE_FILES="singbox.log supervise-singbox.log supervise-argo.log stop_reason.log watchdog.log argo-regen.log"
 # 沙箱 nginx 日志（nginx/logs/）
 SB_NGINX_LOGS_DIR="$SB_NGINX_DIR/logs"
 LOG_ROTATE_NGINX_FILES="access.log error.log"
@@ -3853,25 +3857,28 @@ gen_log_rotate_script() {
 #!/bin/sh
 # 由 $SB_SCRIPT_NAME 自动生成：日志轮转（copy-truncate，只保留 1 份历史），请勿手改
 # rotate-ver: $VERSION
-LIMIT_KB=$LOG_ROTATE_SIZE_KB
+LIMIT_KB=$LOG_ROTATE_SIZE_KB        # sing-box / 守护进程 / 沙箱 nginx
+ARGO_LIMIT_KB=$LOG_ROTATE_ARGO_KB    # argo.log 单独一档
 
 rotate_dir() {
     # 全部加 _rd_ 前缀：这个脚本被 . 或 source 时，裸 dir/p/f 会覆盖调用方的同名变量
-    _rd_dir="\$1"; shift
+    _rd_dir="\$1"; _rd_lim="\$2"; shift 2
     for _rd_f in "\$@"; do
         _rd_p="\$_rd_dir/\$_rd_f"
         [ -f "\$_rd_p" ] || continue
         _rd_kb=\$(( \$(wc -c < "\$_rd_p" 2>/dev/null || echo 0) / 1024 ))
-        [ "\$_rd_kb" -ge "\$LIMIT_KB" ] || continue
+        [ "\$_rd_kb" -ge "\$_rd_lim" ] || continue
         cp -p "\$_rd_p" "\$_rd_p.1" 2>/dev/null || continue
         : > "\$_rd_p" 2>/dev/null || true
     done
 }
 
-# sing-box / cloudflared / 守护进程日志
-rotate_dir "$LOGS_DIR" $LOG_ROTATE_FILES
+# argo.log：阈值更小（整文件 grep 最新域名那两处只扫它）
+rotate_dir "$LOGS_DIR" "\$ARGO_LIMIT_KB" $LOG_ROTATE_ARGO_FILES
+# sing-box / 守护进程日志
+rotate_dir "$LOGS_DIR" "\$LIMIT_KB" $LOG_ROTATE_FILES
 # 沙箱 nginx 日志
-rotate_dir "$SB_NGINX_LOGS_DIR" $LOG_ROTATE_NGINX_FILES
+rotate_dir "$SB_NGINX_LOGS_DIR" "\$LIMIT_KB" $LOG_ROTATE_NGINX_FILES
 EOF
     chmod +x "$LOG_ROTATE_SCRIPT" 2> /dev/null || true
 }
@@ -3955,7 +3962,7 @@ install_log_rotate() {
     sed -i '/singbox-log-rotate/d' "$ct_tmp" 2> /dev/null
     echo "17 * * * * $LOG_ROTATE_SCRIPT >/dev/null 2>&1" >> "$ct_tmp"
     if crontab "$ct_tmp" > /dev/null 2>&1; then
-        debug_print green "✅ 已开启日志轮转（每小时检查，单文件超过 $((LOG_ROTATE_SIZE_KB / 1024))MB 时轮转）"
+        debug_print green "✅ 已开启日志轮转（每小时检查：argo.log > $((LOG_ROTATE_ARGO_KB / 1024))MB、其它日志 > $((LOG_ROTATE_SIZE_KB / 1024))MB 时轮转）"
         if ! cron_running; then
             yellow "⚠ crontab 已写入，但 cron 守护进程没在运行；重启后请检查 cron 是否自启"
         fi
@@ -4283,7 +4290,7 @@ maybe_refresh_watchdog() {
     return 0
 }
 
-# 已装机的轮转脚本是安装当时按当时的 LOG_ROTATE_SIZE_KB 硬编码生成的：老装机不重跑 rep
+# 已装机的轮转脚本是安装当时按当时的阈值硬编码生成的：老装机不重跑 rep
 # 就永远停在旧阈值（10MB）。这里每次执行脚本时比对 rotate-ver，不一致就重新生成，
 # 同样带防降级（已装的比本脚本新就不动，避免 CDN 缓存的旧脚本把新阈值刷回去）。
 maybe_refresh_log_rotate() {
