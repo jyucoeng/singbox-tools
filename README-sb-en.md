@@ -1097,6 +1097,13 @@ Two things that "passing an empty string" cannot express, worth stating separate
 
 ## 2.7 Changelog
 
+v3.2.85 (2026-11-24)
+ > Log rotation threshold cut from 10 MB to 1 MB, plus protection for "still waiting for the Argo domain when rotation truncates the log".
+
+- `LOG_ROTATE_SIZE_KB` default `10240` → `1024`: `argo.log` only grows, while `argo_pick_domain()` and the watchdog both grep the whole file for the newest domain; at 1 MB a scan costs 5-10 ms, i.e. nothing for a watchdog that runs every 2 minutes. It is not 256 KB because only one `.1` is kept and cloudflared writes on every start (retries included) - 256 KB would roll over after a dozen starts and the previous tunnel record you actually need would be gone
+- the rotation script now carries a `# rotate-ver:` marker and `maybe_refresh_log_rotate()` (`sb00.sh:4289`, called at `sb00.sh:12644`) regenerates it with the current threshold on existing installs without re-running `rep` (with the same anti-downgrade guard)
+- truncation guard: rotation is copy-truncate (same inode emptied), so once the file is smaller than the recorded offset `tail -c +offset` reads nothing forever -> both the `wait_and_check_argo()` loop and the watchdog follow loop reset the offset to zero when it exceeds the current size. Otherwise a rotation landing exactly on a domain wait would burn a whole attempt (up to 150 s with the 5 retries)
+
 v3.2.84 (2026-11-24)
  > Print the new subscription URL right after a tunnel switch: switching fixed/temporary Argo or disabling Argo all change the subscription domain, yet the old output only said "✅ done", forcing you to run `sb list` again to learn the new URL.
 

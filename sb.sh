@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.84(2026-11-24)"
+VERSION="3.2.85(2026-11-24)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -3794,11 +3794,15 @@ os_tune_menu() {
 # 沙箱 nginx 的 access.log 同理：每次订阅拉取、每条 CDN 回源 ws 连接、以及公网扫描
 # 都会追加一行，长期不轮转也能堆到上百 M。
 # 这里生成一个独立的轮转脚本，用每小时一次的 cron 调用：
-#   - 单文件超过 LOG_ROTATE_SIZE_KB（默认 10 MB）就轮转一次，只保留 1 份历史（.1）
+#   - 单文件超过 LOG_ROTATE_SIZE_KB（默认 1 MB）就轮转一次，只保留 1 份历史（.1）
+#     为什么是 1 MB 而不是更大/更小：argo.log 每轮只能靠「整文件 grep 最新域名」(argo_pick_domain
+#     与看门狗) 兜底，1 MB 时单次扫描 5~10ms，对 2 分钟一轮的看门狗等于无成本；而降到 256 KB
+#     会让 .1 太容易覆盖，cloudflared 每次启动 + 重试都写日志，256 KB 只够十几次启动就翻篇，
+#     真出问题时要看的上一条隧道记录就没了。1 MB 约等于几百次启动，兼顾扫描成本和现场保留。
 #   - 用「复制 + 清空」而不是 mv：sing-box 与 nginx 都以 O_APPEND 打开日志文件，mv 之后
 #     进程仍持有旧 inode，新日志会继续写进已改名的文件（看起来像日志丢失）；清空同一个
 #     inode 才能让后续写入落回原文件名（nginx 因此也不需要额外的 USR1 reopen）。
-LOG_ROTATE_SIZE_KB="${LOG_ROTATE_SIZE_KB:-10240}"
+LOG_ROTATE_SIZE_KB="${LOG_ROTATE_SIZE_KB:-1024}"
 LOG_ROTATE_SCRIPT="$SINGBOX_FOLDER_PATH/singbox-log-rotate.sh"
 # 服务看门狗：cron 每 2 分钟跑一次，把「异常退出后没被拉起来」的服务补起来
 WATCHDOG_SCRIPT="$SINGBOX_FOLDER_PATH/singbox-watchdog.sh"
@@ -3848,6 +3852,7 @@ gen_log_rotate_script() {
     cat > "$LOG_ROTATE_SCRIPT" << EOF
 #!/bin/sh
 # 由 $SB_SCRIPT_NAME 自动生成：日志轮转（copy-truncate，只保留 1 份历史），请勿手改
+# rotate-ver: $VERSION
 LIMIT_KB=$LOG_ROTATE_SIZE_KB
 
 rotate_dir() {
@@ -4142,6 +4147,10 @@ if [ -s "$SINGBOX_FOLDER_PATH/argoport" ] \
             _ai=0
             while [ "\$_ai" -lt 30 ]; do
                 sleep 2
+                # 轮转截断后起点归零，否则 tail -c +N 读空文件永远等不到
+                _asz=\$(wc -c < "$LOGS_DIR/argo.log" 2>/dev/null || echo 0)
+                case "\$_asz" in '' | *[!0-9]*) _asz=0 ;; esac
+                [ "\$_aoff" -gt "\$_asz" ] && _aoff=0
                 tail -c +\$((_aoff + 1)) "$LOGS_DIR/argo.log" 2>/dev/null \
                     | grep -qE 'https://[a-z0-9-]+\.trycloudflare\.com' && break
                 _ai=\$((_ai + 1))
@@ -4273,6 +4282,27 @@ maybe_refresh_watchdog() {
     fi
     return 0
 }
+
+# 已装机的轮转脚本是安装当时按当时的 LOG_ROTATE_SIZE_KB 硬编码生成的：老装机不重跑 rep
+# 就永远停在旧阈值（10MB）。这里每次执行脚本时比对 rotate-ver，不一致就重新生成，
+# 同样带防降级（已装的比本脚本新就不动，避免 CDN 缓存的旧脚本把新阈值刷回去）。
+maybe_refresh_log_rotate() {
+    [ -f "$LOG_ROTATE_SCRIPT" ] || return 0
+    local _have _hd _nd
+    _have="$(grep -m1 '^# rotate-ver: ' "$LOG_ROTATE_SCRIPT" 2> /dev/null | sed 's/^# rotate-ver: //')"
+    [ "$_have" = "$VERSION" ] && return 0
+    _hd="$(printf '%s' "$_have" | sed -n 's/.*(\([0-9-]\{10\}\)).*/\1/p')"
+    _nd="$(printf '%s' "$VERSION" | sed -n 's/.*(\([0-9-]\{10\}\)).*/\1/p')"
+    if [ -n "$_hd" ] && [ -n "$_nd" ] && [ "$(awk -v a="$_hd" -v b="$_nd" 'BEGIN{print (a>b)?1:0}')" = "1" ]; then
+        return 0
+    fi
+    if gen_log_rotate_script; then
+        echo "$(date '+%F %T') 日志轮转脚本已刷新到 ${VERSION}（旧：${_have:-无版本标记}）" >> "$LOGS_DIR/watchdog.log" 2> /dev/null
+    fi
+    return 0
+}
+
+#  Generate Sing-box configuration file
 
 #  Generate Sing-box configuration file
 sbbout() {
@@ -5425,7 +5455,7 @@ wait_and_check_argo() {
     # 于是第一回取到的必然是上一轮的死域名并立刻 return → 节点/订阅全写成旧域名。
     # 3.2.83：cloudflared 偶发启动失败 / 连不上 CF 边缘时默认重试 ARGO_WAIT_TRIES（5）次；
     # 并且不再「退回日志最后一条」——临时隧道场景下那条必然是上一轮已经失效的死域名。
-    local _off="" _cand="" _att=1 _tries="${ARGO_WAIT_TRIES:-5}" _apid="" _aport=""
+    local _off="" _cand="" _csz="" _att=1 _tries="${ARGO_WAIT_TRIES:-5}" _apid="" _aport=""
     case "$_tries" in '' | *[!0-9]*) _tries=5 ;; esac
     [ "$_tries" -lt 1 ] && _tries=1
     while [ "$_att" -le "$_tries" ]; do
@@ -5443,6 +5473,11 @@ wait_and_check_argo() {
             i=$((i + 1))
             _cand=""
             if [ -s "$argo_log" ]; then
+                # 日志轮转是 copy-truncate（同一个 inode 被清空）：当前大小小于起点 = 刚轮转过，
+                # 起点必须归零，否则 tail -c +N 在空文件上永远没输出，白等满一整轮
+                _csz="$(wc -c < "$argo_log" 2> /dev/null || echo 0)"
+                case "$_csz" in '' | *[!0-9]*) _csz=0 ;; esac
+                [ "$_off" -gt "$_csz" ] && _off=0
                 # 只看增量：历史域名不会再被误判成「本次已生成」
                 _cand="$(tail -c +$((_off + 1)) "$argo_log" 2> /dev/null \
                     | grep -aoE '[a-zA-Z0-9.-]+\.trycloudflare\.com' | tail -n1)"
@@ -12605,6 +12640,8 @@ main() {
 
     # 看门狗自愈：老装机升级脚本后 watchdog 仍是旧版（无 argo 跟随），比对版本标记后重生成
     maybe_refresh_watchdog
+    # 轮转脚本同理：老装机的阈值是安装时硬编码的，比对 rotate-ver 后按当前默认值重生成
+    maybe_refresh_log_rotate
 
     # 命令转小写，支持大小写不敏感
     local _cmd
