@@ -1097,6 +1097,13 @@ Two things that "passing an empty string" cannot express, worth stating separate
 
 ## 2.7 Changelog
 
+v3.2.82 (2026-11-24)
+ > Adds a concurrency lock around "generate jh.txt / sub.txt": when the watchdog's `sb-cmd sub` and the interactive menu fire at the same time, both processes `rm -f jh.txt` and then append their own copy, duplicating every node (observed 14 entries instead of the normal 7).
+
+- new `subgen_lock_acquire()` / `subgen_lock_release()`: atomic `mkdir` on `logs/.subgen.lock` with a `pid` file inside; wait budget `SUBGEN_LOCK_WAIT` (default 30 seconds)
+- `regenerate_links_and_sub()` is now a lock-taking wrapper around `_regen_links_body()`, so every caller (menu, `sb sub`, the watchdog's `sb-cmd sub`, install/reconfigure flows) is serialized; when the lock cannot be taken it prints the holder pid and skips this run instead of rm+appending again
+- stale locks heal themselves: a dead holder pid is taken over immediately, and a lock directory with no pid file that has not changed for 3 minutes is treated as stale — a killed generator can no longer block later runs forever
+
 v3.2.81 (2026-11-24)
  > Adds one more SNI fallback level for CDN-origin-relay nodes: when no origin domain is configured but Argo is enabled on the box, the Argo tunnel domain is used as host/SNI, so no extra origin DNS record is needed.
 

@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.81(2026-11-24)"
+VERSION="3.2.82(2026-11-24)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -6792,7 +6792,55 @@ alt_family_emit() {
 }
 
 # 根据当前配置文件重新生成 jh.txt 并刷新订阅（SNI/端口/Argo 等变更后调用）
+# 生成 jh.txt / sub.txt 的并发锁：watchdog 的 `sb-cmd sub` 与手工菜单可能同时触发，
+# 两个进程各自 rm 一次再各追加一遍，就会出现节点条数翻倍 / 内容互相覆盖（3.2.82 修复）。
+# 用 mkdir 原子抢锁；pid 已死或目录超过 3 分钟视为陈旧锁直接接管；等待上限 SUBGEN_LOCK_WAIT 秒。
+subgen_lock_acquire() {
+    local lk="$LOGS_DIR/.subgen.lock" _max="${SUBGEN_LOCK_WAIT:-30}" _i=0 _p=""
+    mkdir -p "$LOGS_DIR" 2> /dev/null
+    while [ "$_i" -lt "$_max" ]; do
+        if mkdir "$lk" 2> /dev/null; then
+            printf '%s\n' "$$" > "$lk/pid" 2> /dev/null
+            SUBGEN_LOCK_HELD=1
+            return 0
+        fi
+        _p="$(cat "$lk/pid" 2> /dev/null)"
+        # 持有者已经退出（被 kill / 超时结束）→ 直接接管，不用等满
+        if [ -n "$_p" ] && ! kill -0 "$_p" 2> /dev/null; then
+            rm -rf "$lk" 2> /dev/null || true
+            continue
+        fi
+        # 没有 pid 文件（mkdir 后还没来得及写）或 pid 不可判 → 目录 3 分钟没动就当陈旧锁
+        if [ -z "$_p" ] && [ -n "$(find "$lk" -maxdepth 0 -mmin +3 2> /dev/null)" ]; then
+            rm -rf "$lk" 2> /dev/null || true
+            continue
+        fi
+        sleep 1
+        _i=$((_i + 1))
+    done
+    return 1
+}
+
+subgen_lock_release() {
+    if [ "${SUBGEN_LOCK_HELD:-0}" = "1" ]; then
+        rm -rf "$LOGS_DIR/.subgen.lock" 2> /dev/null || true
+        SUBGEN_LOCK_HELD=0
+    fi
+}
+
+# 对外入口：拿不到锁说明另一个进程正在做同样的生成 → 跳过（不再重复 rm+追加）
 regenerate_links_and_sub() {
+    if ! subgen_lock_acquire; then
+        yellow "⚠ 另一个进程正在生成节点/订阅（锁：$LOGS_DIR/.subgen.lock，pid $(cat "$LOGS_DIR/.subgen.lock/pid" 2> /dev/null)），本次跳过"
+        return 1
+    fi
+    _regen_links_body "$@"
+    _rls_rc=$?
+    subgen_lock_release
+    return "$_rls_rc"
+}
+
+_regen_links_body() {
     local _cip_arg="${1:-}"
     local uuid server_ip sxname port_hy2 hy_sni SHA256_hy2 port_tu tu_sni password
     local port_vlr public_key short_id vl_sni port_any any_sni

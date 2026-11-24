@@ -1096,6 +1096,13 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 
 ## 2.7 版本变更信息
 
+v3.2.82 (2026-11-24)
+ > 给「生成 jh.txt / sub.txt」加并发锁：看门狗的 `sb-cmd sub` 与手工菜单同时触发时，两个进程各自 `rm -f jh.txt` 再各追加一遍，会把节点条数写翻倍（实测 14 条 vs 正常 7 条）。
+
+- 新增 `subgen_lock_acquire()` / `subgen_lock_release()`：`mkdir` 原子抢 `logs/.subgen.lock` 并写 `pid`；等待上限 `SUBGEN_LOCK_WAIT`（默认 30 秒）
+- `regenerate_links_and_sub()` 拆成「抢锁包装 + `_regen_links_body()`」，所有调用点（菜单、`sb sub`、看门狗的 `sb-cmd sub`、安装/重配流程）自动串行化；拿不到锁时打印持有者 pid 并跳过本次，不再重复 rm + 追加
+- 陈旧锁自愈：持有者 pid 已不存在 → 立即接管；没有 pid 文件且目录 3 分钟未变动 → 当陈旧锁接管；被 `kill` 的生成进程不会把后续生成永久卡死
+
 v3.2.81 (2026-11-24)
  > 给 CDN 回源节点补一级 SNI 兜底：回源域名没配、而本机已启用 Argo 时，直接用 Argo 隧道域名当 host/SNI，不必再单独准备回源 DNS。
 
