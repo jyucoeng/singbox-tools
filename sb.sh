@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.83(2026-11-24)"
+VERSION="3.2.84(2026-11-24)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -6483,6 +6483,28 @@ show_sub_url() {
     echo "http://${server_ip}:${port}/sub/${sub_uuid}"
 }
 
+# 打印订阅地址（与 `sb list` / 安装完成的输出同一格式），供切换隧道等流程收尾复用：
+# 换隧道/换域名后订阅地址会变，用户下一步就是复制这一条，所以必须紧接着状态行打印出来。
+print_sub_url_block() {
+    yellow "📌 节点订阅地址："
+    if ! is_true "$(get_subscribe_flag)"; then
+        purple "⛔ 未开启订阅（需要的话到 [4][2] 订阅设置里开启）"
+        return 0
+    fi
+    local _u _b
+    _u="$(show_sub_url)"
+    if [ -n "$_u" ]; then
+        green "$_u"
+        if [ -s /var/www/singbox/sub.txt ]; then
+            _b="$(wc -c < /var/www/singbox/sub.txt 2> /dev/null | tr -d ' \t')"
+            yellow "   订阅文件: /var/www/singbox/sub.txt（${_b} 字节）"
+        fi
+    else
+        purple "⛔ 暂时算不出订阅地址（uuid 缺失或 nginx 尚未就绪）"
+    fi
+    return 0
+}
+
 ensure_and_print_reality_private_for_cip() {
     local want_print="${1:-0}"
     [ "$want_print" = "1" ] || return 0
@@ -9465,6 +9487,8 @@ edit_argo_menu() {
                 argorestart
                 refresh_sb_and_sub
                 green "✅ 切换固定 Argo 隧道操作已完成！"
+                echo ""
+                print_sub_url_block
                 menu_pause
                 ;;
             2)
@@ -9487,6 +9511,8 @@ edit_argo_menu() {
                 wait_and_check_argo "临时"
                 refresh_sb_and_sub
                 green "✅ 切换临时 Argo 隧道操作已完成！"
+                echo ""
+                print_sub_url_block
                 menu_pause
                 ;;
             3)
@@ -9513,6 +9539,8 @@ edit_argo_menu() {
                 unset argo
                 refresh_sb_and_sub
                 green "✅ 取消使用 Argo 隧道操作已完成（服务已停用，协议清单已清理）！"
+                echo ""
+                print_sub_url_block
                 menu_pause
                 ;;
             *) yellow "无效选项"; menu_pause ;;

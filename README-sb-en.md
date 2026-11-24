@@ -1097,6 +1097,13 @@ Two things that "passing an empty string" cannot express, worth stating separate
 
 ## 2.7 Changelog
 
+v3.2.84 (2026-11-24)
+ > Print the new subscription URL right after a tunnel switch: switching fixed/temporary Argo or disabling Argo all change the subscription domain, yet the old output only said "✅ done", forcing you to run `sb list` again to learn the new URL.
+
+- new `print_sub_url_block()` (`sb00.sh:6488`) prints the same block as `sb list`: `📌 节点订阅地址：` plus the URL, and a second line `订阅文件: /var/www/singbox/sub.txt（N bytes）`
+- when subscription is off it prints `⛔ 未开启订阅（需要的话到 [4][2] 订阅设置里开启）` instead of staying silent
+- wired into all three branches of [4][4] Argo tunnel edit (switch to fixed / switch to temporary / disable Argo), each right after `refresh_sb_and_sub`
+
 v3.2.83 (2026-11-24)
  > Temporary Argo domain acquisition now retries instead of giving up: when cloudflared fails to start or cannot reach a Cloudflare edge, the script no longer writes the previous (dead) domain into the config after 30 seconds — it relaunches the tunnel and waits again, 5 attempts by default.
 
