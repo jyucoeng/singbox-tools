@@ -1096,6 +1096,24 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 
 ## 2.7 版本变更信息
 
+v3.2.80 (2026-11-24)
+ > 修前台交互路径「切换临时 Argo 隧道后第一回仍显示旧域名」：3.2.79 只修了看门狗，`wait_and_check_argo()` 还是老逻辑（`argo.log` 是追加的，`[ -s ]` 恒真 → 立刻把上一轮的死域名当成本次结果返回）。
+
+- `start_argo_no_daemon()` 启动前记录 `ARGO_LOG_OFF`（argo.log 当前字节数），`wait_and_check_argo()` 只看这之后新增的内容，历史域名不会再被误判成「本次已生成」
+- 兜底只接受「与上一轮不同」的域名；上一轮为空（菜单里刚删过 `argo_domain`）时不启用兜底，否则等于把死域名重新认回来
+- 30 秒超时兜底：增量始终没出现（日志被轮转、cloudflared 极慢）时退回日志最后一条，仍要求与上一轮不同，并打印警告
+- 新增 `argo_pick_domain()`：节点/订阅生成时若 `argo_domain` 里的临时域名比日志最后一条旧，以日志为准（文件写错一次不会再让节点长期挂在死域名上）；固定隧道的自定义域名不受影响
+- 写 `argo_domain` 改用 `printf` 并补 `chmod 600`
+
+v3.2.79 (2026-11-24)
+ > 修 Go 环境下临时 Argo 隧道的看门狗侧问题：换域名后不跟随、旧域名被反复写回；同时给看门狗加版本自愈，SNI 默认域名改为 `www.nazhumi.com`。
+
+- `singbox-watchdog.sh` 取域名改为「启动前记录 argo.log 字节数 + 只看增量」，不再用「日志里有域名」代替「本次有新域名」
+- 切换前用 curl/wget 探活，只把「000 / 空 / 非数字」判为失败（订阅关闭时的 404、nginx 502 都不算失败，避免造出永久死锁）
+- 用 `logs/argo.pid` + `/proc/<pid>/comm` 精确定位 cloudflared，不再 `pkill -x cloudflared`（会误杀固定隧道）
+- 新增 `maybe_refresh_watchdog()`：启动时比对看门狗里的 `# watchdog-ver:`，旧版自动重生成（带日期防降级，CDN 缓存旧脚本不会把新看门狗刷回去）
+- SNI 默认值 `www.apple.com` → `www.nazhumi.com`（hy2 / tuic / vless-reality / anytls）
+
 v3.2.78 (2026-11-16)
  > 系统优化的脚本下载也走镜像：`os_tune_fetch` 原来只有「API → raw 直链」两跳，API 被限流、raw 被墙时就报「✗ 下载失败」直接跳过系统优化。
 

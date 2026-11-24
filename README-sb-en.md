@@ -1097,6 +1097,24 @@ Two things that "passing an empty string" cannot express, worth stating separate
 
 ## 2.7 Changelog
 
+v3.2.80 (2026-11-24)
+ > Fixes the foreground path: after switching a temporary Argo tunnel, the first run still printed the previous (dead) domain. 3.2.79 only fixed the watchdog, while `wait_and_check_argo()` kept the old logic (`argo.log` is append-only, so `[ -s ]` is always true and the previous tunnel's domain was returned immediately).
+
+- `start_argo_no_daemon()` now records `ARGO_LOG_OFF` (current argo.log byte size) before launch, and `wait_and_check_argo()` only reads what was appended after that, so historical domains can no longer be mistaken for "this run already has one"
+- the fallback only accepts a domain that differs from the previous one; when the previous value is empty (the menu just deleted `argo_domain`) the fallback is disabled, otherwise a dead domain would be adopted again
+- 30-second timeout fallback: if nothing new ever shows up (log rotated, cloudflared extremely slow) it falls back to the last log entry, still requiring a different value, and prints a warning
+- new `argo_pick_domain()`: when generating nodes/subscription, a temporary domain in `argo_domain` that is older than the last log entry is replaced by the log value (one bad write no longer pins nodes to a dead domain); custom domains of fixed tunnels are untouched
+- `argo_domain` is written with `printf` plus `chmod 600`
+
+v3.2.79 (2026-11-24)
+ > Watchdog-side fixes for temporary Argo tunnels: no longer follows a changed domain and kept writing the stale one back; the watchdog now self-heals on version change, and the default SNI domain moved to `www.nazhumi.com`.
+
+- `singbox-watchdog.sh` now takes the domain from "bytes recorded before launch + incremental read" instead of treating "the log contains a domain" as "this run produced one"
+- before switching it probes the candidate with curl/wget and only treats `000 / empty / non-numeric` as failure (a 404 when subscription is disabled, or an nginx 502, must not count, otherwise a permanent deadlock is created)
+- cloudflared is located precisely via `logs/argo.pid` + `/proc/<pid>/comm` instead of `pkill -x cloudflared` (which kills fixed tunnels)
+- new `maybe_refresh_watchdog()`: compares `# watchdog-ver:` inside the installed watchdog on startup and regenerates it when outdated (date-guarded against downgrades, so a CDN-cached old script cannot push the new watchdog back)
+- default SNI values `www.apple.com` → `www.nazhumi.com` (hy2 / tuic / vless-reality / anytls)
+
 v3.2.78 (2026-11-16)
  > The system-optimization script download now also goes through mirrors: `os_tune_fetch` only had "API → raw direct" before, so when the API was rate limited and raw was blocked it reported a download failure and skipped system optimization entirely.
 
