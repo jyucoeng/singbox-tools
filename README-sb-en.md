@@ -1097,6 +1097,14 @@ Two things that "passing an empty string" cannot express, worth stating separate
 
 ## 2.7 Changelog
 
+v3.2.83 (2026-11-24)
+ > Temporary Argo domain acquisition now retries instead of giving up: when cloudflared fails to start or cannot reach a Cloudflare edge, the script no longer writes the previous (dead) domain into the config after 30 seconds — it relaunches the tunnel and waits again, 5 attempts by default.
+
+- the temporary branch of `wait_and_check_argo()` loops `ARGO_WAIT_TRIES` times (default 5), each attempt waiting up to 30 seconds; a failed attempt kills the cloudflared this run started (`_argo_pid()` only matches `tunnel --url`, so fixed tunnels are never touched), waits 2 seconds, relaunches with `_eff_argo_pt` and waits again
+- the old "fall back to the last log entry on timeout" path is gone: for a temporary tunnel that entry is always the previous tunnel's dead domain (observed when switching "fixed tunnel → temporary tunnel": the dead domain was written into `argo_domain` and a whole set of unreachable nodes was generated)
+- only after all 5 attempts fail does it print ❌ and `return 1`; `argo_domain` keeps its previous value so the watchdog or the next call can retry
+- retries print "🔄 attempt N/5" so you can tell Cloudflare flakiness from a local cloudflared that never starts
+
 v3.2.82 (2026-11-24)
  > Adds a concurrency lock around "generate jh.txt / sub.txt": when the watchdog's `sb-cmd sub` and the interactive menu fire at the same time, both processes `rm -f jh.txt` and then append their own copy, duplicating every node (observed 14 entries instead of the normal 7).
 

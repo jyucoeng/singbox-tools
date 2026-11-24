@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.82(2026-11-24)"
+VERSION="3.2.83(2026-11-24)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -5420,51 +5420,61 @@ wait_and_check_argo() {
         return 1
     fi
 
-    # ✅ 临时 Argo：只认「本次启动之后」新增的日志
+    # ✅ 临时 Argo：只认「本次启动之后」新增的日志；等不到就重启隧道重试，不一次就放弃
     # 老逻辑用 tail -n1 读整份 argo.log（只追加、几乎不轮转），新隧道的域名要 5~12 秒后才打印，
     # 于是第一回取到的必然是上一轮的死域名并立刻 return → 节点/订阅全写成旧域名。
-    local _off="${ARGO_LOG_OFF:-}" _cand="" _old="" _t=""
-    _old="$(tail -n1 "$ym_log" 2> /dev/null | tr -d '\r\n')"
-    [ -z "$_off" ] && [ -s "$argo_log" ] && _off="$(wc -c < "$argo_log" 2> /dev/null || echo 0)"
-    yellow "⏳ 正在等待临时 Argo 域名生成（trycloudflare.com）..."
-    while [ "$i" -lt "$max_wait" ]; do
-        sleep 1
-        i=$((i + 1))
-        _cand=""
-        if [ -s "$argo_log" ] && [ -n "$_off" ]; then
-            # 只看增量：历史域名不会再被误判成"本次已生成"
-            _cand="$(tail -c +$((_off + 1)) "$argo_log" 2> /dev/null \
-                | grep -aoE '[a-zA-Z0-9.-]+\.trycloudflare\.com' | tail -n1)"
+    # 3.2.83：cloudflared 偶发启动失败 / 连不上 CF 边缘时默认重试 ARGO_WAIT_TRIES（5）次；
+    # 并且不再「退回日志最后一条」——临时隧道场景下那条必然是上一轮已经失效的死域名。
+    local _off="" _cand="" _att=1 _tries="${ARGO_WAIT_TRIES:-5}" _apid="" _aport=""
+    case "$_tries" in '' | *[!0-9]*) _tries=5 ;; esac
+    [ "$_tries" -lt 1 ] && _tries=1
+    while [ "$_att" -le "$_tries" ]; do
+        _off="${ARGO_LOG_OFF:-}"
+        [ -z "$_off" ] && [ -s "$argo_log" ] && _off="$(wc -c < "$argo_log" 2> /dev/null || echo 0)"
+        [ -z "$_off" ] && _off=0
+        if [ "$_att" -eq 1 ]; then
+            yellow "⏳ 正在等待临时 Argo 域名生成（trycloudflare.com）..."
+        else
+            yellow "🔄 第 ${_att}/${_tries} 次尝试：等待临时 Argo 域名生成（每轮最多 ${max_wait}s）..."
         fi
-        # 兜底：隧道在函数被调用之前就写好了域名（增量里没有）→ 只接受"与上一轮不同"的值；
-        # 上一轮为空（菜单里刚删过 argo_domain）时不用兜底，否则会把历史死域名重新认回来
-        if [ -z "$_cand" ] && [ -n "$_old" ] && [ -s "$argo_log" ]; then
-            _t="$(grep -aoE '[a-zA-Z0-9.-]+\.trycloudflare\.com' "$argo_log" 2> /dev/null | tail -n1)"
-            if [ -n "$_t" ] && [ "$_t" != "$_old" ]; then _cand="$_t"; fi
+        i=0
+        while [ "$i" -lt "$max_wait" ]; do
+            sleep 1
+            i=$((i + 1))
+            _cand=""
+            if [ -s "$argo_log" ]; then
+                # 只看增量：历史域名不会再被误判成「本次已生成」
+                _cand="$(tail -c +$((_off + 1)) "$argo_log" 2> /dev/null \
+                    | grep -aoE '[a-zA-Z0-9.-]+\.trycloudflare\.com' | tail -n1)"
+            fi
+            if [ -n "$_cand" ]; then
+                export ARGO_DOMAIN="$_cand"
+                printf '%s\n' "$ARGO_DOMAIN" > "$ym_log" 2> /dev/null
+                chmod 600 "$ym_log" 2> /dev/null || true
+                ARGO_LOG_OFF=""
+                green "✅ 临时 Argo 域名：$ARGO_DOMAIN"
+                return 0
+            fi
+        done
+        _att=$((_att + 1))
+        [ "$_att" -gt "$_tries" ] && break
+        # 本轮没等到：只杀「我们自己的」临时隧道再重拉（_argo_pid 只认 tunnel --url，碰不到固定隧道）
+        _apid="$(_argo_pid)"
+        if [ -n "$_apid" ]; then
+            kill "$_apid" 2> /dev/null || true
+            yellow "⚠ 本轮未拿到域名，已结束临时隧道进程 ${_apid}，重拉后再试"
+        else
+            yellow "⚠ 本轮未拿到域名，未发现运行中的临时隧道，直接重拉"
         fi
-        if [ -n "$_cand" ]; then
-            export ARGO_DOMAIN="$_cand"
-            printf '%s\n' "$ARGO_DOMAIN" > "$ym_log" 2> /dev/null
-            chmod 600 "$ym_log" 2> /dev/null || true
-            ARGO_LOG_OFF=""
-            green "✅ 临时 Argo 域名：$ARGO_DOMAIN"
-            return 0
-        fi
+        rm -f "$LOGS_DIR/argo.pid" 2> /dev/null || true
+        sleep 2
+        _aport="$(_eff_argo_pt)"
+        [ -z "$_aport" ] && _aport="$ARGO_DEFAULT_PORT"
+        start_argo_no_daemon "temp" "" "$_aport"
     done
 
-    # 超时兜底：增量始终没出现（日志被轮转、cloudflared 极慢）→ 退回日志最后一条，但仍要求与上一轮不同
-    _t="$(grep -aoE '[a-zA-Z0-9.-]+\.trycloudflare\.com' "$argo_log" 2> /dev/null | tail -n1)"
-    if [ -n "$_t" ] && [ "$_t" != "$_old" ]; then
-        export ARGO_DOMAIN="$_t"
-        printf '%s\n' "$ARGO_DOMAIN" > "$ym_log" 2> /dev/null
-        chmod 600 "$ym_log" 2> /dev/null || true
-        ARGO_LOG_OFF=""
-        yellow "⚠ 未等到本次新增域名，退回日志最后一条：$ARGO_DOMAIN"
-        return 0
-    fi
-
     ARGO_LOG_OFF=""
-    red "❌ 未能获取临时 Argo 域名（$argo_log 未生成或 cloudflared 未启动成功）"
+    red "❌ 连续 ${_tries} 次未能获取临时 Argo 域名（cloudflared 未启动成功或连不上 Cloudflare，日志：${argo_log}）"
     return 1
 }
 
