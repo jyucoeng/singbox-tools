@@ -5,7 +5,7 @@
 Two installation methods are supported:
 
 - **Interactive**: run `bash sb.sh` directly (without arguments) and follow the menu prompts to complete installation, uninstallation, viewing, and other operations.
-- **Non-interactive**: complete it in one line with environment variables + arguments (see examples below); you can also pair it with the [command generator UI](https://github.com/jyucoeng/singbox-tools-interface) (access via your own domain after deployment).
+- **Non-interactive**: complete it in one line with environment variables + arguments (see examples below); you can also pair it with the [command generator UI](https://singbox.dingdang.de5.net/) (online version; source: [singbox-tools-interface](https://github.com/jyucoeng/singbox-tools-interface)).
 
 After installation, the **`sb` shortcut** is available: `sb` opens the main menu, while `sb ins` / `sb rep` / `sb list` / `sb rt` / `sb node` / `sb sub` / `sb del` jump straight to the corresponding features (see the full list in [sb Shortcuts](#26-sb-shortcut-commands)).
 

@@ -2,7 +2,7 @@
 
 #  sing-box one-click installation script, socks5 one-click script, mtp one-click script
 
-> Command generator UI: see [singbox-tools-interface](https://github.com/jyucoeng/singbox-tools-interface); after deploying it, access it with your own domain.
+> Command generator UI: **[online version](https://singbox.dingdang.de5.net/)** (source: [singbox-tools-interface](https://github.com/jyucoeng/singbox-tools-interface)); or deploy it yourself and access it with your own domain.
 > Node aggregation project: see [sub_merge](https://github.com/jyucoeng/sub_merge); after deploying it, aggregate the nodes of all your machines with your own domain.
 
 ## Please click through to the corresponding readme
