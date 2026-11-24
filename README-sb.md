@@ -150,15 +150,15 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 > 拼到基础命令上方（这段最后一行以 `\` 结尾，直接接基础命令的第一行变量即可）；删掉某个端口行（`vlrt / hypt / tupt / anypt / socks5pt`）= 不装对应协议；`socks5_*` 仅在启用 Socks5 时填。`out_ip` / `direct_host` 属基础命令（①），不写在这里。
 
 ```bash
-vl_sni='www.apple.com' \
+vl_sni='www.nazhumi.com' \
 vl_sni_pt=443 \
 vlrt=41003 \
 reality_private='GHxxxxxxxxxxxxx-xxxxxx-VnXH6FjxxA' \
-hy_sni='www.apple.com' \
+hy_sni='www.nazhumi.com' \
 hypt=41004 \
-tu_sni='www.apple.com' \
+tu_sni='www.nazhumi.com' \
 tupt=41005 \
-any_sni='www.apple.com' \
+any_sni='www.nazhumi.com' \
 anypt=41006 \
 socks5pt=41017 \
 socks5_username='你的用户名' \
@@ -183,18 +183,18 @@ socks5_ips='1.2.3.4,5.6.7.0/24' \
 
 | 变量 | 协议 | 说明 | 缺省值 |
 |------|------|------|--------|
-| `hy_sni` | Hysteria2 | hy2 的伪装域名，可自定义 | `www.apple.com` |
-| `vl_sni` | VLESS-Reality | vless 的伪装域名，可自定义 | `www.apple.com` |
+| `hy_sni` | Hysteria2 | hy2 的伪装域名，可自定义 | `www.nazhumi.com` |
+| `vl_sni` | VLESS-Reality | vless 的伪装域名，可自定义 | `www.nazhumi.com` |
 | `vl_sni_pt` | VLESS-Reality | vless 伪装域名对应的握手端口，安装时绑定（https 系：443,2053,2083,2087,2096,8443 任选），不能在客户端乱改 | 443 |
-| `tu_sni` | TUIC | tuic 的伪装域名，可自定义 | `www.apple.com` |
-| `any_sni` | AnyTLS | anytls 的伪装域名，可自定义 | `www.apple.com` |
+| `tu_sni` | TUIC | tuic 的伪装域名，可自定义 | `www.nazhumi.com` |
+| `any_sni` | AnyTLS | anytls 的伪装域名，可自定义 | `www.nazhumi.com` |
 
 **SNI 最佳实践**（不要用会被恶意扫描当作无限流量转发端口的域名；不知道写什么就留空，脚本内置默认值）：
 - ❌ Cloudflare 相关：`www.cloudflare.com`、`dash.cloudflare.com`
 - ❌ CDN 服务：`www.akamai.com`、`www.fastly.com`
 - ❌ 代理 / VPN 服务：任何代理服务的域名
 - ❌ 你自己的服务器域名（会形成循环）
-- ✅ 推荐：`www.apple.com`（默认）/ `www.yahoo.com` / `www.google.com` / 任何大型正常网站
+- ✅ 推荐：`www.nazhumi.com`（默认）/ `www.yahoo.com` / `www.google.com` / 任何大型正常网站
 
 ### 2、 VLESS-Reality
 
@@ -719,11 +719,11 @@ subscribe=true \
 out_ip='特殊出口IP' \
 direct_host='你的对外域名' \
 DEBUG_FLAG=0 \
-hy_sni='www.apple.com' \
-vl_sni='www.apple.com' \
+hy_sni='www.nazhumi.com' \
+vl_sni='www.nazhumi.com' \
 vl_sni_pt=443 \
-tu_sni='www.apple.com' \
-any_sni='www.apple.com' \
+tu_sni='www.nazhumi.com' \
+any_sni='www.nazhumi.com' \
 vlrt=41003 \
 hypt=41004 \
 tupt=41005 \

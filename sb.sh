@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.78(2026-11-16)"
+VERSION="3.2.79(2026-11-24)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -95,10 +95,10 @@ NG_VER_FILE="$SINGBOX_FOLDER_PATH/${_SB_NAME_ID}_ng_ver"
 # Environment variables for controlling CDN host and SNI values
 # CDN 共享参数：新名 argo_cf_host / argo_cf_pt 优先，兼容旧名 cdn_host / cdn_pt
 export cdn_host=${argo_cf_host:-${cdn_host:-"saas.sin.fan"}} # Default CDN host for vmess/trojan/vless  cdn.7zz.cn
-export hy_sni=${hy_sni:-"www.apple.com"}    # Default SNI for hy2 protocol
-export vl_sni=${vl_sni:-"www.apple.com"}    # Default SNI for vless protocol   www.ua.edu www.yahoo.com
-export tu_sni=${tu_sni:-"www.apple.com"}    # Default SNI for hy2 protocol
-export any_sni=${any_sni:-"www.apple.com"}  # Default SNI for anytls protocol
+export hy_sni=${hy_sni:-"www.nazhumi.com"}    # Default SNI for hy2 protocol
+export vl_sni=${vl_sni:-"www.nazhumi.com"}    # Default SNI for vless protocol   www.ua.edu www.yahoo.com
+export tu_sni=${tu_sni:-"www.nazhumi.com"}    # Default SNI for hy2 protocol
+export any_sni=${any_sni:-"www.nazhumi.com"}  # Default SNI for anytls protocol
 
 # Environment variables for ports and other settings
 export uuid=${uuid:-''}
@@ -3950,6 +3950,7 @@ gen_watchdog_script() {
     cat > "$WATCHDOG_SCRIPT" << EOF
 #!/bin/sh
 # 由 $SB_SCRIPT_NAME 自动生成：服务看门狗（cron 每 2 分钟一次），请勿手改
+# watchdog-ver: $VERSION
 LOG="$LOGS_DIR/watchdog.log"
 NGINX_DIR="$SB_NGINX_DIR"
 NGINX_BIN="$SB_NGINX_BIN"
@@ -3965,6 +3966,37 @@ if [ -f "\$LOG" ]; then
 fi
 
 say() { echo "\$(date '+%F %T') \$*" >> "\$LOG" 2>/dev/null; }
+
+# 定位临时隧道进程：优先 pid 文件（新安装会写 logs/argo.pid），没有就按进程名精确定位。
+# 不能用 pgrep -f "cloudflared tunnel --url"：管理员任意一条命令行里含这串（例如
+# ssh root@host 'pkill -f "cloudflared tunnel --url"'）都会被误匹配，误判「隧道在跑」。
+_argo_pid() {
+    _p=""
+    if [ -s "$LOGS_DIR/argo.pid" ]; then
+        _p=\$(tr -dc '0-9' < "$LOGS_DIR/argo.pid" 2>/dev/null)
+    fi
+    if [ -n "\$_p" ] && kill -0 "\$_p" 2>/dev/null; then
+        # pid 可能被系统复用给别的进程，/proc 可用时确认一下确实是 cloudflared
+        if [ -r "/proc/\$_p/comm" ] && ! grep -qi cloudflared "/proc/\$_p/comm" 2>/dev/null; then
+            _p=""
+        fi
+    else
+        _p=""
+    fi
+    if [ -z "\$_p" ] && command -v pgrep >/dev/null 2>&1; then
+        for _q in \$(pgrep -x cloudflared 2>/dev/null); do
+            if [ -r "/proc/\$_q/cmdline" ]; then
+                _c=\$(tr '\0' ' ' < "/proc/\$_q/cmdline" 2>/dev/null)
+                case "\$_c" in *"tunnel --url"*) _p="\$_q" ;; *) continue ;; esac
+            else
+                _p="\$_q"
+            fi
+            break
+        done
+        [ -n "\$_p" ] && printf '%s\n' "\$_p" > "$LOGS_DIR/argo.pid" 2>/dev/null
+    fi
+    printf '%s' "\$_p"
+}
 
 # systemd：只有 failed 才动手。inactive 是「手动停的」，不碰
 ensure_systemd() {
@@ -4047,8 +4079,19 @@ fi
 # 临时隧道（trycloudflare）每次启动都会换一个域名，旧域名永久失效，重启后
 # 光把进程拉起来没用，jh.txt 里的 argo 节点已经指向死域名了，必须重新生成
 # 节点并重新上报。固定隧道由 argo.service 托管、域名不变，这里完全不碰。
-if [ -s "$SINGBOX_FOLDER_PATH/argoport" ] \\
-    && [ ! -f "$SINGBOX_FOLDER_PATH/tunnel.yml" ] \\
+#
+# 3.2.79 修掉三处叠加缺陷（老实现换域名后永远不跟随）：
+#   1) 取域名用 head -1 → 拿到 argo.log 里最老的那条（日志只追加、10MB 才轮转），
+#      必须 tail -n1；老实现还会把 argo_domain 写回更老的死域名；
+#   2) 等域名用「整个日志文件里有没有域名」判断 → 历史域名第一次就命中、while 空转 0 秒
+#      就去取域名，必须只认本次拉起之后新增的字节（offset）；
+#   3) 域名打印出来 ≠ 隧道已注册完成，直接切换会有一小段全站 5xx，切换前先探活。
+#      探活只判「有没有 HTTP 响应」（000 才算失败）：关闭订阅时 /sub/<uuid> 是 404、
+#      nginx 抖动是 502，用 200 卡死后会永久不切换，比原缺陷更难查。
+# 另外：抢锁目录 5 分钟自动老化（sb-cmd sub 被 kill 时 rmdir 不执行会永久卡死）；
+# 进程探测走 pid 文件 + pgrep -x（原来的 pgrep -f 会被管理员命令行误匹配，导致漏拉隧道）。
+if [ -s "$SINGBOX_FOLDER_PATH/argoport" ] \
+    && [ ! -f "$SINGBOX_FOLDER_PATH/tunnel.yml" ] \
     && [ ! -f "$SINGBOX_FOLDER_PATH/sbargotoken" ]; then
     _adom=\$(cat "$SINGBOX_FOLDER_PATH/argo_domain" 2>/dev/null | tr -d '\r\n')
     case "\$_adom" in
@@ -4056,39 +4099,98 @@ if [ -s "$SINGBOX_FOLDER_PATH/argoport" ] \\
         *) _atmp=0 ;;
     esac
     if [ "\$_atmp" = "1" ]; then
-        if ! pgrep -f "cloudflared tunnel --url" >/dev/null 2>&1; then
-            _aport=\$(cat "$SINGBOX_FOLDER_PATH/argoport" 2>/dev/null)
+        _apid=\$(_argo_pid)
+        if [ -z "\$_apid" ]; then
+            _aport=\$(cat "$SINGBOX_FOLDER_PATH/argoport" 2>/dev/null | tr -d '\r\n')
             [ -n "\$_aport" ] || _aport=8001
-            # 拉起临时隧道前只保留一份上一轮日志，不要清空（清空等于丢现场）
-            [ -s "$LOGS_DIR/argo.log" ] && cp -p "$LOGS_DIR/argo.log" "$LOGS_DIR/argo.log.prev" 2>/dev/null
-            nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel --url "http://localhost:\$_aport" \\
+            # 记录拉起前的日志长度：等待时只看 offset 之后的增量，否则历史域名会让循环立刻 break
+            _aoff=0
+            [ -s "$LOGS_DIR/argo.log" ] && _aoff=\$(wc -c < "$LOGS_DIR/argo.log" 2>/dev/null)
+            case "\$_aoff" in '' | *[!0-9]*) _aoff=0 ;; esac
+            nohup "$SINGBOX_FOLDER_PATH/cloudflared" tunnel --url "http://localhost:\$_aport" \
                 --edge-ip-version auto --no-autoupdate >> "$LOGS_DIR/argo.log" 2>&1 &
-            say "argo: 临时隧道未运行，已拉起（localhost:\$_aport）"
+            printf '%s\n' "\$!" > "$LOGS_DIR/argo.pid" 2>/dev/null
+            say "argo: 临时隧道未运行，已拉起（localhost:\${_aport}）"
             _ai=0
             while [ "\$_ai" -lt 30 ]; do
                 sleep 2
-                grep -qE 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOGS_DIR/argo.log" 2>/dev/null && break
+                tail -c +\$((_aoff + 1)) "$LOGS_DIR/argo.log" 2>/dev/null \
+                    | grep -qE 'https://[a-z0-9-]+\.trycloudflare\.com' && break
                 _ai=\$((_ai + 1))
             done
         fi
-        _anew=\$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOGS_DIR/argo.log" 2>/dev/null | head -1 | sed 's#https://##')
+        _anew=\$(grep -aoE 'https://[a-z0-9-]+\.trycloudflare\.com' "$LOGS_DIR/argo.log" 2>/dev/null | tail -n1 | sed 's#https://##')
+        _su=\$(cat "$SINGBOX_FOLDER_PATH/uuid" 2>/dev/null | tr -d '\r\n')
         if [ -n "\$_anew" ] && [ "\$_anew" != "\$_adom" ]; then
-            # 域名变了才动，两条 cron 撞上时用 mkdir 抢锁，抢不到说明对方正在处理
-            if mkdir "$LOGS_DIR/.argo-regen.lock" 2>/dev/null; then
-                printf '%s\n' "\$_anew" > "$SINGBOX_FOLDER_PATH/argo_domain"
-                chmod 600 "$SINGBOX_FOLDER_PATH/argo_domain" 2>/dev/null
-                say "argo: 域名变化 \${_adom:-<空>} -> \$_anew，重新生成节点"
-                if [ -x "$SINGBOX_FOLDER_PATH/sb-cmd" ]; then
-                    bash "$SINGBOX_FOLDER_PATH/sb-cmd" sub > "$LOGS_DIR/argo-regen.log" 2>&1 \\
-                        && say "argo: jh.txt 已重新生成" \\
-                        || say "argo: 重新生成失败，见 logs/argo-regen.log"
-                    bash "$SINGBOX_FOLDER_PATH/sb-cmd" report >> "$LOGS_DIR/argo-regen.log" 2>&1 \\
-                        && say "argo: 已重新上报" \\
-                        || say "argo: 上报失败，见 logs/argo-regen.log"
+            # 切换前探活：拿不到任何 HTTP 响应（000/空）才算失败
+            _probe=0
+            _code=""
+            if command -v curl >/dev/null 2>&1; then
+                _probe=1
+                _code=\$(curl -s -o /dev/null -m 12 -w '%{http_code}' "https://\$_anew/sub/\$_su" 2>/dev/null)
+            elif command -v wget >/dev/null 2>&1; then
+                _probe=1
+                _code=\$(wget -qS -O /dev/null --timeout=12 "https://\$_anew/sub/\$_su" 2>&1 | awk '/HTTP\//{c=\$2} END{print c}')
+            fi
+            _ok=1
+            if [ "\$_probe" = "1" ]; then
+                case "\$_code" in
+                    "" | 0 | 000 | 0* | *[!0-9]*) _ok=0 ;;
+                esac
+            fi
+            if [ "\$_ok" = "1" ]; then
+                # 陈旧锁老化：sb-cmd sub 被 kill/超时会让 rmdir 不执行，锁残留后永远「跳过」
+                if [ -d "$LOGS_DIR/.argo-regen.lock" ]; then
+                    find "$LOGS_DIR/.argo-regen.lock" -maxdepth 0 -mmin +5 -exec rmdir {} \; 2>/dev/null
                 fi
-                rmdir "$LOGS_DIR/.argo-regen.lock" 2>/dev/null
+                if mkdir "$LOGS_DIR/.argo-regen.lock" 2>/dev/null; then
+                    printf '%s\n' "\$_anew" > "$SINGBOX_FOLDER_PATH/argo_domain"
+                    chmod 600 "$SINGBOX_FOLDER_PATH/argo_domain" 2>/dev/null
+                    say "argo: 域名变化 \${_adom:-<空>} -> \${_anew}，重新生成节点"
+                    if [ -x "$SINGBOX_FOLDER_PATH/sb-cmd" ]; then
+                        bash "$SINGBOX_FOLDER_PATH/sb-cmd" sub > "$LOGS_DIR/argo-regen.log" 2>&1 \
+                            && say "argo: jh.txt 已重新生成" \
+                            || say "argo: 重新生成失败，见 logs/argo-regen.log"
+                        bash "$SINGBOX_FOLDER_PATH/sb-cmd" report >> "$LOGS_DIR/argo-regen.log" 2>&1 \
+                            && say "argo: 已重新上报" \
+                            || say "argo: 上报失败，见 logs/argo-regen.log"
+                    fi
+                    rmdir "$LOGS_DIR/.argo-regen.lock" 2>/dev/null
+                else
+                    say "argo: 域名换成了 \${_anew}，另一条看门狗正在处理，跳过"
+                fi
             else
-                say "argo: 域名换成了 \$_anew，另一条看门狗正在处理，跳过"
+                say "argo: 日志最新域名 \${_anew} 探活失败(http=\${_code:-none})，本轮不切换（下轮重试）"
+            fi
+        else
+            # 进程在跑、域名也对得上：再确认隧道真的通——CF 侧可能已回收域名或连接静默断开，
+            # 这时进程还在、argo.log 不增长，上面的跟随逻辑永远不会触发。
+            # 连续 3 轮探活失败才重启，避免 CF 抖动导致域名无限漂移。
+            if [ -n "\$_adom" ] && [ -n "\$_su" ]; then
+                _probe=0
+                _code=""
+                if command -v curl >/dev/null 2>&1; then
+                    _probe=1
+                    _code=\$(curl -s -o /dev/null -m 10 -w '%{http_code}' "https://\$_adom/sub/\$_su" 2>/dev/null)
+                fi
+                if [ "\$_probe" = "1" ]; then
+                    _pf="$LOGS_DIR/.argo-probe.fail"
+                    case "\$_code" in
+                        "" | 0 | 000 | 0* | *[!0-9]*)
+                            _n=\$(cat "\$_pf" 2>/dev/null)
+                            case "\$_n" in '' | *[!0-9]*) _n=0 ;; esac
+                            _n=\$((_n + 1))
+                            printf '%s\n' "\$_n" > "\$_pf" 2>/dev/null
+                            if [ "\$_n" -ge 3 ]; then
+                                say "argo: 现有域名 \$_adom 连续 \${_n} 轮探活失败(http=\${_code:-none})，重启临时隧道"
+                                _apid=\$(_argo_pid)
+                                [ -n "\$_apid" ] && kill "\$_apid" 2>/dev/null
+                                rm -f "$LOGS_DIR/argo.pid" "\$_pf" 2>/dev/null
+                            fi
+                            ;;
+                        *) rm -f "\$_pf" 2>/dev/null ;;
+                    esac
+                fi
             fi
         fi
     fi
@@ -4120,6 +4222,28 @@ install_service_watchdog() {
         yellow "⚠ 写入 crontab 失败，看门狗未生效（可手动执行 ${WATCHDOG_SCRIPT}）"
     fi
     rm -f "$ct_tmp"
+}
+
+# 看门狗版本自愈：gen_watchdog_script 只在安装/覆盖安装时执行，所以「脚本升级了、
+# watchdog 还是当年那版」是常态（3.2.19 生成的那版只有 66 行，压根没有 argo 跟随）。
+# 这里在每次运行 sb 时比对 watchdog 里的版本标记，不一致就重新生成，让修复真正落地。
+maybe_refresh_watchdog() {
+    [ -f "$WATCHDOG_SCRIPT" ] || return 0
+    local _have _hd _nd
+    _have="$(grep -m1 '^# watchdog-ver: ' "$WATCHDOG_SCRIPT" 2>/dev/null | sed 's/^# watchdog-ver: //')"
+    [ "$_have" = "$VERSION" ] && return 0
+    # 已装的看门狗比本脚本新（旧版脚本被 CDN 缓存、或先用新版后又跑旧版）时不要降级，
+    # 否则会把刚装上的 argo 跟随逻辑刷回旧版本
+    _hd="$(printf '%s' "$_have" | sed -n 's/.*(\([0-9-]\{10\}\)).*/\1/p')"
+    _nd="$(printf '%s' "$VERSION" | sed -n 's/.*(\([0-9-]\{10\}\)).*/\1/p')"
+    if [ -n "$_hd" ] && [ -n "$_nd" ] && [ "$(awk -v a="$_hd" -v b="$_nd" 'BEGIN{print (a>b)?1:0}')" = "1" ]; then
+        return 0
+    fi
+    if gen_watchdog_script; then
+        chmod 700 "$WATCHDOG_SCRIPT" 2>/dev/null
+        echo "$(date '+%F %T') 看门狗已刷新到 ${VERSION}（旧：${_have:-无版本标记}）" >> "$LOGS_DIR/watchdog.log" 2>/dev/null
+    fi
+    return 0
 }
 
 #  Generate Sing-box configuration file
@@ -5828,7 +5952,7 @@ ins() {
     green "  直连协议: ${_dlist:-<未选>} ${_d_sfx}"
     green "  Socks5: $([ -n "$socksp" ] && echo 安装 || echo 不安装)"
     green "  直连端口: VLESS-Reality=${vlrt:-随机} Hysteria2=${hypt:-随机} TUIC=${tupt:-随机} AnyTLS=${anypt:-随机}"
-    green "  伪装SNI: Hysteria2=${hy_sni:-www.apple.com} VLESS=${vl_sni:-www.apple.com} VLESS端口=${vl_sni_pt:-443} TUIC=${tu_sni:-www.apple.com} AnyTLS=${any_sni:-www.apple.com}"
+    green "  伪装SNI: Hysteria2=${hy_sni:-www.nazhumi.com} VLESS=${vl_sni:-www.nazhumi.com} VLESS端口=${vl_sni_pt:-443} TUIC=${tu_sni:-www.nazhumi.com} AnyTLS=${any_sni:-www.nazhumi.com}"
     echo ""
     # ---- Argo 块：Argo 协议 / Argo 隧道 / Argo CF 优选 ----
     if [ -n "$argo" ]; then
@@ -6243,7 +6367,7 @@ show_sub_url() {
     if [ -n "$vlvm" ]; then
         need_argo_flag=true
     fi
-    argodomain=$(cat "$SINGBOX_FOLDER_PATH/argo_domain" 2> /dev/null)
+    argodomain=$(cat "$SINGBOX_FOLDER_PATH/argo_domain" 2> /dev/null | tr -d '\r\n')
     if $need_argo_flag && [ -z "$argodomain" ] && [ -s "$LOGS_DIR/argo.log" ]; then
         argodomain=$(grep -aoE '[a-zA-Z0-9.-]+\.trycloudflare\.com' "$LOGS_DIR/argo.log" 2> /dev/null | tail -n1)
     fi
@@ -6711,7 +6835,7 @@ regenerate_links_and_sub() {
     # 直连块（hy2/tuic/vless-reality/anytls）结束：若设置了 direct_host（对外域名），提醒 Cloudflare DNS 绑定 + 关小黄云（仅直连协议受影响，显示一次）
     print_direct_host_dns_hint
 
-    argodomain=$(cat "$SINGBOX_FOLDER_PATH/argo_domain" 2> /dev/null)
+    argodomain=$(cat "$SINGBOX_FOLDER_PATH/argo_domain" 2> /dev/null | tr -d '\r\n')
 
     if need_argo && [ -z "$argodomain" ] && [ -s "$LOGS_DIR/argo.log" ]; then
         argodomain=$(grep -aoE '[a-zA-Z0-9.-]+\.trycloudflare\.com' "$LOGS_DIR/argo.log" 2> /dev/null | tail -n1)
@@ -8234,32 +8358,32 @@ menu_collect_install() {
     echo ""
     purple "===== 直连协议伪装SNI 设置 ====="
     green "  1) 全部使用默认值(偷懒就用默认)"
-    green "     默认值：Hysteria2 伪装域名=www.apple.com, VLESS 伪装域名=www.apple.com,"
-    green "             VLESS 伪装端口=443, TUIC 伪装域名=www.apple.com, AnyTLS 伪装域名=www.apple.com"
+    green "     默认值：Hysteria2 伪装域名=www.nazhumi.com, VLESS 伪装域名=www.nazhumi.com,"
+    green "             VLESS 伪装端口=443, TUIC 伪装域名=www.nazhumi.com, AnyTLS 伪装域名=www.nazhumi.com"
     green "  2) 逐个展开单独设置（可自定义，推荐）"
     reading "输入选择 (回车默认=1): " _ans
     if [ "$_ans" = "2" ]; then
         green "  ↳ SNI: 逐个设置"
-        reading "  Hysteria2 伪装域名 (默认=www.apple.com): " _ans
+        reading "  Hysteria2 伪装域名 (默认=www.nazhumi.com): " _ans
         [ -n "$_ans" ] && export hy_sni="$_ans"
-        green "  ↳ Hysteria2 伪装域名: ${hy_sni:-www.apple.com}"
-        reading "  VLESS 伪装域名 (默认=www.apple.com): " _ans
+        green "  ↳ Hysteria2 伪装域名: ${hy_sni:-www.nazhumi.com}"
+        reading "  VLESS 伪装域名 (默认=www.nazhumi.com): " _ans
         [ -n "$_ans" ] && export vl_sni="$_ans"
-        green "  ↳ VLESS 伪装域名: ${vl_sni:-www.apple.com}"
+        green "  ↳ VLESS 伪装域名: ${vl_sni:-www.nazhumi.com}"
         reading "  VLESS 伪装端口 (默认=443): " _ans
         [ -n "$_ans" ] && export vl_sni_pt="$_ans"
         green "  ↳ VLESS 伪装端口: ${vl_sni_pt:-443}"
-        reading "  TUIC 伪装域名 (默认=www.apple.com): " _ans
+        reading "  TUIC 伪装域名 (默认=www.nazhumi.com): " _ans
         [ -n "$_ans" ] && export tu_sni="$_ans"
-        green "  ↳ TUIC 伪装域名: ${tu_sni:-www.apple.com}"
-        reading "  AnyTLS 伪装域名 (默认=www.apple.com): " _ans
+        green "  ↳ TUIC 伪装域名: ${tu_sni:-www.nazhumi.com}"
+        reading "  AnyTLS 伪装域名 (默认=www.nazhumi.com): " _ans
         [ -n "$_ans" ] && export any_sni="$_ans"
-        green "  ↳ AnyTLS 伪装域名: ${any_sni:-www.apple.com}"
+        green "  ↳ AnyTLS 伪装域名: ${any_sni:-www.nazhumi.com}"
     else
         green "  ↳ SNI: 全部使用默认值"
-        green "  ↳ Hysteria2 伪装域名=${hy_sni:-www.apple.com}, VLESS 伪装域名=${vl_sni:-www.apple.com},"
-        green "  ↳ VLESS 伪装端口=${vl_sni_pt:-443}, TUIC 伪装域名=${tu_sni:-www.apple.com},"
-        green "  ↳ AnyTLS 伪装域名=${any_sni:-www.apple.com}"
+        green "  ↳ Hysteria2 伪装域名=${hy_sni:-www.nazhumi.com}, VLESS 伪装域名=${vl_sni:-www.nazhumi.com},"
+        green "  ↳ VLESS 伪装端口=${vl_sni_pt:-443}, TUIC 伪装域名=${tu_sni:-www.nazhumi.com},"
+        green "  ↳ AnyTLS 伪装域名=${any_sni:-www.nazhumi.com}"
     fi
 
     # Argo 隧道配置（argo 已在“选择 Argo 隧道协议”处设置，这里直接使用）
@@ -12330,6 +12454,9 @@ main() {
 
     # 日志目录迁移（老版本散落在 doraemon 根目录的日志归拢到 logs/）
     migrate_logs_dir
+
+    # 看门狗自愈：老装机升级脚本后 watchdog 仍是旧版（无 argo 跟随），比对版本标记后重生成
+    maybe_refresh_watchdog
 
     # 命令转小写，支持大小写不敏感
     local _cmd

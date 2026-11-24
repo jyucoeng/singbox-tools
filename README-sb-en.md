@@ -150,15 +150,15 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 > Prepend above the basic command (the last line of this snippet ends with `\`, connecting directly to the first variable line of the basic command); deleting a port line (`vlrt / hypt / tupt / anypt / socks5pt`) = the corresponding protocol is not installed; fill in `socks5_*` only when Socks5 is enabled. `out_ip` / `direct_host` belong to the basic command (①) and are not placed here.
 
 ```bash
-vl_sni='www.apple.com' \
+vl_sni='www.nazhumi.com' \
 vl_sni_pt=443 \
 vlrt=41003 \
 reality_private='GHxxxxxxxxxxxxx-xxxxxx-VnXH6FjxxA' \
-hy_sni='www.apple.com' \
+hy_sni='www.nazhumi.com' \
 hypt=41004 \
-tu_sni='www.apple.com' \
+tu_sni='www.nazhumi.com' \
 tupt=41005 \
-any_sni='www.apple.com' \
+any_sni='www.nazhumi.com' \
 anypt=41006 \
 socks5pt=41017 \
 socks5_username='your-username' \
@@ -183,18 +183,18 @@ Overview of the disguise SNI for each direct-connection protocol (if unsure, lea
 
 | Variable | Protocol | Description | Default |
 |------|------|------|--------|
-| `hy_sni` | Hysteria2 | hy2's disguise domain, customizable | `www.apple.com` |
-| `vl_sni` | VLESS-Reality | vless's disguise domain, customizable | `www.apple.com` |
+| `hy_sni` | Hysteria2 | hy2's disguise domain, customizable | `www.nazhumi.com` |
+| `vl_sni` | VLESS-Reality | vless's disguise domain, customizable | `www.nazhumi.com` |
 | `vl_sni_pt` | VLESS-Reality | handshake port bound to the vless disguise domain, fixed at install time (https-family: pick any of 443,2053,2083,2087,2096,8443); do not change it arbitrarily on the client | 443 |
-| `tu_sni` | TUIC | tuic's disguise domain, customizable | `www.apple.com` |
-| `any_sni` | AnyTLS | anytls's disguise domain, customizable | `www.apple.com` |
+| `tu_sni` | TUIC | tuic's disguise domain, customizable | `www.nazhumi.com` |
+| `any_sni` | AnyTLS | anytls's disguise domain, customizable | `www.nazhumi.com` |
 
 **SNI best practices** (do not use domains that malicious scanners treat as unlimited-traffic forwarding ports; if you don't know what to write, leave it empty — the script has built-in defaults):
 - ❌ Cloudflare-related: `www.cloudflare.com`, `dash.cloudflare.com`
 - ❌ CDN services: `www.akamai.com`, `www.fastly.com`
 - ❌ Proxy / VPN services: the domain of any proxy service
 - ❌ Your own server's domain (creates a loop)
-- ✅ Recommended: `www.apple.com` (default) / `www.yahoo.com` / `www.google.com` / any large, normal website
+- ✅ Recommended: `www.nazhumi.com` (default) / `www.yahoo.com` / `www.google.com` / any large, normal website
 
 ### 2、 VLESS-Reality
 
@@ -720,11 +720,11 @@ subscribe=true \
 out_ip='special-egress-IP' \
 direct_host='your-external-domain' \
 DEBUG_FLAG=0 \
-hy_sni='www.apple.com' \
-vl_sni='www.apple.com' \
+hy_sni='www.nazhumi.com' \
+vl_sni='www.nazhumi.com' \
 vl_sni_pt=443 \
-tu_sni='www.apple.com' \
-any_sni='www.apple.com' \
+tu_sni='www.nazhumi.com' \
+any_sni='www.nazhumi.com' \
 vlrt=41003 \
 hypt=41004 \
 tupt=41005 \
