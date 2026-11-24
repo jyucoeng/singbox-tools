@@ -194,7 +194,7 @@ socks5_ips='1.2.3.4,5.6.7.0/24' \
 - ❌ CDN 服务：`www.akamai.com`、`www.fastly.com`
 - ❌ 代理 / VPN 服务：任何代理服务的域名
 - ❌ 你自己的服务器域名（会形成循环）
-- ✅ 推荐：`www.nazhumi.com`（默认）/ `www.yahoo.com` / `www.google.com` / 任何大型正常网站
+- ✅ 推荐：`www.nazhumi.com`（默认）/ `www.apple.com` / `www.yahoo.com` / `www.google.com` / 任何大型正常网站
 
 ### 2、 VLESS-Reality
 

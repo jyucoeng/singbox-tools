@@ -194,7 +194,7 @@ Overview of the disguise SNI for each direct-connection protocol (if unsure, lea
 - ❌ CDN services: `www.akamai.com`, `www.fastly.com`
 - ❌ Proxy / VPN services: the domain of any proxy service
 - ❌ Your own server's domain (creates a loop)
-- ✅ Recommended: `www.nazhumi.com` (default) / `www.yahoo.com` / `www.google.com` / any large, normal website
+- ✅ Recommended: `www.nazhumi.com` (default) / `www.apple.com` / `www.yahoo.com` / `www.google.com` / any large, normal website
 
 ### 2、 VLESS-Reality
 
