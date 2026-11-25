@@ -1,5 +1,7 @@
 **简体中文** | [English](README-mtp-new-en.md)
 
+> 🚀 **在线生成安装命令：[singbox.dingdang.de5.net](https://singbox.dingdang.de5.net/)** —— 界面里的 **mtp 页签**能直接生成 `mtp-new.sh` 的安装命令（含 telemt 多用户 / 流量配额等参数），勾好填好后复制执行即可；源码 [singbox-tools-interface](https://github.com/jyucoeng/singbox-tools-interface)，也可自行部署。
+
 ## mtp-new.sh 用法
 
 `mtp-new.sh` 是 MTProxy 管理脚本，同时支持**交互式菜单**与**无交互参数安装**两种模式。

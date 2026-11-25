@@ -1,5 +1,7 @@
 [简体中文](README-mtp-old.md) | **English**
 
+> 🚀 Fewer flags to type: use the online generator at [singbox.dingdang.de5.net](https://singbox.dingdang.de5.net/) (its mtp tab generates commands for the **new** `mtp-new.sh`; this old `mtp-old.sh` script is still configured by hand as described below).
+
 ## mtproxy usage examples (old script mtp-old.sh):
 
 > **⚠️ This document corresponds to the old script `mtp-old.sh`**, which only retains the legacy installation method (including the Python version).

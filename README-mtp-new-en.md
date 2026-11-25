@@ -1,5 +1,7 @@
 [简体中文](README-mtp-new.md) | **English**
 
+> 🚀 **Generate the install command online: [singbox.dingdang.de5.net](https://singbox.dingdang.de5.net/)** — the **mtp tab** builds the `mtp-new.sh` install command for you (telemt multi-user, quotas, expiry, and the rest); tick, fill in, copy, run. Source: [singbox-tools-interface](https://github.com/jyucoeng/singbox-tools-interface); self-hosting works too.
+
 ## mtp-new.sh Usage
 
 `mtp-new.sh` is an MTProxy management script that supports both an **interactive menu** and **non-interactive installation via arguments**.

@@ -1,5 +1,7 @@
 **简体中文** | [English](README-mtp-old-en.md)
 
+> 🚀 想少敲参数可以用在线生成器：[singbox.dingdang.de5.net](https://singbox.dingdang.de5.net/)（它的 mtp 页签生成的是**新版** `mtp-new.sh` 命令；本文这个旧版脚本 `mtp-old.sh` 仍按下文手写参数）。
+
 ## mtproxy用法示例（旧版脚本 mtp-old.sh）：
 
 > **⚠️ 此文档对应旧版脚本 `mtp-old.sh`**，仅保留 legacy 安装方式（含 Python 版）。
