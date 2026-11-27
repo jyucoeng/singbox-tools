@@ -934,6 +934,7 @@ sb ins             安装节点
 sb rep             覆盖式安装/重置
 sb list            查看节点信息
 sb list key        查看节点 + vless Reality 私钥
+sb cmd             安装命令记录（默认只显示文件路径；sb cmd full 显示全文）
 sb res             重启 sing-box 和 cloudflared
 sb rt              分流管理
 sb node            节点配置修改 (端口/订阅/SNI/Argo/身份信息/服务器地址)
@@ -1096,7 +1097,65 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 - **机器名支持中文**：内部按百分号编码，`小叮当-淡-美国北卡莱罗纳` 这类名字照填
 - **失败提示**：401 凭证错、400 机器名/内容不合规、413 超过 512KB、连不上域名，都会给对应的中文提示
 
+## 2.6.2 安装命令记录（v3.2.87 新增）
+
+每次安装 / 覆盖式安装都会把「这次用的命令 + 参数」原样落盘，日后想按同样参数重装直接复制即可：
+
+```
+/root/doraemon/install_cmd.txt     # 记录本体（权限 600，含口令与私钥）
+/root/doraemon/install_cmd.state   # 辅助状态（执行方式 + 首次参数，刷新记录时复用）
+```
+
+查看方式：
+
+```
+sb cmd            只显示记录文件路径 / 执行方式 / 参数条数（命令里有口令，不往屏幕上倒）
+sb cmd full       打印完整命令（含 agk / reality_private / socks5 密码 / 上报 token）
+主菜单 → [15]      等同于 sb cmd
+```
+
+记录格式（**下面全部是占位值，不是真实数据**）：
+
+```
+# ============================================================
+# Sing-box 安装命令记录（脚本自动生成；安装时写入，菜单改参后自动刷新）
+# 记录时间 : 2026-01-01 00:00:00
+# 脚本版本 : 3.2.87(2026-11-27)
+# 执行方式 : rep
+# 工作脚本 : sb.sh（$0=/dev/fd/63）
+# 首次参数 : argo_cf_host=cf.example.com hypt=31004 rep（仅作历史；当前值见下方参数行）
+# 参数统计 : 环境变量 2 个，生效值补充 6 个
+# ============================================================
+argo_cf_host='cf.example.com' \
+uuid='00000000-0000-4000-8000-000000000000' \
+hypt='31004' \
+name='my-node' \
+reality_private='REPLACE_WITH_YOUR_OWN_KEY' \
+socks5_password='REPLACE_ME' \
+REPORT_TOKEN='REPLACE_ME' \
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
+```
+
+要点：
+
+- **菜单安装同样记录**：命令行安装记「显式传入的环境变量」，菜单安装记「当前实际生效值」，末行分别是 `... ins` / `... rep`
+- **菜单改参会自动刷新**：端口 / SNI / uuid / 名字 / Argo / 订阅 / socks5 / 上报 / ws_cdn 在菜单里改完，记录随之更新；值没变则不动文件（不刷时间戳）
+- **旧值会被顶掉**：原先用 `hypt=31004` 装、后来在菜单改成 `32004`，记录里那条会从「环境变量区」移到「生效值区」写成 `hypt='32004'`，重装不会又打回旧端口
+- **`reality_private` 三路回读**：环境变量 → `/root/doraemon/reality.key` → `sb.json` 的 `tls.reality.private_key`，统一转 URL-safe；三处都取不到且 reality 已启用时，记录头会写 ⚠️ 警告（重装会换 keypair、节点全变）
+- 记录文件权限 `600`，内容是明文口令 / 私钥，别外传——`sb cmd` 默认只报路径正是为此
+
 ## 2.7 版本变更信息
+
+v3.2.87 (2026-11-27)
+ > 新增安装命令记录：装完把「这次到底用了什么命令 / 参数」落盘，菜单安装与后续菜单改参都覆盖；`sb cmd` 只报路径，`sb cmd full` 看全文。
+
+- 新增 `record_install_cmd()` / `refresh_install_cmd()` / `show_install_cmd()`（`sb00.sh:7542` 起）：写 `/root/doraemon/install_cmd.txt`（600）+ `install_cmd.state`（执行方式 + 首次参数，刷新时复用）
+- 触发点三处：`install_step()` 开头记录、安装收尾刷新（随机端口 / uuid 在 `ins` 内部才确定）、每次 `menu_pause()` 刷新（先写临时文件比对，值没变就不重写，避免时间戳抖动）
+- 记录体是 `k='v' \` 续行链 + 末行 `bash <(curl ...) ins|rep`，可直接复制执行；值里带单引号自动转义成 `'p'\''a ss'`
+- 菜单改过的参数会把对应的旧环境变量值从记录里剔除，交给生效值区输出新值，避免重放时装回旧端口
+- `reality_private` 三路回读（环境变量 → `reality.key` → `sb.json`），统一 URL-safe；全取不到且 reality 已启用时记录头打 ⚠️ 警告
+- 菜单 [15] 改名为「安装命令路径」，默认只打印路径与参数条数；`sb cmd full` 才输出全文（命令含 agk / reality 私钥 / 口令 / 上报 token）
+- `sb00.sh` 与 `sb.sh` 仍只差 `SB_SCRIPT_NAME` 一行；记录头用 `printf` 写，避免被安装日志的 `echo` 接管
 
 v3.2.86 (2026-11-24)
  > 修正 3.2.85 的轮转阈值：1 MB 只给 `argo.log`，sing-box / 守护进程 / 沙箱 nginx 日志仍按 10 MB 轮转。

@@ -935,6 +935,7 @@ sb ins             Install nodes
 sb rep             Overwriting install / reset
 sb list            View node information
 sb list key        View nodes + the vless Reality private key
+sb cmd             Install-command record (path only; `sb cmd full` prints the whole command)
 sb res             Restart sing-box and cloudflared
 sb rt              Routing management
 sb node            Node configuration edit (ports/subscription/SNI/Argo/identity/server address)
@@ -1097,7 +1098,65 @@ Two things that "passing an empty string" cannot express, worth stating separate
 - **Chinese machine names supported**: internally percent-encoded, so names like `Doraemon-Dan-US North Carolina` can be filled in as-is
 - **Failure notices**: HTTP 401 (bad credential), 400 (bad machine name / content), 413 (over 512 KB), or an unreachable domain each produce their corresponding notice
 
+## 2.6.2 Install-command record (added in v3.2.87)
+
+Every install / reinstall drops the exact command and parameters used into a local file, so you can reproduce the same deployment later by copy-paste:
+
+```
+/root/doraemon/install_cmd.txt     # the record itself (mode 600, contains passwords and keys)
+/root/doraemon/install_cmd.state   # helper state (mode + first-run args, reused when refreshing)
+```
+
+How to look at it:
+
+```
+sb cmd            prints only the file path / mode / parameter counts (the command contains secrets)
+sb cmd full       prints the full command (agk / reality_private / socks5 password / report token)
+main menu -> [15] same as sb cmd
+```
+
+Format (**all values below are placeholders, not real data**):
+
+```
+# ============================================================
+# Sing-box install-command record (auto-generated; written on install, refreshed after menu edits)
+# time     : 2026-01-01 00:00:00
+# version  : 3.2.87(2026-11-27)
+# mode     : rep
+# script   : sb.sh ($0=/dev/fd/63)
+# first-run: argo_cf_host=cf.example.com hypt=31004 rep (history only; current values below)
+# stats    : 2 from environment, 6 from effective values
+# ============================================================
+argo_cf_host='cf.example.com' \
+uuid='00000000-0000-4000-8000-000000000000' \
+hypt='31004' \
+name='my-node' \
+reality_private='REPLACE_WITH_YOUR_OWN_KEY' \
+socks5_password='REPLACE_ME' \
+REPORT_TOKEN='REPLACE_ME' \
+bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/heads/main/sb.sh) rep
+```
+
+Notes:
+
+- **Menu installs are recorded too**: CLI installs record the environment variables you passed, menu installs record the values actually in effect; the last line ends with `... ins` or `... rep` accordingly
+- **Menu edits refresh the record**: changing ports / SNI / uuid / name / Argo / subscription / socks5 / reporting / ws_cdn updates it automatically; if nothing changed the file is left untouched (no timestamp churn)
+- **Stale values are replaced**: if you installed with `hypt=31004` and later changed it to `32004` in the menu, that entry moves out of the environment block and is re-emitted as `hypt='32004'` — replaying will not silently revert your port
+- **`reality_private` is resolved from three sources**: environment -> `/root/doraemon/reality.key` -> `tls.reality.private_key` in `sb.json`, normalized to URL-safe base64; if none is available while Reality is enabled, the record header carries a ⚠️ warning (a reinstall would rotate the keypair and change every node)
+- The record is mode `600` and holds plaintext secrets — that is why `sb cmd` only prints the path by default
+
 ## 2.7 Changelog
+
+v3.2.87 (2026-11-27)
+ > New install-command record: the exact command and parameters used are written to disk, covering menu installs and later menu edits; `sb cmd` prints the path only, `sb cmd full` prints everything.
+
+- Added `record_install_cmd()` / `refresh_install_cmd()` / `show_install_cmd()` (from `sb00.sh:7542`): writes `/root/doraemon/install_cmd.txt` (600) plus `install_cmd.state` (mode + first-run args, reused on refresh)
+- Three triggers: recording at the top of `install_step()`, a refresh at the end of an install (random ports / uuid are only decided inside `ins`), and a refresh on every `menu_pause()` (temp file compared first, so unchanged values never rewrite the file)
+- The body is a `k='v' \` continuation chain ending with `bash <(curl ...) ins|rep`, ready to copy-paste; single quotes inside values are escaped as `'p'\''a ss'`
+- Parameters changed via the menu have their stale environment entries dropped, so the effective-value block emits the new value instead of replaying the old port
+- `reality_private` is resolved from the environment, `reality.key` and `sb.json` (URL-safe normalized); when Reality is enabled and none is found, a ⚠️ warning is written into the record header
+- Menu [15] renamed to "install command path" and now prints only the path and parameter counts; `sb cmd full` prints the whole command (contains agk / Reality key / passwords / report token)
+- `sb00.sh` and `sb.sh` still differ only by `SB_SCRIPT_NAME`; the record header uses `printf` so it is not captured by the install-log `echo`
 
 v3.2.86 (2026-11-24)
  > Corrects the rotation threshold from 3.2.85: 1 MB applies to `argo.log` only; sing-box / supervisor / sandbox nginx logs keep rotating at 10 MB.

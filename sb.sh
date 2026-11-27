@@ -1,6 +1,6 @@
 #!/bin/sh
 # ================== 作者和版本信息 ==================
-VERSION="3.2.86(2026-11-24)"
+VERSION="3.2.87(2026-11-27)"
 AUTHOR="littleDoraemon"
 # ================== 作者和版本信息 结束 ==============
 
@@ -45,6 +45,32 @@ OLD_SINGBOX_FOLDER="/root/agsb" # 旧路径，用于兼容和清理
 LOGS_DIR="$SINGBOX_FOLDER_PATH/logs" # 统一日志目录（所有脚本日志集中于此）
 INSTALL_LOG="$LOGS_DIR/install.log" # 脚本安装日志（仅保留最近一次安装）
 # ================== 文件夹路径配置 结束 ==================
+
+# ================== 安装命令快照（「安装命令路径」用） ==================
+# ⚠️ 必须在下面各参数赋默认值之前采集：晚于此点，hy_sni / nginx_pt / subscribe 等
+#    已经被 ${var:-默认值} 填过，就分不清「用户传了」和「脚本默认」，记录出来的命令会变味。
+# 覆盖所有可用环境变量控制的安装参数；值为空的不记录（等价于没传）。
+_SB_CMD_KEYS="argo_cf_host argo_cf_pt cdn_host cdn_pt \
+argo_vmess_cf_host argo_vmess_cf_pt argo_vless_cf_host argo_vless_cf_pt argo_trojan_cf_host argo_trojan_cf_pt \
+hy_sni vl_sni vl_sni_pt tu_sni any_sni \
+uuid vlrt hypt tupt anypt argo nginx_pt argo_pt agn agk subscribe \
+reality_private reality_public name ippz out_ip direct_host \
+socks5pt socks5_username socks5_password socks5_wl_flag socks5_ips \
+ws_cdn ws_cdn_cf_host ws_cdn_sni ws_cdn_cf_pt \
+ws_cdn_vmess_cf_host ws_cdn_vmess_sni ws_cdn_vmess_cf_pt \
+ws_cdn_vless_cf_host ws_cdn_vless_sni ws_cdn_vless_cf_pt \
+ws_cdn_trojan_cf_host ws_cdn_trojan_sni ws_cdn_trojan_cf_pt \
+REPORT_FLAG REPORT_BASE REPORT_MACHINE REPORT_TOKEN REPORT_SOURCE REPORT_EXCLUDE \
+SUBMERGE_BASE SUBMERGE_TOKEN SUBMERGE_AUTO \
+OS_TUNE_ON_INSTALL DEBUG_FLAG ARGO_HA_CONNECTIONS SB_SCRIPT_URL"
+_SB_RAW_ARGS="$*"
+_SB_RAW_PAIRS=()
+for _k in $_SB_CMD_KEYS; do
+    if [ -n "${!_k:-}" ]; then
+        _SB_RAW_PAIRS+=("$_k=${!_k}")
+    fi
+done
+unset _k
 
 # ================== 系统优化（外链 vps-tune） ==================
 # Alpine / Debian / Ubuntu 的系统层优化统一交给独立仓库 jyucoeng/vps-tune：
@@ -1094,6 +1120,7 @@ print_sb_shortcut_help() {
     green "    sb rt              分流管理"
     green "    sb node            节点配置修改 (端口/订阅/SNI/Argo)"
     green "    sb sub             订阅管理"
+    green "    sb cmd             查看本机最近一次安装用的命令与参数"
     green "    sb report          上报节点到 sub-merge（自动上报层）"
     green "    sb report status   查看上报状态（开关/最近一次时间与结果/地址/凭证）"
     green "    sb report on|off   开关自动上报"
@@ -7485,6 +7512,297 @@ echo() {
 }
 
 # 清空旧日志并写入头部
+# ================== 安装命令记录 / 查看（「安装命令路径」/ sb cmd） ==================
+# 单引号安全包裹：值里出现 ' 时拆成 '\'' ，保证记录下来的命令可以直接复制执行
+_shq() {
+    printf "'%s'" "$(printf '%s' "${1:-}" | sed "s/'/'\\\\''/g")"
+}
+
+# 向「生效值」区追加一行（去重：环境变量区已出现过的名字跳过）
+_SB_EFF_SEEN=" "
+_SB_EFF_BODY=""
+_sb_eff_add() {
+    local _kn="$1" _vv="${2:-}" _ln=""
+    [ -n "$_vv" ] || return 0
+    case "$_SB_EFF_SEEN" in *" $_kn "*) return 0 ;; esac
+    _SB_EFF_SEEN="$_SB_EFF_SEEN$_kn "
+    printf -v _ln '%s=%s \\\n' "$_kn" "$(_shq "$_vv")"
+    _SB_EFF_BODY="${_SB_EFF_BODY}${_ln}"
+    _SB_EFF_N=$(( ${_SB_EFF_N:-0} + 1 ))
+}
+
+# 状态文件：记住「原始环境变量参数 + 执行方式」，菜单改参后刷新记录时沿用（否则环境变量区会丢）
+_SB_ST_MODE=""
+_SB_ST_RAWARGS=""
+_SB_ST_PAIRS=()
+_SB_CMD_OUT=""
+
+# 读取状态文件 → _SB_ST_MODE / _SB_ST_RAWARGS / _SB_ST_PAIRS
+_sb_cmd_state_load() {
+    local _f="$SINGBOX_FOLDER_PATH/install_cmd.state" _line=""
+    _SB_ST_MODE=""
+    _SB_ST_RAWARGS=""
+    _SB_ST_PAIRS=()
+    [ -s "$_f" ] || return 0
+    while IFS= read -r _line || [ -n "$_line" ]; do
+        case "$_line" in
+            '__MODE__ '*) _SB_ST_MODE="${_line#__MODE__ }" ;;
+            '__RAWARGS__ '*) _SB_ST_RAWARGS="${_line#__RAWARGS__ }" ;;
+            '' | '#'*) : ;;
+            *=*) _SB_ST_PAIRS[${#_SB_ST_PAIRS[@]}]="$_line" ;;
+        esac
+    done < "$_f"
+    return 0
+}
+
+# 写状态文件：第 1 行执行方式、第 2 行原始参数、其后为「k=v」原始值
+_sb_cmd_state_save() {
+    local _f="$SINGBOX_FOLDER_PATH/install_cmd.state" _p=""
+    [ -n "${SINGBOX_FOLDER_PATH:-}" ] || return 0
+    mkdir -p "$SINGBOX_FOLDER_PATH" 2> /dev/null || return 0
+    {
+        printf '__MODE__ %s\n' "${1:-ins}"
+        printf '__RAWARGS__ %s\n' "${2:-}"
+        shift 2
+        for _p in "$@"; do printf '%s\n' "$_p"; done
+    } > "$_f" 2> /dev/null || return 0
+    chmod 600 "$_f" 2> /dev/null || true
+    return 0
+}
+
+# 取某个参数「当前生效值」（用于判断菜单改参后旧的环境变量值是否已过期）
+# 覆盖 record_install_cmd 里生效值区跟踪的全部名字；认不出的名字返回空 → 保持原样
+_sb_eff_val_for() {
+    case "$1" in
+        uuid) printf '%s' "${uuid:-}" ;;
+        argo) printf '%s' "${argo:-}" ;;
+        ws_cdn) ws_cdn_val ws_cdn 2> /dev/null ;;
+        nginx_pt) _eff_nginx_pt 2> /dev/null || printf '%s' "${nginx_pt:-}" ;;
+        argo_pt) printf '%s' "${argo_pt:-}" ;;
+        vlrt) printf '%s' "${vlrt:-}" ;;
+        hypt) printf '%s' "${hypt:-}" ;;
+        tupt) printf '%s' "${tupt:-}" ;;
+        anypt) printf '%s' "${anypt:-}" ;;
+        socks5pt) printf '%s' "${socks5pt:-}" ;;
+        socks5_username) printf '%s' "${socks5_username:-}" ;;
+        socks5_password) printf '%s' "${socks5_password:-}" ;;
+        hy_sni | vl_sni | vl_sni_pt | tu_sni | any_sni) printf '%s' "${!1:-}" ;;
+        argo_cf_host | argo_cf_pt) ws_cdn_val "$1" 2> /dev/null ;;
+        agn) printf '%s' "${ARGO_DOMAIN:-${agn:-}}" ;;
+        agk) printf '%s' "${ARGO_AUTH:-${agk:-}}" ;;
+        reality_private) _sb_reality_priv 2> /dev/null ;;
+        name) printf '%s' "${name:-}" ;;
+        subscribe) get_subscribe_flag 2> /dev/null ;;
+        REPORT_FLAG) submerge_auto_flag 2> /dev/null ;;
+        REPORT_BASE) printf '%s' "${REPORT_BASE:-}" ;;
+        REPORT_MACHINE) printf '%s' "${REPORT_MACHINE:-}" ;;
+        REPORT_TOKEN) printf '%s' "${REPORT_TOKEN:-}" ;;
+        REPORT_EXCLUDE) printf '%s' "${REPORT_EXCLUDE:-}" ;;
+        ws_cdn_cf_host | ws_cdn_cf_pt | ws_cdn_sni | ws_cdn_vmess_* | ws_cdn_vless_* | ws_cdn_trojan_*)
+            ws_cdn_val "$1" 2> /dev/null ;;
+        *) : ;;
+    esac
+}
+
+# reality_private 的真实生效值（重装必须带上，否则会重新生成 keypair → 节点全变）
+# 取值顺序：环境变量 → reality.key → sb.json 里 vless-reality-vision-sb 的 tls.reality.private_key
+_sb_reality_priv() {
+    local _v="${reality_private:-}" _kf="$SINGBOX_FOLDER_PATH/reality.key" _sj="$SINGBOX_FOLDER_PATH/sb.json"
+    if [ -n "$_v" ]; then
+        printf '%s' "$_v"
+        return 0
+    fi
+    if [ -s "$_kf" ]; then
+        _v="$(awk -F': ' '/PrivateKey/{print $2; exit}' "$_kf" 2> /dev/null | tr -d '\r\n')"
+    fi
+    if [ -z "$_v" ] && [ -s "$_sj" ] && command -v jq > /dev/null 2>&1; then
+        _v="$(jq -r '[.inbounds[]? | select(.tag=="vless-reality-vision-sb") | .tls.reality.private_key // empty] | first // empty' "$_sj" 2> /dev/null | tr -d '\r\n')"
+    fi
+    [ -n "$_v" ] || return 0
+    # 与 init_reality_keypair 一致：标准 base64 → URL-safe
+    if command -v _to_urlsafe_base64 > /dev/null 2>&1; then
+        _to_urlsafe_base64 "$_v" 2> /dev/null
+    else
+        printf '%s' "$_v"
+    fi
+    return 0
+}
+
+# 把本次安装用的「命令 + 参数」原样落盘（重装时覆盖）
+# 用法：record_install_cmd <ins|rep|空>；空 = 沿用上次的执行方式（菜单改参刷新时用）
+record_install_cmd() {
+    local _mode="${1:-}" _out="${_SB_CMD_OUT:-}" _f=""
+    local _pair _k _v _now _rp _ln _body="" _cnt=0 _n=0 _rawargs=""
+    local -a _pairs=()
+
+    [ -n "${SINGBOX_FOLDER_PATH:-}" ] || return 0
+    mkdir -p "$SINGBOX_FOLDER_PATH" 2> /dev/null || return 0
+    [ -n "$_out" ] || _out="$SINGBOX_FOLDER_PATH/install_cmd.txt"
+
+    _sb_cmd_state_load
+    [ -n "$_mode" ] || _mode="${_SB_ST_MODE:-ins}"
+    _rawargs="${_SB_RAW_ARGS:-}"
+    [ -n "$_rawargs" ] || _rawargs="${_SB_ST_RAWARGS:-}"
+
+    # 环境变量参数：本次真的传了就用本次的，否则沿用上次记录的（菜单改参刷新场景）
+    if [ "${#_SB_RAW_PAIRS[@]}" -gt 0 ]; then
+        _pairs=( ${_SB_RAW_PAIRS[@]+"${_SB_RAW_PAIRS[@]}"} )
+    elif [ "${#_SB_ST_PAIRS[@]}" -gt 0 ]; then
+        _pairs=( ${_SB_ST_PAIRS[@]+"${_SB_ST_PAIRS[@]}"} )
+    fi
+
+    # 菜单里改过的参数：旧的环境变量值已过期，丢掉这条，让生效值区输出新值
+    local -a _kept=()
+    for _pair in ${_pairs[@]+"${_pairs[@]}"}; do
+        _k="${_pair%%=*}"
+        _v="${_pair#*=}"
+        _now="$(_sb_eff_val_for "$_k" 2> /dev/null)"
+        if [ -n "$_now" ] && [ "$_now" != "$_v" ]; then
+            continue
+        fi
+        _kept[${#_kept[@]}]="$_pair"
+    done
+    _pairs=( ${_kept[@]+"${_kept[@]}"} )
+
+    _SB_EFF_SEEN=" "
+    _SB_EFF_BODY=""
+    _SB_EFF_N=0
+
+    # 1) 环境变量区：用户显式传了什么就记什么（值原样 quote 后落盘）
+    for _pair in ${_pairs[@]+"${_pairs[@]}"}; do
+        _k="${_pair%%=*}"
+        _v="${_pair#*=}"
+        printf -v _ln '%s=%s \\\n' "$_k" "$(_shq "$_v")"
+        _body="${_body}${_ln}"
+        _SB_EFF_SEEN="$_SB_EFF_SEEN$_k "
+        _cnt=$((_cnt + 1))
+    done
+
+    # 2) 生效值区：菜单安装没有环境变量，用当前实际生效的配置补齐
+    _sb_eff_add uuid "${uuid:-}"
+    _sb_eff_add argo "${argo:-}"
+    _sb_eff_add ws_cdn "$(ws_cdn_val ws_cdn 2> /dev/null || echo "${ws_cdn:-}")"
+    _sb_eff_add nginx_pt "$(_eff_nginx_pt 2> /dev/null || echo "${nginx_pt:-}")"
+    _sb_eff_add argo_pt "${argo_pt:-}"
+    _sb_eff_add vlrt "${vlrt:-}"
+    _sb_eff_add hypt "${hypt:-}"
+    _sb_eff_add tupt "${tupt:-}"
+    _sb_eff_add anypt "${anypt:-}"
+    _sb_eff_add socks5pt "${socks5pt:-}"
+    _sb_eff_add socks5_username "${socks5_username:-}"
+    _sb_eff_add socks5_password "${socks5_password:-}"
+    _sb_eff_add hy_sni "${hy_sni:-}"
+    _sb_eff_add vl_sni "${vl_sni:-}"
+    _sb_eff_add vl_sni_pt "${vl_sni_pt:-}"
+    _sb_eff_add tu_sni "${tu_sni:-}"
+    _sb_eff_add any_sni "${any_sni:-}"
+    _sb_eff_add argo_cf_host "$(ws_cdn_val argo_cf_host 2> /dev/null || echo "${argo_cf_host:-}")"
+    _sb_eff_add argo_cf_pt "$(ws_cdn_val argo_cf_pt 2> /dev/null || echo "${argo_cf_pt:-}")"
+    _sb_eff_add agn "${ARGO_DOMAIN:-${agn:-}}"
+    _sb_eff_add agk "${ARGO_AUTH:-${agk:-}}"
+    _SB_WARN_REALITY=0
+    _rp="$(_sb_reality_priv 2> /dev/null)"
+    if [ -n "$_rp" ]; then
+        _sb_eff_add reality_private "$_rp"
+    elif _reality_installed 2> /dev/null; then
+        # reality 开着却取不到私钥：不能静默漏记，重装会换 keypair 导致节点全变
+        _SB_WARN_REALITY=1
+    fi
+    _sb_eff_add name "${name:-}"
+    _sb_eff_add subscribe "$(get_subscribe_flag 2> /dev/null || echo "${subscribe:-}")"
+    _sb_eff_add REPORT_FLAG "$(submerge_auto_flag 2> /dev/null || echo "${REPORT_FLAG:-}")"
+    _sb_eff_add REPORT_BASE "${REPORT_BASE:-}"
+    _sb_eff_add REPORT_MACHINE "${REPORT_MACHINE:-}"
+    _sb_eff_add REPORT_TOKEN "${REPORT_TOKEN:-}"
+    _sb_eff_add REPORT_EXCLUDE "${REPORT_EXCLUDE:-}"
+    # ws+ws+tls+cdn 专属参数（菜单里单独改的，也必须跟着记录）
+    _sb_eff_add ws_cdn_cf_host "$(ws_cdn_val ws_cdn_cf_host 2> /dev/null)"
+    _sb_eff_add ws_cdn_cf_pt "$(ws_cdn_val ws_cdn_cf_pt 2> /dev/null)"
+    _sb_eff_add ws_cdn_sni "$(ws_cdn_val ws_cdn_sni 2> /dev/null)"
+    local _wp=""
+    for _wp in vmess vless trojan; do
+        _sb_eff_add "ws_cdn_${_wp}_cf_host" "$(ws_cdn_val "ws_cdn_${_wp}_cf_host" 2> /dev/null)"
+        _sb_eff_add "ws_cdn_${_wp}_cf_pt" "$(ws_cdn_val "ws_cdn_${_wp}_cf_pt" 2> /dev/null)"
+        _sb_eff_add "ws_cdn_${_wp}_sni" "$(ws_cdn_val "ws_cdn_${_wp}_sni" 2> /dev/null)"
+    done
+    _n="${_SB_EFF_N:-0}"
+
+    {
+        printf '%s\n' "# ============================================================"
+        printf '%s\n' "# Sing-box 安装命令记录（脚本自动生成；安装时写入，菜单改参后自动刷新）"
+        printf '%s\n' "# 记录时间 : $(date '+%Y-%m-%d %H:%M:%S')"
+        printf '%s\n' "# 脚本版本 : ${VERSION:-未知}"
+        printf '%s\n' "# 执行方式 : ${_mode}"
+        printf '%s\n' "# 工作脚本 : ${SB_SCRIPT_NAME:-sb.sh}（\$0=${0}）"
+        printf '%s\n' "# 首次参数 : ${_rawargs:-（无，菜单安装）}（仅作历史；当前值见下方参数行）"
+        printf '%s\n' "# 参数统计 : 环境变量 ${_cnt} 个，生效值补充 ${_n} 个"
+        [ "${_SB_WARN_REALITY:-0}" = "1" ] && printf '%s\n' "# ⚠️ reality_private 未取到（reality 已启用）：重装会重新生成 keypair，节点会变；请先备份 ${SINGBOX_FOLDER_PATH}/reality.key"
+        printf '%s\n' "# ============================================================"
+        printf '%s\n' "# 参数 = 安装时显式传入的环境变量 + 当前实际生效的配置（菜单选择/落盘值）"
+        printf '%s\n' "# 复制下面整段（含末尾 bash 行）即可按同样参数重装（含口令/私钥，注意保密）："
+        [ -n "$_body" ] && printf '%s' "$_body"
+        [ -n "$_SB_EFF_BODY" ] && printf '%s' "$_SB_EFF_BODY"
+        printf 'bash <(curl -Ls %s) %s\n' "${SCRIPT_URL:-}" "$_mode"
+    } > "$_out" 2> /dev/null
+    chmod 600 "$_out" 2> /dev/null || true
+
+    # 3) 记状态，供后续「菜单改参 → 刷新记录」时复用环境变量区与执行方式
+    _sb_cmd_state_save "$_mode" "$_rawargs" ${_pairs[@]+"${_pairs[@]}"}
+    return 0
+}
+
+# 刷新记录：只在「已装过」时动作；值没变就不动文件（避免时间戳/菜单空转抖动）
+refresh_install_cmd() {
+    local _f="$SINGBOX_FOLDER_PATH/install_cmd.txt" _t=""
+    [ -n "${SINGBOX_FOLDER_PATH:-}" ] || return 0
+    { [ -s "$_f" ] || [ -s "$SINGBOX_FOLDER_PATH/sb.json" ]; } || return 0
+    _t="$SINGBOX_FOLDER_PATH/.install_cmd.new"
+    _SB_CMD_OUT="$_t" record_install_cmd "" 2> /dev/null || { _SB_CMD_OUT=""; rm -f "$_t"; return 0; }
+    _SB_CMD_OUT=""
+    [ -s "$_t" ] || { rm -f "$_t"; return 0; }
+    # 记录时间行不参与比较
+    if sed '/^# 记录时间/d' "$_t" > "$_t.a" 2> /dev/null \
+       && sed '/^# 记录时间/d' "$_f" > "$_t.b" 2> /dev/null \
+       && cmp -s "$_t.a" "$_t.b" 2> /dev/null; then
+        rm -f "$_t" "$_t.a" "$_t.b"
+        return 0
+    fi
+    rm -f "$_t.a" "$_t.b"
+    if mv -f "$_t" "$_f" 2> /dev/null; then
+        chmod 600 "$_f" 2> /dev/null || true
+    else
+        rm -f "$_t"
+    fi
+    return 0
+}
+
+# 菜单「安装命令路径」：默认只报路径（命令里含口令/私钥，不往屏幕上倒）；要看全文用 sb cmd full
+show_install_cmd() {
+    local _f="$SINGBOX_FOLDER_PATH/install_cmd.txt" _arg="${1:-}" _mode="path"
+    local _mode_line="" _stat=""
+    case "$_arg" in full | all | -a | --full | -v | --verbose) _mode="full" ;; esac
+    if [ ! -s "$_f" ]; then
+        yellow "暂无安装命令记录：$_f"
+        yellow "   执行 ins / rep 或菜单安装时会自动记录，装过一次后这里就有内容"
+        return 0
+    fi
+    if [ "$_mode" = "full" ]; then
+        green "=== 本机最近一次安装使用的命令 / 参数 ==="
+        cat "$_f"
+        echo ""
+        yellow "   文件：$_f（安装时写入，菜单改参后自动刷新；内含口令与私钥，勿外传）"
+        return 0
+    fi
+    _mode_line="$(sed -n 's/^# 执行方式 : //p' "$_f" 2> /dev/null | head -n1)"
+    _stat="$(sed -n 's/^# 参数统计 : //p' "$_f" 2> /dev/null | head -n1)"
+    green "=== 安装命令记录 ==="
+    yellow "   路径：$_f"
+    [ -n "$_mode_line" ] && yellow "   执行方式：$_mode_line"
+    [ -n "$_stat" ] && yellow "   参数：$_stat"
+    yellow "   查看全文：cat $_f    或    sb cmd full"
+    return 0
+}
+
 install_log_begin() {
     mkdir -p "$LOGS_DIR" 2> /dev/null
     # 安装日志内含 UUID / reality 私钥 / socks5 口令等敏感信息，收紧权限防其他用户读取
@@ -7532,6 +7850,9 @@ run_install_logged() {
 }
 
 install_step() {
+    # 记录本次安装的命令与参数（菜单「安装命令路径」/ sb cmd 可回看 / 复现）
+    record_install_cmd "${_SB_INSTALL_CMD:-ins}"
+
     echo "VPS系统：$op"
     echo "CPU架构：$cpu"
     echo "Singbox脚本开始安装/更新…………" && sleep 1
@@ -7568,6 +7889,8 @@ install_step() {
     green "Singbox脚本安装完成！即将打印节点信息……"
     # 显示节点信息 这里的key是一个定值，为了打印私钥
     cip "key"
+    # 安装收尾：部分端口/uuid 在 ins 内部才确定，用最终生效值再刷一次记录
+    refresh_install_cmd
 }
 
 # ================== 端口冲突检测（subscribe=true 或 need_argo 才检查 nginx_pt/argo_pt） ==================
@@ -7807,6 +8130,8 @@ is_installed_sb() {
 }
 
 menu_pause() {
+    # 菜单里刚改过参数的话，顺手把安装命令记录刷新成最新值（值没变则不动文件）
+    refresh_install_cmd
     reading "按回车返回菜单..." _
 }
 
@@ -8883,6 +9208,7 @@ interactive_install() {
     done
 
     check_port_conflicts_or_exit
+    _SB_INSTALL_CMD="ins"
     _install_menu_flow() {
         install_step
         green "✅ 安装完成！"
@@ -8915,6 +9241,7 @@ interactive_reinstall() {
     done
 
     check_port_conflicts_or_exit
+    _SB_INSTALL_CMD="rep"
     _reinstall_menu_flow() {
         cleandel
         install_step
@@ -12582,6 +12909,7 @@ interactive_main() {
         green "    [7] 查看节点信息 (list)"
         green "    [8] 查看运行状态"
         green "    [9] 订阅管理 (sub)"
+        green "    [15] 安装命令路径 (install-cmd)"
         echo ""
         yellow "  【日 志】"
         green "    [10] 查看日志 (logs)"
@@ -12612,6 +12940,7 @@ interactive_main() {
             7) cip; menu_pause ;;
             8) menu_status_block; show_local_ip_info_with_out_ip_hint; menu_pause ;;
             9) interactive_sub_menu ;;
+            15) show_install_cmd; menu_pause ;;
             13) interactive_submerge_menu ;;
             14) os_tune_menu ;;
             10) interactive_log_menu ;;
@@ -12799,6 +13128,12 @@ main() {
         exit
     fi
 
+    # 查看本机最近一次安装用的命令与参数（菜单[15] 等价）
+    if [ "$_cmd" = "cmd" ] || [ "$_cmd" = "install_cmd" ] || [ "$_cmd" = "installcmd" ]; then
+        show_install_cmd "${2:-}"
+        exit
+    fi
+
     # 查看可用的节点
     if [ "$_cmd" = "list" ]; then
         geo_prefetch
@@ -12841,6 +13176,7 @@ main() {
 
     # 覆盖式安装（全流程记录：geo预取 + 卸载清理 + 安装）
     if [ "$_cmd" = "rep" ]; then
+        _SB_INSTALL_CMD="rep"
         _rep_flow_cli() {
             geo_prefetch
             green "开始覆盖式安装流程..."
@@ -12859,6 +13195,7 @@ main() {
 
     # 只在明确 ins 时才安装；无参数只显示菜单（全流程记录：geo预取 + 安装）
     if [ "$_cmd" = "ins" ]; then
+        _SB_INSTALL_CMD="ins"
         _ins_flow_cli() {
             geo_prefetch
             yellow "开始安装流程..."
@@ -12939,7 +13276,7 @@ main() {
     # 无效命令提示
     echo
     red "❌ 无效命令：$1"
-    yellow "可用命令：menu / ins / rep / del / delall / list / sub / report / report status / res / ups / rt / node / opt / sc / sc_off / autostart / autostart_off / nginx_start / nginx_stop / nginx_restart / nginx_status"
+    yellow "可用命令：menu / ins / rep / del / delall / list / cmd [full] / sub / report / report status / res / ups / rt / node / opt / sc / sc_off / autostart / autostart_off / nginx_start / nginx_stop / nginx_restart / nginx_status"
     showmode
     exit 1
 
