@@ -1148,6 +1148,11 @@ Notes:
 
 ## 2.7 Changelog
 
+v3.2.88 (2026-11-27)
+- Main menu [15] is now a submenu: `[1] install-command path` / `[2] full install command` ([2] prints everything, secrets included)
+- `sb list` / main menu [7] node info now prints an extra `📄 install-cmd path: ...` line ("no record yet" before the first install)
+- Fixed bash 3.2 (macOS built-in) eating a byte when `$var` is directly followed by a full-width CJK char (now `${var}`)
+
 v3.2.87 (2026-11-27)
  > New install-command record: the exact command and parameters used are written to disk, covering menu installs and later menu edits; `sb cmd` prints the path only, `sb cmd full` prints everything.
 
