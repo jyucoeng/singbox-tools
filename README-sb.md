@@ -1111,7 +1111,7 @@ SUBMERGE_AUTO=0                  # 自动上报开关：0 关（默认）/ 1 开
 ```
 sb cmd            只显示记录文件路径 / 执行方式 / 参数条数（命令里有口令，不往屏幕上倒）
 sb cmd full       打印完整命令（含 agk / reality_private / socks5 密码 / 上报 token）
-主菜单 → [15]      等同于 sb cmd
+主菜单 → [15]      子菜单：[1] 安装命令路径 / [2] 安装详细命令
 ```
 
 记录格式（**下面全部是占位值，不是真实数据**）：
@@ -1143,6 +1143,7 @@ bash <(curl -Ls https://raw.githubusercontent.com/jyucoeng/singbox-tools/refs/he
 - **旧值会被顶掉**：原先用 `hypt=31004` 装、后来在菜单改成 `32004`，记录里那条会从「环境变量区」移到「生效值区」写成 `hypt='32004'`，重装不会又打回旧端口
 - **`reality_private` 三路回读**：环境变量 → `/root/doraemon/reality.key` → `sb.json` 的 `tls.reality.private_key`，统一转 URL-safe；三处都取不到且 reality 已启用时，记录头会写 ⚠️ 警告（重装会换 keypair、节点全变）
 - 记录文件权限 `600`，内容是明文口令 / 私钥，别外传——`sb cmd` 默认只报路径正是为此
+- **查看节点信息时会顺带打印这个路径**（`sb list` / 主菜单 [7]，订阅地址下面一行 `📄 安装命令路径: …`），没装过则显示「暂无记录」
 
 ## 2.7 版本变更信息
 

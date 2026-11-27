@@ -1112,7 +1112,7 @@ How to look at it:
 ```
 sb cmd            prints only the file path / mode / parameter counts (the command contains secrets)
 sb cmd full       prints the full command (agk / reality_private / socks5 password / report token)
-main menu -> [15] same as sb cmd
+main menu -> [15] submenu: [1] path only / [2] full command
 ```
 
 Format (**all values below are placeholders, not real data**):
@@ -1141,6 +1141,7 @@ Notes:
 
 - **Menu installs are recorded too**: CLI installs record the environment variables you passed, menu installs record the values actually in effect; the last line ends with `... ins` or `... rep` accordingly
 - **Menu edits refresh the record**: changing ports / SNI / uuid / name / Argo / subscription / socks5 / reporting / ws_cdn updates it automatically; if nothing changed the file is left untouched (no timestamp churn)
+- **Node info prints the path too**: `sb list` / main menu [7] show a `📄 install-cmd path: ...` line under the subscription URL (or "no record yet")
 - **Stale values are replaced**: if you installed with `hypt=31004` and later changed it to `32004` in the menu, that entry moves out of the environment block and is re-emitted as `hypt='32004'` — replaying will not silently revert your port
 - **`reality_private` is resolved from three sources**: environment -> `/root/doraemon/reality.key` -> `tls.reality.private_key` in `sb.json`, normalized to URL-safe base64; if none is available while Reality is enabled, the record header carries a ⚠️ warning (a reinstall would rotate the keypair and change every node)
 - The record is mode `600` and holds plaintext secrets — that is why `sb cmd` only prints the path by default

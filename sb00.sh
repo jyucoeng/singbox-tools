@@ -3783,7 +3783,7 @@ os_tune() {
     if [ "$_rc" = "0" ]; then
         green "  ✓ 系统优化完成"
     else
-        yellow "  ! 系统优化返回码 $_rc（非致命，继续）"
+        yellow "  ! 系统优化返回码 ${_rc}（非致命，继续）"
     fi
     return "$_rc"
 }
@@ -6821,6 +6821,9 @@ cip() {
     fi
 
     echo
+    print_install_cmd_path
+
+    echo
     yellow "聚合节点: cat $SINGBOX_FOLDER_PATH/jh.txt"
     yellow "========================================================="
     showmode
@@ -7790,7 +7793,7 @@ show_install_cmd() {
         green "=== 本机最近一次安装使用的命令 / 参数 ==="
         cat "$_f"
         echo ""
-        yellow "   文件：$_f（安装时写入，菜单改参后自动刷新；内含口令与私钥，勿外传）"
+        yellow "   文件：${_f}（安装时写入，菜单改参后自动刷新；内含口令与私钥，勿外传）"
         return 0
     fi
     _mode_line="$(sed -n 's/^# 执行方式 : //p' "$_f" 2> /dev/null | head -n1)"
@@ -7801,6 +7804,49 @@ show_install_cmd() {
     [ -n "$_stat" ] && yellow "   参数：$_stat"
     yellow "   查看全文：cat $_f    或    sb cmd full"
     return 0
+}
+
+# 节点信息 / 各处输出里附带的「安装命令记录」路径行
+print_install_cmd_path() {
+    local _f="$SINGBOX_FOLDER_PATH/install_cmd.txt"
+    if [ -s "$_f" ]; then
+        yellow "📄 安装命令路径: $_f"
+    else
+        yellow "📄 安装命令路径: 暂无记录（执行 ins / rep 后生成：${_f}）"
+    fi
+    return 0
+}
+
+# 主菜单 [15] 子菜单：安装命令路径 / 安装详细命令
+menu_install_cmd() {
+    local _ch="" _f="$SINGBOX_FOLDER_PATH/install_cmd.txt"
+    while :; do
+        clear 2> /dev/null || true
+        echo ""
+        purple "========================================================="
+        purple "  📄 安装命令记录"
+        purple "========================================================="
+        if [ -s "$_f" ]; then
+            green  "  路径：$_f"
+            yellow "  执行方式：$(sed -n 's/^# 执行方式 : //p' "$_f" 2> /dev/null | head -n1)"
+            yellow "  参数统计：$(sed -n 's/^# 参数统计 : //p' "$_f" 2> /dev/null | head -n1)"
+        else
+            yellow "  暂无记录：装过一次（ins / rep / 菜单安装）后自动生成"
+        fi
+        echo ""
+        green "    [1] 安装命令路径（只看文件位置与参数条数）"
+        green "    [2] 安装详细命令（打印全文，含口令与私钥）"
+        echo ""
+        purple "    [0] 返回主菜单"
+        echo ""
+        reading "  请输入选项: " _ch
+        case "$_ch" in
+            0|q|Q) return 0 ;;
+            1) show_install_cmd; menu_pause ;;
+            2) show_install_cmd full; menu_pause ;;
+            *) red "  无效选项：$_ch" ;;
+        esac
+    done
 }
 
 install_log_begin() {
@@ -11023,7 +11069,7 @@ follow_log_menu() {
             continue
         fi
         echo ""
-        green "=== 跟踪 $_log（Ctrl-C 结束）==="
+        green "=== 跟踪 ${_log}（Ctrl-C 结束）==="
         # 子 shell 里忽略 INT：Ctrl-C 只结束 tail，脚本本身继续跑回菜单
         ( trap '' INT; tail -n 30 -f "$_log" 2>/dev/null )
         echo ""
@@ -12870,7 +12916,7 @@ interactive_submerge_menu() {
                     else
                         green "✅ 已打开自动上报（还没填上报地址，选 3 补上之后才会真正推送）"
                     fi
-                    [ -n "${REPORT_FLAG:-}" ] && yellow "   注意：当前 shell 里 REPORT_FLAG=$REPORT_FLAG，它会覆盖配置文件"
+                    [ -n "${REPORT_FLAG:-}" ] && yellow "   注意：当前 shell 里 REPORT_FLAG=${REPORT_FLAG}，它会覆盖配置文件"
                 fi
                 menu_pause ;;
             3) submerge_configure; menu_pause ;;
@@ -12909,7 +12955,7 @@ interactive_main() {
         green "    [7] 查看节点信息 (list)"
         green "    [8] 查看运行状态"
         green "    [9] 订阅管理 (sub)"
-        green "    [15] 安装命令路径 (install-cmd)"
+        green "    [15] 安装命令 (install-cmd)"
         echo ""
         yellow "  【日 志】"
         green "    [10] 查看日志 (logs)"
@@ -12940,7 +12986,7 @@ interactive_main() {
             7) cip; menu_pause ;;
             8) menu_status_block; show_local_ip_info_with_out_ip_hint; menu_pause ;;
             9) interactive_sub_menu ;;
-            15) show_install_cmd; menu_pause ;;
+            15) menu_install_cmd ;;
             13) interactive_submerge_menu ;;
             14) os_tune_menu ;;
             10) interactive_log_menu ;;
@@ -12954,7 +13000,7 @@ interactive_main() {
                 fi
                 menu_pause ;;
             12)
-                red "  将删除：整个 $SINGBOX_FOLDER_PATH（二进制、配置、日志、上报配置全部）"
+                red "  将删除：整个 ${SINGBOX_FOLDER_PATH}（二进制、配置、日志、上报配置全部）"
                 reading "确认卸载全部并清理? (y/N): " _ch
                 if [ "$_ch" = "y" ] || [ "$_ch" = "Y" ]; then
                     cleandel delall
